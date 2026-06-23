@@ -67,6 +67,15 @@ Scripts/build-app.sh
 open "dist/Nanum CSV Viewer.app"
 ```
 
+To create an installable DMG with an `Applications` drag-and-drop shortcut:
+
+```bash
+cd NanumCsvViewerMac
+Scripts/build-app.sh
+DEVID_APP="Developer ID Application: MINGUL KIM (XB673TQF3A)" Scripts/sign-app.sh
+DEVID_APP="Developer ID Application: MINGUL KIM (XB673TQF3A)" Scripts/create-dmg.sh
+```
+
 ## Developer ID Signing and Notarization
 
 For distribution outside the Mac App Store, sign the app with an Apple Developer ID Application certificate and notarize it with Apple.

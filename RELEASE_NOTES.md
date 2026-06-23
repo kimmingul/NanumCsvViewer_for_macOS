@@ -32,6 +32,7 @@ contains     0.291-0.307 s
 - Minimum macOS: `14.0`
 - Signing identity: `Developer ID Application: MINGUL KIM (XB673TQF3A)`
 - Notarization: Accepted by Apple notary service and stapled
+- DMG layout: includes a `/Applications` drag-and-drop shortcut
 - Release artifacts:
   - `Nanum-CSV-Viewer-v1.0.1.dmg`
   - `Nanum-CSV-Viewer-v1.0.1.zip`
