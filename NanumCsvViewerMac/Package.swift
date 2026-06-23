@@ -28,6 +28,10 @@ let package = Package(
             name: "CsvCoreTests",
             dependencies: ["CsvCore"]
         ),
+        .testTarget(
+            name: "NanumCsvViewerMacTests",
+            dependencies: ["NanumCsvViewerMac"]
+        ),
     ],
     swiftLanguageModes: [.v5]
 )

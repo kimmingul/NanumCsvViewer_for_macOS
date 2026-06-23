@@ -13,6 +13,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return 8_192
     }
     private static let readUnit = MemoryFileBuffer.chunkSize
+    private static let maxRecoveredHeaderEmbeddedLineBreaks = 4
 
     private let path: String
     private let index = RecordIndex()
@@ -32,6 +33,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     private var viewMap: [Int]?
     private var ramBuffer: MemoryFileBuffer?
     private var indexingCompleteValue = false
+    private var recoverMalformedHeader = false
 
     public let fileLength: Int64
     public private(set) var header: [String] = []
@@ -98,8 +100,16 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         tmp.publish()
 
         headerStart = Int64(preamble)
-        headerEnd = tmp.count >= 2 ? tmp[1] : min(Int64(sampleLength), fileLength)
-        header = try decodeAndParse(start: headerStart, end: headerEnd)
+        let strictHeaderEnd = tmp.count >= 2 ? tmp[1] : min(Int64(sampleLength), fileLength)
+        let physicalHeaderEnd = Self.firstPhysicalLineEnd(in: sample, preamble: preamble, fileLength: fileLength)
+        recoverMalformedHeader = Self.shouldRecoverMalformedHeader(
+            sample: sample,
+            preamble: preamble,
+            strictHeaderEnd: strictHeaderEnd,
+            physicalHeaderEnd: physicalHeaderEnd
+        )
+        headerEnd = recoverMalformedHeader ? physicalHeaderEnd : strictHeaderEnd
+        header = try decodeAndParse(start: headerStart, end: headerEnd, repairUnbalancedQuotes: recoverMalformedHeader)
     }
 
     private static func detectDelimiter(in sample: Data, preamble: Int) -> UInt8 {
@@ -135,6 +145,113 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             best = i
         }
         return counts[best] > 0 ? candidates[best] : UInt8(ascii: ",")
+    }
+
+    private static func firstPhysicalLineEnd(in sample: Data, preamble: Int, fileLength: Int64) -> Int64 {
+        sample.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
+                return min(Int64(sample.count), fileLength)
+            }
+            var i = min(preamble, raw.count)
+            while i < raw.count {
+                let byte = base[i]
+                if byte == 0x0A {
+                    return Int64(i + 1)
+                }
+                if byte == 0x0D {
+                    if i + 1 < raw.count, base[i + 1] == 0x0A {
+                        return Int64(i + 2)
+                    }
+                    return Int64(i + 1)
+                }
+                i += 1
+            }
+            return min(Int64(sample.count), fileLength)
+        }
+    }
+
+    private static func shouldRecoverMalformedHeader(sample: Data, preamble: Int, strictHeaderEnd: Int64, physicalHeaderEnd: Int64) -> Bool {
+        guard strictHeaderEnd > physicalHeaderEnd else { return false }
+        guard hasUnbalancedQuotes(in: sample, start: preamble, end: Int(min(physicalHeaderEnd, Int64(sample.count)))) else {
+            return false
+        }
+        let lineBreaks = physicalLineBreakCount(in: sample, start: preamble, end: Int(min(strictHeaderEnd, Int64(sample.count))))
+        return lineBreaks > maxRecoveredHeaderEmbeddedLineBreaks
+    }
+
+    private static func physicalLineBreakCount(in sample: Data, start: Int, end: Int) -> Int {
+        sample.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+            var count = 0
+            var i = max(0, min(start, raw.count))
+            let upper = max(i, min(end, raw.count))
+            while i < upper {
+                let byte = base[i]
+                if byte == 0x0A {
+                    count += 1
+                } else if byte == 0x0D {
+                    count += 1
+                    if i + 1 < upper, base[i + 1] == 0x0A {
+                        i += 1
+                    }
+                }
+                i += 1
+            }
+            return count
+        }
+    }
+
+    private static func hasUnbalancedQuotes(in sample: Data, start: Int, end: Int) -> Bool {
+        sample.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return false }
+            var quoteCount = 0
+            var i = max(0, min(start, raw.count))
+            let upper = max(i, min(end, raw.count))
+            while i < upper {
+                if base[i] == UInt8(ascii: "\"") {
+                    if i + 1 < upper, base[i + 1] == UInt8(ascii: "\"") {
+                        i += 2
+                        continue
+                    }
+                    quoteCount += 1
+                }
+                i += 1
+            }
+            return quoteCount % 2 == 1
+        }
+    }
+
+    private static func hasUnbalancedQuotes(_ line: String) -> Bool {
+        let scalars = Array(line.unicodeScalars)
+        let quote = UnicodeScalar(UInt8(ascii: "\""))
+        var quoteCount = 0
+        var i = 0
+        while i < scalars.count {
+            if scalars[i] == quote {
+                if i + 1 < scalars.count, scalars[i + 1] == quote {
+                    i += 2
+                    continue
+                }
+                quoteCount += 1
+            }
+            i += 1
+        }
+        return quoteCount % 2 == 1
+    }
+
+    private static func parseLineIgnoringQuotes(_ line: String, delimiter: Character) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        for character in line {
+            if character == delimiter {
+                fields.append(current)
+                current = ""
+            } else if character != "\"" {
+                current.append(character)
+            }
+        }
+        fields.append(current)
+        return fields
     }
 
     private func runParallelSimpleIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws -> Bool {
@@ -260,12 +377,18 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
 
     private func markIndexingComplete() {
+        cache.clear()
         stateLock.lock()
         indexingCompleteValue = true
         stateLock.unlock()
     }
 
     public func runIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws {
+        if recoverMalformedHeader {
+            try runMalformedHeaderRecoveryIndexing(progress: progress, cancellation: cancellation)
+            return
+        }
+
         if try runParallelSimpleIndexing(progress: progress, cancellation: cancellation) {
             return
         }
@@ -294,9 +417,47 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         index.publish()
-        stateLock.lock()
-        indexingCompleteValue = true
-        stateLock.unlock()
+        markIndexingComplete()
+
+        if let pending = ramBufferPending {
+            sourceLock.lock()
+            ramBuffer = pending
+            sourceLock.unlock()
+        }
+
+        progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
+    }
+
+    private func runMalformedHeaderRecoveryIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws {
+        index.add(headerStart)
+        let indexer = CsvRecordIndexer(index: index, fileLength: fileLength, delimiter: delimiterByte, firstRecordStart: headerEnd)
+        var offset: Int64 = 0
+        var lastReport: Int64 = 0
+
+        while offset < fileLength {
+            try cancellation.check()
+            let length = Int(min(Int64(Self.readUnit), fileLength - offset))
+            let chunk = try diskSource.readData(offset: offset, length: length)
+            ramBufferPending?.setChunk(chunk, at: Int(offset / Int64(Self.readUnit)))
+
+            let processed = offset + Int64(length)
+            let processStart = max(offset, headerEnd)
+            if processStart < processed {
+                let localStart = Int(processStart - offset)
+                indexer.processBuffer(Data(chunk[localStart..<length]), baseOffset: processStart)
+                index.publish()
+            }
+
+            if processed - lastReport >= Int64(Self.readUnit) || processed >= fileLength {
+                lastReport = processed
+                progress(IndexProgress(bytesProcessed: processed, fileLength: fileLength, rowsSoFar: index.count))
+            }
+
+            offset = processed
+        }
+
+        index.publish()
+        markIndexingComplete()
 
         if let pending = ramBufferPending {
             sourceLock.lock()
@@ -344,7 +505,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             guard viewIndex >= 0 && viewIndex < map.count else { return nil }
             return map[viewIndex]
         }
-        return viewIndex >= 0 ? viewIndex : nil
+        return viewIndex >= 0 && viewIndex < dataRowsAvailable ? viewIndex : nil
     }
 
     public func getDisplayRow(_ viewIndex: Int) throws -> [String] {
@@ -382,21 +543,24 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         if let cached = cache.get(dataRow) {
             return cached
         }
-        let fields = try parseDataRow(dataRow)
+        guard let fields = try parseDataRowIfAvailable(dataRow) else {
+            return [""]
+        }
         cache.add(row: dataRow, fields: fields)
         return fields
     }
 
     public func getDataRowUncached(_ dataRow: Int) throws -> [String] {
-        try parseDataRow(dataRow)
+        try parseDataRowIfAvailable(dataRow) ?? [""]
     }
 
-    private func parseDataRow(_ dataRow: Int) throws -> [String] {
+    private func parseDataRowIfAvailable(_ dataRow: Int) throws -> [String]? {
         let record = Int64(dataRow) + 1
         let count = index.count
-        guard record >= 1, record < count else { return [""] }
+        guard record >= 1, record < count else { return nil }
         let start = index[record]
         let end = record + 1 < count ? index[record + 1] : fileLength
+        guard end > start else { return nil }
         return try decodeAndParse(start: start, end: end)
     }
 
@@ -407,9 +571,17 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return source
     }
 
-    private func decodeAndParse(start: Int64, end: Int64) throws -> [String] {
+    private func decodeAndParse(start: Int64, end: Int64, repairUnbalancedQuotes: Bool = false) throws -> [String] {
+        let line = try decodeLine(start: start, end: end)
+        if repairUnbalancedQuotes, Self.hasUnbalancedQuotes(line) {
+            return Self.parseLineIgnoringQuotes(line, delimiter: delimiter)
+        }
+        return CsvRowParser.parse(line, delimiter: delimiter)
+    }
+
+    private func decodeLine(start: Int64, end: Int64) throws -> String {
         let length = Int(end - start)
-        guard length > 0 else { return [""] }
+        guard length > 0 else { return "" }
 
         let data = try currentSource().readData(offset: start, length: length)
         var trimmedLength = data.count
@@ -423,8 +595,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         let trimmed = trimmedLength == data.count ? data : data.prefix(trimmedLength)
-        let line = String(data: trimmed, encoding: encoding) ?? String(decoding: trimmed, as: UTF8.self)
-        return CsvRowParser.parse(line, delimiter: delimiter)
+        return String(data: trimmed, encoding: encoding) ?? String(decoding: trimmed, as: UTF8.self)
     }
 
     private func dataRowColumnEquals(dataRow: Int, column: Int, encodedValue: Data) throws -> Bool {

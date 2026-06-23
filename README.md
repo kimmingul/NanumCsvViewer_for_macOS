@@ -7,6 +7,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Automatic encoding detection for UTF-8, UTF-8 BOM, and CP949/EUC-KR
 - CSV record byte-offset indexing
 - Correct handling for quoted newlines, delimiters inside quotes, and escaped quotes
+- Recovery for malformed first-row quotes that would otherwise hide following rows
 - Virtual row rendering with `NSTableView`
 - Background indexing progress
 - Search, column filters, and selected-cell value filters
@@ -26,6 +27,8 @@ NanumCsvViewerMac/
     NanumCsvViewerMac/    # AppKit UI
     CsvBench/             # 1 GiB benchmark CLI
   Tests/CsvCoreTests/     # CSV parser, index, filter, and sort tests
+  Tests/NanumCsvViewerMacTests/
+                         # AppKit grid materialization regression tests
   Scripts/build-app.sh    # .app bundle creation script
 ```
 
@@ -180,8 +183,10 @@ This file is excluded by `.gitignore` because of its size.
 
 - The app indexes record start offsets instead of pre-parsing every row into memory.
 - Only visible rows are decoded and retained in an LRU cache.
+- Rows requested before indexing completes are not cached as blank rows.
 - Simple CSV files without quotes use a parallel newline-scan indexing fast path.
 - Quoted CSV files fall back to the accurate state-machine indexer.
+- Malformed first-row quote recovery is isolated to suspicious headers so valid quoted newline records still use the normal parser.
 - Column equality and contains filters extract only the selected column instead of parsing full rows.
 - Single-column sorting extracts only sort keys to reduce parsing cost.
 - On macOS, the engine prefers an `mmap` byte source and falls back to a `pread`-based source when needed.

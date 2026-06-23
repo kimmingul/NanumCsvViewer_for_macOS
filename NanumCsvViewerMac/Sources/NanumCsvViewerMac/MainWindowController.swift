@@ -1834,3 +1834,39 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
+#if DEBUG
+extension MainWindowController {
+    func openFileForTesting(_ url: URL) {
+        openFile(url)
+    }
+
+    var indexingCompleteForTesting: Bool {
+        csvDocument?.indexingComplete == true
+    }
+
+    var renderedRowCountForTesting: Int {
+        tableView.numberOfRows
+    }
+
+    func renderedDataRowForTesting(_ row: Int) -> [String] {
+        guard row >= 0, row < tableView.numberOfRows else { return [] }
+        return (1..<tableView.numberOfColumns).map { columnIndex in
+            let column = tableView.tableColumns[columnIndex]
+            let view = tableView(tableView, viewFor: column, row: row) as? NSTableCellView
+            return view?.textField?.stringValue ?? ""
+        }
+    }
+
+    func materializedDataRowForTesting(_ row: Int) -> [String] {
+        guard row >= 0, row < tableView.numberOfRows else { return [] }
+        window?.contentView?.layoutSubtreeIfNeeded()
+        tableView.scrollRowToVisible(row)
+        tableView.layoutSubtreeIfNeeded()
+        return (1..<tableView.numberOfColumns).map { columnIndex in
+            let view = tableView.view(atColumn: columnIndex, row: row, makeIfNecessary: true) as? NSTableCellView
+            return view?.textField?.stringValue ?? ""
+        }
+    }
+}
+#endif

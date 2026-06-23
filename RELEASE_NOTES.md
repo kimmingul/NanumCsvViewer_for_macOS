@@ -1,5 +1,41 @@
 # Release Notes
 
+## v1.0.1 - 2026-06-24
+
+This patch release fixes intermittent blank or skipped rows in the grid when opening CSV files repeatedly.
+
+### Fixes
+
+- Prevented future row requests during background indexing from being cached as blank rows
+- Cleared speculative row cache entries when indexing completes
+- Added bounds checks so the grid cannot map visible rows beyond indexed data rows
+- Added recovery for malformed first-row quotes that previously caused early physical rows to be swallowed into the header record
+- Preserved correct parsing for valid quoted newline records after the malformed-header recovery path
+- Added AppKit grid materialization regression tests for repeated small-file opens and rapid same-window reopens
+- Added CSV record-indexer regression tests for line breaks at production chunk boundaries
+
+### Performance
+
+Release benchmarking against a 256 MiB synthetic CSV showed no meaningful regression versus `v1.0.0`:
+
+```text
+index        0.047-0.063 s
+sample rows  3.232-3.759 s  (100,000 sampled rows)
+filter       0.072-0.075 s
+contains     0.291-0.307 s
+```
+
+### Distribution
+
+- Bundle version: `1.0.1`
+- Bundle build: `101`
+- Minimum macOS: `14.0`
+- Signing identity: `Developer ID Application: MINGUL KIM (XB673TQF3A)`
+- Notarization: Accepted by Apple notary service and stapled
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.0.1.dmg`
+  - `Nanum-CSV-Viewer-v1.0.1.zip`
+
 ## v1.0.0 - 2026-06-24
 
 This is the first stable release of Nanum CSV Viewer for macOS.

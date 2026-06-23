@@ -55,4 +55,25 @@ final class CsvRecordIndexerTests: XCTestCase {
         XCTAssertEqual(index("a\r\nb", chunk: 2), [0, 3])
         XCTAssertEqual(index("a\r\nb", chunk: 2), index("a\r\nb", chunk: 64))
     }
+
+    func testCrLfSplitAtProductionChunkBoundaryCountsAsSingleSeparator() {
+        let chunkSize = MemoryFileBuffer.chunkSize
+        let text = String(repeating: "x", count: chunkSize - 1) + "\r\nnext"
+
+        XCTAssertEqual(index(text, chunk: chunkSize), [0, Int64(chunkSize + 1)])
+    }
+
+    func testLfAtProductionChunkBoundaryStartsNextRecordOnce() {
+        let chunkSize = MemoryFileBuffer.chunkSize
+        let text = String(repeating: "x", count: chunkSize - 1) + "\nnext"
+
+        XCTAssertEqual(index(text, chunk: chunkSize), [0, Int64(chunkSize)])
+    }
+
+    func testCrAtProductionChunkBoundaryWithoutLfStartsNextRecordOnce() {
+        let chunkSize = MemoryFileBuffer.chunkSize
+        let text = String(repeating: "x", count: chunkSize - 1) + "\rnext"
+
+        XCTAssertEqual(index(text, chunk: chunkSize), [0, Int64(chunkSize)])
+    }
 }

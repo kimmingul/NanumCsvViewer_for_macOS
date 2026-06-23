@@ -1,5 +1,6 @@
 .DS_Store
 .clang-cache/
+.omx/
 
 NanumCsvViewerMac/.build/
 NanumCsvViewerMac/.swiftpm/
