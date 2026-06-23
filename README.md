@@ -188,4 +188,4 @@ NanumCsvViewerMac/BenchmarkData/one_gib.csv
 
 ## 라이선스
 
-라이선스는 아직 지정하지 않았습니다. 공개 배포 전 `LICENSE` 파일을 추가하는 것을 권장합니다.
+MIT License입니다. 자세한 내용은 [LICENSE](LICENSE)를 참고하세요.
