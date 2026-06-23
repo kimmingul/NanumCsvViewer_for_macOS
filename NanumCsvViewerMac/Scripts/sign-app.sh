@@ -12,7 +12,7 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
-IDENTITY="${SIGN_IDENTITY:-}"
+IDENTITY="${SIGN_IDENTITY:-${DEVID_APP:-}}"
 if [[ -z "$IDENTITY" ]]; then
   IDENTITY="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)"
 fi
@@ -21,6 +21,7 @@ if [[ -z "$IDENTITY" ]]; then
   echo "No Developer ID Application signing identity found." >&2
   echo "Install the certificate from Xcode > Settings > Accounts > Manage Certificates." >&2
   echo "Or pass SIGN_IDENTITY=\"Developer ID Application: ...\"." >&2
+  echo "The notepad_macOS-compatible DEVID_APP variable is also supported." >&2
   exit 1
 fi
 

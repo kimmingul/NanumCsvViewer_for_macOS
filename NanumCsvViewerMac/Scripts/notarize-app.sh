@@ -19,8 +19,21 @@ ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
 echo "Submitting to Apple notarization service: $ZIP_PATH"
 
-if [[ -n "${NOTARYTOOL_PROFILE:-}" ]]; then
-  xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$NOTARYTOOL_PROFILE" --wait
+KEYCHAIN_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARY_PROFILE:-}}"
+
+if [[ -n "$KEYCHAIN_PROFILE" ]]; then
+  xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$KEYCHAIN_PROFILE" --wait
+elif [[ -n "${ASC_KEY_ID:-}" && -n "${ASC_ISSUER_ID:-}" ]]; then
+  ASC_KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
+  if [[ ! -f "$ASC_KEY_PATH" ]]; then
+    echo "App Store Connect API key not found: $ASC_KEY_PATH" >&2
+    exit 1
+  fi
+  xcrun notarytool submit "$ZIP_PATH" \
+    --key "$ASC_KEY_PATH" \
+    --key-id "$ASC_KEY_ID" \
+    --issuer "$ASC_ISSUER_ID" \
+    --wait
 elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
   xcrun notarytool submit "$ZIP_PATH" \
     --apple-id "$APPLE_ID" \
@@ -34,6 +47,12 @@ No notarization credentials configured.
 Use one of these:
 
   NOTARYTOOL_PROFILE="profile-name" Scripts/notarize-app.sh
+
+  NOTARY_PROFILE="profile-name" Scripts/notarize-app.sh
+
+  ASC_KEY_ID="XXXXXXXXXX" \
+  ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+  Scripts/notarize-app.sh
 
 or:
 

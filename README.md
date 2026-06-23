@@ -85,7 +85,7 @@ Xcode > Settings > Accounts > Manage Certificates > Developer ID Application
 ```bash
 cd NanumCsvViewerMac
 Scripts/build-app.sh
-Scripts/sign-app.sh
+DEVID_APP="Developer ID Application: MINGUL KIM (XB673TQF3A)" Scripts/sign-app.sh
 ```
 
 서명 identity를 명시하려면:
@@ -94,7 +94,7 @@ Scripts/sign-app.sh
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID1234)" Scripts/sign-app.sh
 ```
 
-notarization credential은 `notarytool` keychain profile로 저장하는 방식이 가장 편합니다.
+notarization credential은 `notarytool` keychain profile 또는 App Store Connect API key를 사용할 수 있습니다.
 
 ```bash
 xcrun notarytool store-credentials "nanum-notary" \
@@ -107,6 +107,28 @@ notarization 및 stapling:
 
 ```bash
 NOTARYTOOL_PROFILE="nanum-notary" Scripts/notarize-app.sh
+```
+
+`notepad_macOS` 프로젝트와 같은 변수명도 지원합니다.
+
+```bash
+DEVID_APP="Developer ID Application: MINGUL KIM (XB673TQF3A)" \
+NOTARY_PROFILE="notary-profile" \
+Scripts/release-app.sh
+```
+
+App Store Connect API key를 쓰는 경우:
+
+```bash
+ASC_KEY_ID="XXXXXXXXXX" \
+ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+Scripts/notarize-app.sh
+```
+
+기본 key path는 다음 형식입니다.
+
+```text
+~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8
 ```
 
 빌드, 서명, notarization을 한 번에 실행하려면:
