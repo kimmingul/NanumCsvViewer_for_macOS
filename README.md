@@ -64,6 +64,63 @@ Scripts/build-app.sh
 open "dist/Nanum CSV Viewer.app"
 ```
 
+## Developer ID 서명 및 notarization
+
+배포용 앱은 Apple Developer ID Application 인증서로 서명한 뒤 notarization/stapling하는 것을 권장합니다.
+
+먼저 로컬 keychain에 Developer ID Application 인증서가 있는지 확인합니다.
+
+```bash
+security find-identity -v -p codesigning
+```
+
+인증서가 없다면 Xcode에서 추가합니다.
+
+```text
+Xcode > Settings > Accounts > Manage Certificates > Developer ID Application
+```
+
+앱 번들 생성 및 서명:
+
+```bash
+cd NanumCsvViewerMac
+Scripts/build-app.sh
+Scripts/sign-app.sh
+```
+
+서명 identity를 명시하려면:
+
+```bash
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID1234)" Scripts/sign-app.sh
+```
+
+notarization credential은 `notarytool` keychain profile로 저장하는 방식이 가장 편합니다.
+
+```bash
+xcrun notarytool store-credentials "nanum-notary" \
+  --apple-id "you@example.com" \
+  --team-id "TEAMID1234" \
+  --password "app-specific-password"
+```
+
+notarization 및 stapling:
+
+```bash
+NOTARYTOOL_PROFILE="nanum-notary" Scripts/notarize-app.sh
+```
+
+빌드, 서명, notarization을 한 번에 실행하려면:
+
+```bash
+NOTARYTOOL_PROFILE="nanum-notary" Scripts/release-app.sh
+```
+
+notarization 없이 서명까지만 확인하려면:
+
+```bash
+SKIP_NOTARIZE=1 Scripts/release-app.sh
+```
+
 ## 벤치마크
 
 1GiB benchmark CSV는 repository에 포함하지 않습니다. 필요할 때 생성합니다.
