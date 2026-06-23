@@ -1,40 +1,40 @@
 # Nanum CSV Viewer for macOS
 
-Swift/AppKit 기반 macOS용 대용량 CSV viewer입니다. 1GB 이상의 CSV 파일을 빠르게 열고, 백그라운드 인덱싱 중에도 가상 테이블로 데이터를 탐색할 수 있도록 설계했습니다.
+Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting very large CSV files. It is designed to load CSV files larger than 1 GB quickly, keep indexing work in the background, and render rows through a virtual table instead of materializing the whole file in memory.
 
-## 주요 기능
+## Features
 
-- UTF-8, UTF-8 BOM, CP949(EUC-KR) 자동 감지
-- CSV 레코드 byte offset indexing
-- 따옴표 안 줄바꿈, 구분자, escaped quote 처리
-- `NSTableView` 기반 virtual row rendering
-- 백그라운드 indexing progress
-- 검색, 컬럼 필터, 선택 셀 값 필터
-- 단일 컬럼 fast filter/sort path
-- Shift-click 다중 정렬
-- 선택 값 표시 바, filter bar, Inspector 패널
-- macOS light/dark appearance 대응
-- 1GiB CSV benchmark CLI 포함
+- Automatic encoding detection for UTF-8, UTF-8 BOM, and CP949/EUC-KR
+- CSV record byte-offset indexing
+- Correct handling for quoted newlines, delimiters inside quotes, and escaped quotes
+- Virtual row rendering with `NSTableView`
+- Background indexing progress
+- Search, column filters, and selected-cell value filters
+- Fast single-column filter and sort paths
+- Shift-click multi-column sorting
+- Selected value bar, filter bar, and Inspector panel
+- macOS light and dark appearance support
+- 1 GiB CSV benchmark CLI
 
-## 프로젝트 구조
+## Project Structure
 
 ```text
 NanumCsvViewerMac/
   Package.swift
   Sources/
-    CsvCore/              # 대용량 CSV engine
+    CsvCore/              # Large-file CSV engine
     NanumCsvViewerMac/    # AppKit UI
-    CsvBench/             # 1GiB benchmark CLI
-  Tests/CsvCoreTests/     # CSV parser/index/filter/sort tests
-  Scripts/build-app.sh    # .app bundle 생성 스크립트
+    CsvBench/             # 1 GiB benchmark CLI
+  Tests/CsvCoreTests/     # CSV parser, index, filter, and sort tests
+  Scripts/build-app.sh    # .app bundle creation script
 ```
 
-## 요구 사항
+## Requirements
 
-- macOS 14 이상
+- macOS 14 or later
 - Swift 6.x / Xcode command line tools
 
-## 빌드 및 테스트
+## Build and Test
 
 ```bash
 cd NanumCsvViewerMac
@@ -42,21 +42,21 @@ swift build
 swift test
 ```
 
-SwiftPM module cache 권한 문제가 있으면 로컬 캐시를 지정합니다.
+If SwiftPM cannot write to the default module cache, use a local cache path:
 
 ```bash
 CLANG_MODULE_CACHE_PATH=../.clang-cache swift build
 CLANG_MODULE_CACHE_PATH=../.clang-cache swift test
 ```
 
-## 앱 실행
+## Run the App
 
 ```bash
 cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
-앱 번들을 만들려면:
+To create a macOS `.app` bundle:
 
 ```bash
 cd NanumCsvViewerMac
@@ -64,23 +64,23 @@ Scripts/build-app.sh
 open "dist/Nanum CSV Viewer.app"
 ```
 
-## Developer ID 서명 및 notarization
+## Developer ID Signing and Notarization
 
-배포용 앱은 Apple Developer ID Application 인증서로 서명한 뒤 notarization/stapling하는 것을 권장합니다.
+For distribution outside the Mac App Store, sign the app with an Apple Developer ID Application certificate and notarize it with Apple.
 
-먼저 로컬 keychain에 Developer ID Application 인증서가 있는지 확인합니다.
+First, confirm that a Developer ID Application certificate is installed in the local keychain:
 
 ```bash
 security find-identity -v -p codesigning
 ```
 
-인증서가 없다면 Xcode에서 추가합니다.
+If it is not installed, add it from Xcode:
 
 ```text
 Xcode > Settings > Accounts > Manage Certificates > Developer ID Application
 ```
 
-앱 번들 생성 및 서명:
+Build and sign the app bundle:
 
 ```bash
 cd NanumCsvViewerMac
@@ -88,13 +88,13 @@ Scripts/build-app.sh
 DEVID_APP="Developer ID Application: MINGUL KIM (XB673TQF3A)" Scripts/sign-app.sh
 ```
 
-서명 identity를 명시하려면:
+To specify a different signing identity:
 
 ```bash
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID1234)" Scripts/sign-app.sh
 ```
 
-notarization credential은 `notarytool` keychain profile 또는 App Store Connect API key를 사용할 수 있습니다.
+Notarization credentials can be provided through a `notarytool` keychain profile or an App Store Connect API key.
 
 ```bash
 xcrun notarytool store-credentials "nanum-notary" \
@@ -103,13 +103,13 @@ xcrun notarytool store-credentials "nanum-notary" \
   --password "app-specific-password"
 ```
 
-notarization 및 stapling:
+Notarize and staple the app:
 
 ```bash
 NOTARYTOOL_PROFILE="nanum-notary" Scripts/notarize-app.sh
 ```
 
-`notepad_macOS` 프로젝트와 같은 변수명도 지원합니다.
+The release scripts also support the environment variable names used by the local `notepad_macOS` project:
 
 ```bash
 DEVID_APP="Developer ID Application: MINGUL KIM (XB673TQF3A)" \
@@ -117,7 +117,7 @@ NOTARY_PROFILE="notary-profile" \
 Scripts/release-app.sh
 ```
 
-App Store Connect API key를 쓰는 경우:
+When using an App Store Connect API key:
 
 ```bash
 ASC_KEY_ID="XXXXXXXXXX" \
@@ -125,27 +125,27 @@ ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
 Scripts/notarize-app.sh
 ```
 
-기본 key path는 다음 형식입니다.
+The default API key path is:
 
 ```text
 ~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8
 ```
 
-빌드, 서명, notarization을 한 번에 실행하려면:
+To build, sign, notarize, and staple in one step:
 
 ```bash
 NOTARYTOOL_PROFILE="nanum-notary" Scripts/release-app.sh
 ```
 
-notarization 없이 서명까지만 확인하려면:
+To verify signing without notarization:
 
 ```bash
 SKIP_NOTARIZE=1 Scripts/release-app.sh
 ```
 
-## 벤치마크
+## Benchmark
 
-1GiB benchmark CSV는 repository에 포함하지 않습니다. 필요할 때 생성합니다.
+The 1 GiB benchmark CSV is not committed to the repository. Generate it when needed:
 
 ```bash
 cd NanumCsvViewerMac
@@ -153,13 +153,13 @@ swift build -c release --product CsvBench
 .build/release/CsvBench --generate
 ```
 
-이후 같은 파일을 재사용해서 측정합니다.
+Then run the benchmark against the generated file:
 
 ```bash
 .build/release/CsvBench
 ```
 
-최근 1GiB benchmark 결과:
+Recent 1 GiB benchmark result:
 
 ```text
 index        0.235 s
@@ -168,24 +168,24 @@ contains     1.154 s
 sort         4.232 s
 ```
 
-측정 파일:
+Benchmark file:
 
 ```text
 NanumCsvViewerMac/BenchmarkData/one_gib.csv
 ```
 
-이 파일은 1GiB 크기라 `.gitignore`에 포함되어 있습니다.
+This file is excluded by `.gitignore` because of its size.
 
-## 성능 설계
+## Performance Design
 
-- 파일 전체를 row 단위로 미리 파싱하지 않고 record start offset만 인덱싱합니다.
-- 화면에 보이는 row만 디코딩하고 LRU cache에 보관합니다.
-- quote 없는 단순 CSV는 병렬 newline scan으로 빠르게 인덱싱합니다.
-- quote가 포함된 CSV는 정확도를 위해 상태 머신 기반 인덱서로 fallback합니다.
-- 특정 컬럼 equality/contains 필터는 전체 row parse 없이 해당 컬럼만 추출합니다.
-- 단일 컬럼 정렬은 정렬 key만 추출해서 전체 row parse 비용을 줄입니다.
-- macOS에서는 `mmap` 기반 byte source를 우선 사용하고 실패 시 `pread` 기반 source로 fallback합니다.
+- The app indexes record start offsets instead of pre-parsing every row into memory.
+- Only visible rows are decoded and retained in an LRU cache.
+- Simple CSV files without quotes use a parallel newline-scan indexing fast path.
+- Quoted CSV files fall back to the accurate state-machine indexer.
+- Column equality and contains filters extract only the selected column instead of parsing full rows.
+- Single-column sorting extracts only sort keys to reduce parsing cost.
+- On macOS, the engine prefers an `mmap` byte source and falls back to a `pread`-based source when needed.
 
-## 라이선스
+## License
 
-MIT License입니다. 자세한 내용은 [LICENSE](LICENSE)를 참고하세요.
+Nanum CSV Viewer is available under the MIT License. See [LICENSE](LICENSE) for details.
