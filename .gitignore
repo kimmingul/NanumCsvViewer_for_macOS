@@ -1,0 +1,15 @@
+.DS_Store
+.clang-cache/
+
+NanumCsvViewerMac/.build/
+NanumCsvViewerMac/.swiftpm/
+NanumCsvViewerMac/Packages/
+NanumCsvViewerMac/DerivedData/
+NanumCsvViewerMac/xcuserdata/
+NanumCsvViewerMac/dist/
+NanumCsvViewerMac/BenchmarkData/
+
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+.netrc
