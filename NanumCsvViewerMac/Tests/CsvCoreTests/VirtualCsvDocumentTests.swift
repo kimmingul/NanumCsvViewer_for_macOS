@@ -278,7 +278,9 @@ final class VirtualCsvDocumentTests: XCTestCase {
         let first = try VirtualCsvDocument.open(path: path)
         XCTAssertFalse(first.indexingComplete)
         try first.runIndexing(progress: { _ in }, cancellation: CancellationFlag())
-        XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".ncvidx"))
+        try waitForFile(atPath: path + ".ncvidx")
+        let sidecarPrefix = try Data(contentsOf: URL(fileURLWithPath: path + ".ncvidx")).prefix(13)
+        XCTAssertEqual(String(data: sidecarPrefix, encoding: .utf8), "NanumCsvIdx2\n")
 
         let second = try VirtualCsvDocument.open(path: path)
         XCTAssertTrue(second.indexingComplete)
@@ -290,4 +292,15 @@ final class VirtualCsvDocumentTests: XCTestCase {
 func temporaryPath() throws -> String {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
     return directory.appendingPathComponent("nanumcsv_swift_\(UUID().uuidString).csv").path
+}
+
+func waitForFile(atPath path: String, timeout: TimeInterval = 2.0) throws {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if FileManager.default.fileExists(atPath: path) {
+            return
+        }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    XCTFail("Timed out waiting for file at \(path)")
 }

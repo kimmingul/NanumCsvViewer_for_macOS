@@ -16,7 +16,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
     private static let readUnit = MemoryFileBuffer.chunkSize
     private static let maxRecoveredHeaderEmbeddedLineBreaks = 4
-    private static let sidecarVersion = 1
+    private static let sidecarVersion = 2
 
     private let path: String
     private let index = RecordIndex()
@@ -398,12 +398,12 @@ public final class VirtualCsvDocument: @unchecked Sendable {
 
         if recoverMalformedHeader {
             try runMalformedHeaderRecoveryIndexing(progress: progress, cancellation: cancellation)
-            savePersistentIndexIfNeeded()
+            schedulePersistentIndexSaveIfNeeded()
             return
         }
 
         if try runParallelSimpleIndexing(progress: progress, cancellation: cancellation) {
-            savePersistentIndexIfNeeded()
+            schedulePersistentIndexSaveIfNeeded()
             return
         }
 
@@ -440,7 +440,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
-        savePersistentIndexIfNeeded()
+        schedulePersistentIndexSaveIfNeeded()
     }
 
     private func runMalformedHeaderRecoveryIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws {
@@ -1125,15 +1125,8 @@ public final class VirtualCsvDocument: @unchecked Sendable {
 }
 
 private extension VirtualCsvDocument {
-    struct PersistentIndexSidecar: Codable {
-        let magic: String
-        let version: Int
-        let fileLength: Int64
-        let modificationTime: TimeInterval
-        let delimiter: UInt8
-        let headerStart: Int64
-        let headerEnd: Int64
-        let offsets: [Int64]
+    static var sidecarMagic: [UInt8] {
+        Array("NanumCsvIdx2\n".utf8)
     }
 
     var sidecarPath: String {
@@ -1141,9 +1134,10 @@ private extension VirtualCsvDocument {
     }
 
     func tryLoadPersistentIndex() {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: sidecarPath)),
-              let sidecar = try? JSONDecoder().decode(PersistentIndexSidecar.self, from: data),
-              sidecar.magic == "NanumCsvIndex",
+        let url = URL(fileURLWithPath: sidecarPath)
+        guard Self.sidecarHasCurrentMagic(at: url),
+              let data = try? Data(contentsOf: url),
+              let sidecar = PersistentIndexSidecar(data: data),
               sidecar.version == Self.sidecarVersion,
               sidecar.fileLength == fileLength,
               sidecar.modificationTime == currentModificationTime(),
@@ -1157,10 +1151,22 @@ private extension VirtualCsvDocument {
         markIndexingComplete()
     }
 
+    static func sidecarHasCurrentMagic(at url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        return Array(handle.readData(ofLength: sidecarMagic.count)) == sidecarMagic
+    }
+
+    func schedulePersistentIndexSaveIfNeeded() {
+        guard Self.persistentIndexEnabled, indexingComplete else { return }
+        DispatchQueue.global(qos: .utility).async {
+            self.savePersistentIndexIfNeeded()
+        }
+    }
+
     func savePersistentIndexIfNeeded() {
         guard Self.persistentIndexEnabled, indexingComplete else { return }
         let sidecar = PersistentIndexSidecar(
-            magic: "NanumCsvIndex",
             version: Self.sidecarVersion,
             fileLength: fileLength,
             modificationTime: currentModificationTime(),
@@ -1169,12 +1175,141 @@ private extension VirtualCsvDocument {
             headerEnd: headerEnd,
             offsets: index.offsets()
         )
-        guard let data = try? JSONEncoder().encode(sidecar) else { return }
+        let data = sidecar.encoded()
         try? data.write(to: URL(fileURLWithPath: sidecarPath), options: .atomic)
     }
 
     func currentModificationTime() -> TimeInterval {
         let attrs = try? FileManager.default.attributesOfItem(atPath: path)
         return (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+    }
+}
+
+private struct PersistentIndexSidecar {
+    let version: Int
+    let fileLength: Int64
+    let modificationTime: TimeInterval
+    let delimiter: UInt8
+    let headerStart: Int64
+    let headerEnd: Int64
+    let offsets: [Int64]
+
+    init(
+        version: Int,
+        fileLength: Int64,
+        modificationTime: TimeInterval,
+        delimiter: UInt8,
+        headerStart: Int64,
+        headerEnd: Int64,
+        offsets: [Int64]
+    ) {
+        self.version = version
+        self.fileLength = fileLength
+        self.modificationTime = modificationTime
+        self.delimiter = delimiter
+        self.headerStart = headerStart
+        self.headerEnd = headerEnd
+        self.offsets = offsets
+    }
+
+    init?(data: Data) {
+        var reader = BinarySidecarReader(data: data)
+        guard reader.readMagic(VirtualCsvDocument.sidecarMagic),
+              let version = reader.readUInt64(),
+              let fileLength = reader.readInt64(),
+              let modificationTime = reader.readDouble(),
+              let delimiter = reader.readUInt8(),
+              let headerStart = reader.readInt64(),
+              let headerEnd = reader.readInt64(),
+              let offsetCount = reader.readUInt64(),
+              offsetCount <= UInt64(Int.max) else {
+            return nil
+        }
+
+        var offsets: [Int64] = []
+        offsets.reserveCapacity(Int(offsetCount))
+        for _ in 0..<offsetCount {
+            guard let offset = reader.readInt64() else { return nil }
+            offsets.append(offset)
+        }
+
+        guard reader.isFinished else { return nil }
+        self.version = Int(version)
+        self.fileLength = fileLength
+        self.modificationTime = modificationTime
+        self.delimiter = delimiter
+        self.headerStart = headerStart
+        self.headerEnd = headerEnd
+        self.offsets = offsets
+    }
+
+    func encoded() -> Data {
+        var data = Data()
+        data.reserveCapacity(VirtualCsvDocument.sidecarMagic.count + 49 + offsets.count * MemoryLayout<Int64>.size)
+        data.append(contentsOf: VirtualCsvDocument.sidecarMagic)
+        data.appendLittleEndian(UInt64(version))
+        data.appendLittleEndian(fileLength)
+        data.appendLittleEndian(modificationTime.bitPattern)
+        data.append(delimiter)
+        data.appendLittleEndian(headerStart)
+        data.appendLittleEndian(headerEnd)
+        data.appendLittleEndian(UInt64(offsets.count))
+        for offset in offsets {
+            data.appendLittleEndian(offset)
+        }
+        return data
+    }
+}
+
+private struct BinarySidecarReader {
+    let data: Data
+    var offset = 0
+
+    var isFinished: Bool {
+        offset == data.count
+    }
+
+    mutating func readMagic(_ magic: [UInt8]) -> Bool {
+        guard data.count >= magic.count else { return false }
+        for index in magic.indices where data[index] != magic[index] {
+            return false
+        }
+        offset = magic.count
+        return true
+    }
+
+    mutating func readUInt8() -> UInt8? {
+        guard offset < data.count else { return nil }
+        defer { offset += 1 }
+        return data[offset]
+    }
+
+    mutating func readUInt64() -> UInt64? {
+        guard offset + MemoryLayout<UInt64>.size <= data.count else { return nil }
+        var value: UInt64 = 0
+        for index in 0..<MemoryLayout<UInt64>.size {
+            value |= UInt64(data[offset + index]) << UInt64(index * 8)
+        }
+        offset += MemoryLayout<UInt64>.size
+        return value
+    }
+
+    mutating func readInt64() -> Int64? {
+        readUInt64().map { Int64(bitPattern: $0) }
+    }
+
+    mutating func readDouble() -> Double? {
+        readUInt64().map { Double(bitPattern: $0) }
+    }
+}
+
+private extension Data {
+    mutating func appendLittleEndian(_ value: UInt64) {
+        var littleEndianValue = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndianValue) { append(contentsOf: $0) }
+    }
+
+    mutating func appendLittleEndian(_ value: Int64) {
+        appendLittleEndian(UInt64(bitPattern: value))
     }
 }
