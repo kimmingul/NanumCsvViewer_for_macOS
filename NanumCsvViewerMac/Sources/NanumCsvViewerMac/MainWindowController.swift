@@ -840,7 +840,7 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(togglePersistentIndex(_:)):
                 menuItem.state = VirtualCsvDocument.persistentIndexEnabled ? .on : .off
                 return true
-            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)):
+            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)):
                 return ready
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
@@ -1487,6 +1487,60 @@ extension MainWindowController {
         }
     }
 
+    @objc func showCorrelation(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let x = firstNumericColumn(excluding: -1) ?? currentDataColumn
+        let y = firstNumericColumn(excluding: x) ?? currentDataColumn
+        do {
+            let pearson = try doc.correlation(xColumn: x, yColumn: y, method: .pearson, cancellation: CancellationFlag())
+            let spearman = try doc.correlation(xColumn: x, yColumn: y, method: .spearman, cancellation: CancellationFlag())
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("Correlation", "상관분석")
+            detailTextView.string = formatCorrelation(pearson, spearman: spearman, xColumn: x, yColumn: y)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func showTTest(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let groupColumn = firstNonNumericColumn(excluding: -1) ?? currentDataColumn
+        let valueColumn = firstNumericColumn(excluding: groupColumn) ?? currentDataColumn
+        guard let groups = topGroups(column: groupColumn, limit: 2), groups.count == 2 else {
+            statusLabel.stringValue = L.t("Need at least two groups.", "두 개 이상의 그룹이 필요합니다.")
+            return
+        }
+        do {
+            let result = try doc.independentTTest(groupColumn: groupColumn, valueColumn: valueColumn, groupA: groups[0], groupB: groups[1], cancellation: CancellationFlag())
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("t-test", "t-검정")
+            detailTextView.string = formatIndependentTTest(result, groupColumn: groupColumn, valueColumn: valueColumn)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func showChiSquare(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let rowColumn = firstNonNumericColumn(excluding: -1) ?? currentDataColumn
+        let columnColumn = firstNonNumericColumn(excluding: rowColumn) ?? min(rowColumn + 1, max(0, columnNames.count - 1))
+        do {
+            let result = try doc.chiSquareTest(rowColumn: rowColumn, columnColumn: columnColumn, cancellation: CancellationFlag())
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("Chi-square Test", "카이제곱 검정")
+            detailTextView.string = formatChiSquare(result, rowColumn: rowColumn, columnColumn: columnColumn)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func showQuickStats(_ sender: Any?) {
+        guard csvDocument != nil else { return }
+        let column = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        setInspectorVisible(true, animated: true)
+        renderColumnStatistics(column: column)
+    }
+
     @objc func changeEncoding(_ sender: Any?) {
         guard let doc = csvDocument, !busy else { return }
         let name = encodingPopup.titleOfSelectedItem ?? CsvEncodingName.utf8
@@ -2007,6 +2061,10 @@ extension MainWindowController {
         }?.index
     }
 
+    func topGroups(column: Int, limit: Int) -> [String]? {
+        columnStatisticsReport?.columns[safe: column]?.topValues.prefix(limit).map(\.value)
+    }
+
     func formatNumericDistribution(_ distribution: NumericDistribution) -> String {
         let name = columnNames[safe: distribution.column] ?? L.t("Column \(distribution.column + 1)", "\(distribution.column + 1)열")
         var lines = [
@@ -2100,6 +2158,61 @@ extension MainWindowController {
         }
         if pivot.rowKeys.count > 80 {
             lines.append("...")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func formatCorrelation(_ pearson: CorrelationResult, spearman: CorrelationResult, xColumn: Int, yColumn: Int) -> String {
+        let xName = columnNames[safe: xColumn] ?? L.t("Column \(xColumn + 1)", "\(xColumn + 1)열")
+        let yName = columnNames[safe: yColumn] ?? L.t("Column \(yColumn + 1)", "\(yColumn + 1)열")
+        return [
+            "\(xName) vs \(yName)",
+            "",
+            "Pearson r: \(formatNumber(pearson.coefficient))",
+            "Pearson p-value: \(formatNumber(pearson.pValue))",
+            pearson.interpretation,
+            "",
+            "Spearman rho: \(formatNumber(spearman.coefficient))",
+            "Spearman p-value: \(formatNumber(spearman.pValue))",
+            spearman.interpretation,
+            "",
+            "n: \(pearson.sampleSize.formatted())"
+        ].joined(separator: "\n")
+    }
+
+    func formatIndependentTTest(_ result: IndependentTTestResult, groupColumn: Int, valueColumn: Int) -> String {
+        let groupName = columnNames[safe: groupColumn] ?? L.t("Column \(groupColumn + 1)", "\(groupColumn + 1)열")
+        let valueName = columnNames[safe: valueColumn] ?? L.t("Column \(valueColumn + 1)", "\(valueColumn + 1)열")
+        return [
+            "\(valueName) by \(groupName)",
+            "",
+            "\(result.groupA) mean: \(formatNumber(result.meanA))",
+            "\(result.groupB) mean: \(formatNumber(result.meanB))",
+            "t: \(formatNumber(result.tStatistic))",
+            "df: \(formatNumber(result.degreesOfFreedom))",
+            "p-value: \(formatNumber(result.pValue))",
+            "95% CI: \(formatNumber(result.confidenceIntervalLow)) to \(formatNumber(result.confidenceIntervalHigh))",
+            "Effect size: \(formatNumber(result.effectSize))",
+            result.interpretation
+        ].joined(separator: "\n")
+    }
+
+    func formatChiSquare(_ result: ChiSquareResult, rowColumn: Int, columnColumn: Int) -> String {
+        let rowName = columnNames[safe: rowColumn] ?? L.t("Column \(rowColumn + 1)", "\(rowColumn + 1)열")
+        let columnName = columnNames[safe: columnColumn] ?? L.t("Column \(columnColumn + 1)", "\(columnColumn + 1)열")
+        var lines = [
+            "\(rowName) x \(columnName)",
+            "",
+            "Chi-square: \(formatNumber(result.statistic))",
+            "df: \(result.degreesOfFreedom)",
+            "p-value: \(formatNumber(result.pValue))",
+            result.interpretation,
+            "",
+            ([rowName] + result.columnLabels).joined(separator: "\t")
+        ]
+        for (index, rowLabel) in result.rowLabels.enumerated() {
+            let fields = [rowLabel] + result.observed[index].map { formatNumber($0) }
+            lines.append(fields.joined(separator: "\t"))
         }
         return lines.joined(separator: "\n")
     }

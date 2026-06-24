@@ -830,6 +830,58 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         )
     }
 
+    public func correlation(xColumn: Int, yColumn: Int, method: CorrelationMethod, cancellation: CancellationFlag) throws -> CorrelationResult {
+        let pairs = try currentDisplayRows(cancellation: cancellation).compactMap { row -> (Double, Double)? in
+            guard xColumn < row.count, yColumn < row.count,
+                  let x = Double(row[xColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let y = Double(row[yColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                return nil
+            }
+            return (x, y)
+        }
+        return CsvStatistics.correlation(pairs: pairs, method: method)
+    }
+
+    public func independentTTest(groupColumn: Int, valueColumn: Int, groupA: String, groupB: String, cancellation: CancellationFlag) throws -> IndependentTTestResult {
+        var a: [Double] = []
+        var b: [Double] = []
+        for row in try currentDisplayRows(cancellation: cancellation) {
+            guard groupColumn < row.count, valueColumn < row.count,
+                  let value = Double(row[valueColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                continue
+            }
+            if row[groupColumn] == groupA {
+                a.append(value)
+            } else if row[groupColumn] == groupB {
+                b.append(value)
+            }
+        }
+        return CsvStatistics.independentTTest(groupA: groupA, a: a, groupB: groupB, b: b)
+    }
+
+    public func pairedTTest(beforeColumn: Int, afterColumn: Int, cancellation: CancellationFlag) throws -> PairedTTestResult {
+        var before: [Double] = []
+        var after: [Double] = []
+        for row in try currentDisplayRows(cancellation: cancellation) {
+            guard beforeColumn < row.count, afterColumn < row.count,
+                  let b = Double(row[beforeColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let a = Double(row[afterColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                continue
+            }
+            before.append(b)
+            after.append(a)
+        }
+        return CsvStatistics.pairedTTest(before: before, after: after)
+    }
+
+    public func chiSquareTest(rowColumn: Int, columnColumn: Int, cancellation: CancellationFlag) throws -> ChiSquareResult {
+        let pairs = try currentDisplayRows(cancellation: cancellation).compactMap { row -> (String, String)? in
+            guard rowColumn < row.count, columnColumn < row.count else { return nil }
+            return (row[rowColumn], row[columnColumn])
+        }
+        return CsvStatistics.chiSquare(rows: pairs)
+    }
+
     public func applyFilter(_ predicate: @escaping ([String]) -> Bool, progress: ((Int) -> Void)?, cancellation: CancellationFlag) throws {
         let total = dataRowsAvailable
         var matches: [Int] = []

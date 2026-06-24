@@ -152,6 +152,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pivot = NSMenuItem(title: L.t("Pivot Table", "피벗 테이블"), action: #selector(MainWindowController.showPivotTable(_:)), keyEquivalent: "")
         pivot.target = target
         analysisMenu.addItem(pivot)
+        analysisMenu.addItem(.separator())
+        let correlation = NSMenuItem(title: L.t("Correlation", "상관분석"), action: #selector(MainWindowController.showCorrelation(_:)), keyEquivalent: "")
+        correlation.target = target
+        analysisMenu.addItem(correlation)
+        let tTest = NSMenuItem(title: L.t("t-test", "t-검정"), action: #selector(MainWindowController.showTTest(_:)), keyEquivalent: "")
+        tTest.target = target
+        analysisMenu.addItem(tTest)
+        let chiSquare = NSMenuItem(title: L.t("Chi-square Test", "카이제곱 검정"), action: #selector(MainWindowController.showChiSquare(_:)), keyEquivalent: "")
+        chiSquare.target = target
+        analysisMenu.addItem(chiSquare)
+        let quickStats = NSMenuItem(title: L.t("Quick Stats", "빠른 통계"), action: #selector(MainWindowController.showQuickStats(_:)), keyEquivalent: "")
+        quickStats.target = target
+        analysisMenu.addItem(quickStats)
 
         let helpItem = NSMenuItem(title: L.t("Help", "도움말"), action: nil, keyEquivalent: "")
         mainMenu.addItem(helpItem)
