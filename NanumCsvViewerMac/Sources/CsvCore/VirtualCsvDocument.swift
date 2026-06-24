@@ -761,6 +761,44 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
     }
 
+    public func findDuplicates(columns: [Int], cancellation: CancellationFlag) throws -> [DuplicateGroup] {
+        let columns = columns.filter { $0 >= 0 && $0 < columnCount }
+        guard !columns.isEmpty else { return [] }
+        var rows: [(fields: [String], sourceRow: Int64)] = []
+        rows.reserveCapacity(displayRowCount)
+        for viewRow in 0..<displayRowCount {
+            if viewRow & 0x3FFF == 0 { try cancellation.check() }
+            rows.append((try getDisplayRow(viewRow), getSourceRowNumber(viewRow)))
+        }
+        return CsvAnalytics.findDuplicates(rows: rows, columns: columns)
+    }
+
+    public func groupBy(groupColumns: [Int], valueColumn: Int, functions: [AggregationFunction], cancellation: CancellationFlag) throws -> GroupByResult {
+        let groupColumns = groupColumns.filter { $0 >= 0 && $0 < columnCount }
+        guard !groupColumns.isEmpty, valueColumn >= 0, valueColumn < columnCount else {
+            return GroupByResult(groupColumns: groupColumns, valueColumn: valueColumn, functions: functions, rows: [])
+        }
+        let rows = try currentDisplayRows(cancellation: cancellation)
+        return CsvAnalytics.groupBy(rows: rows, groupColumns: groupColumns, valueColumn: valueColumn, functions: functions)
+    }
+
+    public func numericDistribution(column: Int, binCount: Int = 10, cancellation: CancellationFlag) throws -> NumericDistribution {
+        guard column >= 0, column < columnCount else {
+            return CsvAnalytics.numericDistribution(values: [], column: column, binCount: binCount)
+        }
+        let values = try currentDisplayRows(cancellation: cancellation).compactMap { row -> Double? in
+            guard column < row.count else { return nil }
+            return Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return CsvAnalytics.numericDistribution(values: values, column: column, binCount: binCount)
+    }
+
+    public func dateHistogram(dateColumn: Int, valueColumn: Int? = nil, period: DateBinPeriod, cancellation: CancellationFlag) throws -> DateHistogram {
+        let rows = try currentDisplayRows(cancellation: cancellation)
+        let valueColumn = valueColumn.flatMap { $0 >= 0 && $0 < columnCount ? $0 : nil }
+        return CsvAnalytics.dateHistogram(rows: rows, dateColumn: dateColumn, valueColumn: valueColumn, period: period)
+    }
+
     public func applyFilter(_ predicate: @escaping ([String]) -> Bool, progress: ((Int) -> Void)?, cancellation: CancellationFlag) throws {
         let total = dataRowsAvailable
         var matches: [Int] = []
@@ -979,6 +1017,16 @@ public final class VirtualCsvDocument: @unchecked Sendable {
 
     public func clearView() {
         setViewMap(nil)
+    }
+
+    private func currentDisplayRows(cancellation: CancellationFlag) throws -> [[String]] {
+        var rows: [[String]] = []
+        rows.reserveCapacity(displayRowCount)
+        for viewRow in 0..<displayRowCount {
+            if viewRow & 0x3FFF == 0 { try cancellation.check() }
+            rows.append(try getDisplayRow(viewRow))
+        }
+        return rows
     }
 
     private static func csvEscaped(_ value: String) -> String {

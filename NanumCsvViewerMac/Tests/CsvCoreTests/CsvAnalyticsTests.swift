@@ -1,0 +1,99 @@
+import Foundation
+import XCTest
+@testable import CsvCore
+
+final class CsvAnalyticsTests: XCTestCase {
+    private func openIndexed(_ content: String) throws -> (VirtualCsvDocument, String) {
+        let path = try temporaryPath()
+        try content.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        let doc = try VirtualCsvDocument.open(path: path)
+        try doc.runIndexing(progress: { _ in }, cancellation: CancellationFlag())
+        return (doc, path)
+    }
+
+    func testFindDuplicatesUsesSelectedColumnsAndReportsSourceRows() throws {
+        let (doc, path) = try openIndexed("""
+        patient,visit,value
+        P1,2026-01-01,10
+        P1,2026-01-01,11
+        P2,2026-01-02,20
+        P2,2026-01-03,21
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let duplicates = try doc.findDuplicates(columns: [0, 1], cancellation: CancellationFlag())
+
+        XCTAssertEqual(duplicates.count, 1)
+        XCTAssertEqual(duplicates[0].key, ["P1", "2026-01-01"])
+        XCTAssertEqual(duplicates[0].sourceRows, [1, 2])
+    }
+
+    func testGroupByAggregatesFilteredRows() throws {
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,T,10
+        A,T,20
+        A,C,30
+        B,T,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        try doc.filterColumnContains(column: 1, term: "T", withinCurrentView: false, progress: nil, cancellation: CancellationFlag())
+        let result = try doc.groupBy(
+            groupColumns: [0],
+            valueColumn: 2,
+            functions: [.count, .sum, .mean, .median, .min, .max, .uniqueCount, .standardDeviation],
+            cancellation: CancellationFlag()
+        )
+
+        XCTAssertEqual(result.rows.count, 2)
+        XCTAssertEqual(result.rows[0].key, ["A"])
+        XCTAssertEqual(result.rows[0].values[.count], 2)
+        XCTAssertEqual(result.rows[0].values[.sum], 30)
+        XCTAssertEqual(result.rows[0].values[.mean], 15)
+        XCTAssertEqual(result.rows[0].values[.median], 15)
+        XCTAssertEqual(result.rows[0].values[.min], 10)
+        XCTAssertEqual(result.rows[0].values[.max], 20)
+        XCTAssertEqual(result.rows[0].values[.uniqueCount], 2)
+        XCTAssertEqual(result.rows[1].key, ["B"])
+        XCTAssertEqual(result.rows[1].values[.count], 1)
+    }
+
+    func testNumericDistributionBuildsHistogramAndBoxPlot() throws {
+        let (doc, path) = try openIndexed("value\n1\n2\n3\n4\n5\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let distribution = try doc.numericDistribution(column: 0, binCount: 2, cancellation: CancellationFlag())
+
+        XCTAssertEqual(distribution.count, 5)
+        XCTAssertEqual(distribution.min, 1)
+        XCTAssertEqual(distribution.max, 5)
+        XCTAssertEqual(distribution.median, 3)
+        XCTAssertEqual(distribution.q1, 2)
+        XCTAssertEqual(distribution.q3, 4)
+        XCTAssertEqual(distribution.bins.map(\.count), [2, 3])
+    }
+
+    func testDateHistogramBinsByMonth() throws {
+        let (doc, path) = try openIndexed("""
+        visit_date,value
+        2026-01-01,10
+        2026-01-15,20
+        2026-02-01,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let histogram = try doc.dateHistogram(dateColumn: 0, valueColumn: 1, period: .month, cancellation: CancellationFlag())
+
+        XCTAssertEqual(histogram.bins.count, 2)
+        XCTAssertEqual(histogram.bins[0].label, "2026-01")
+        XCTAssertEqual(histogram.bins[0].count, 2)
+        XCTAssertEqual(histogram.bins[0].sum, 30)
+        XCTAssertEqual(histogram.bins[0].average, 15)
+        XCTAssertEqual(histogram.bins[1].label, "2026-02")
+        XCTAssertEqual(histogram.bins[1].count, 1)
+    }
+}

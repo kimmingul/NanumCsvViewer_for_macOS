@@ -133,6 +133,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         encodingItem.submenu = encodingMenu
         viewMenu.addItem(encodingItem)
 
+        let analysisItem = NSMenuItem(title: L.t("Analysis", "분석"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(analysisItem)
+        let analysisMenu = NSMenu(title: analysisItem.title)
+        analysisItem.submenu = analysisMenu
+        let numeric = NSMenuItem(title: L.t("Numeric Distribution", "숫자 분포"), action: #selector(MainWindowController.showNumericDistribution(_:)), keyEquivalent: "")
+        numeric.target = target
+        analysisMenu.addItem(numeric)
+        let dateHistogram = NSMenuItem(title: L.t("Date Histogram", "날짜 히스토그램"), action: #selector(MainWindowController.showDateHistogram(_:)), keyEquivalent: "")
+        dateHistogram.target = target
+        analysisMenu.addItem(dateHistogram)
+        let duplicates = NSMenuItem(title: L.t("Find Duplicates", "중복 찾기"), action: #selector(MainWindowController.showDuplicateRows(_:)), keyEquivalent: "")
+        duplicates.target = target
+        analysisMenu.addItem(duplicates)
+        let groupBy = NSMenuItem(title: L.t("Group By", "그룹화"), action: #selector(MainWindowController.showGroupBy(_:)), keyEquivalent: "")
+        groupBy.target = target
+        analysisMenu.addItem(groupBy)
+
         let helpItem = NSMenuItem(title: L.t("Help", "도움말"), action: nil, keyEquivalent: "")
         mainMenu.addItem(helpItem)
         let helpMenu = NSMenu(title: helpItem.title)

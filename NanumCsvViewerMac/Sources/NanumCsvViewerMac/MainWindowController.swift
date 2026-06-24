@@ -840,6 +840,8 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(togglePersistentIndex(_:)):
                 menuItem.state = VirtualCsvDocument.persistentIndexEnabled ? .on : .off
                 return true
+            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)):
+                return ready
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
                     menuItem.state = name == csvDocument?.encodingName ? .on : .off
@@ -1403,6 +1405,67 @@ extension MainWindowController {
         renderColumnStatistics(column: column)
     }
 
+    @objc func showNumericDistribution(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let column = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        do {
+            let distribution = try doc.numericDistribution(column: column, binCount: 10, cancellation: CancellationFlag())
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("Numeric Distribution", "숫자 분포")
+            detailTextView.string = formatNumericDistribution(distribution)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func showDateHistogram(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let dateColumn = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        let valueColumn = firstNumericColumn(excluding: dateColumn)
+        do {
+            let histogram = try doc.dateHistogram(dateColumn: dateColumn, valueColumn: valueColumn, period: .month, cancellation: CancellationFlag())
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("Date Histogram", "날짜 히스토그램")
+            detailTextView.string = formatDateHistogram(histogram)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func showDuplicateRows(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let first = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        let second = min(first + 1, max(0, columnNames.count - 1))
+        let columns = first == second ? [first] : [first, second]
+        do {
+            let duplicates = try doc.findDuplicates(columns: columns, cancellation: CancellationFlag())
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("Duplicate Rows", "중복 행")
+            detailTextView.string = formatDuplicates(duplicates, columns: columns)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func showGroupBy(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let groupColumn = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        let valueColumn = firstNumericColumn(excluding: groupColumn) ?? groupColumn
+        do {
+            let result = try doc.groupBy(
+                groupColumns: [groupColumn],
+                valueColumn: valueColumn,
+                functions: [.count, .sum, .mean, .median, .min, .max, .uniqueCount, .standardDeviation],
+                cancellation: CancellationFlag()
+            )
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("Group By", "그룹화")
+            detailTextView.string = formatGroupBy(result)
+        } catch {
+            presentError(error)
+        }
+    }
+
     @objc func changeEncoding(_ sender: Any?) {
         guard let doc = csvDocument, !busy else { return }
         let name = encodingPopup.titleOfSelectedItem ?? CsvEncodingName.utf8
@@ -1909,6 +1972,87 @@ extension MainWindowController {
         }
 
         detailTextView.string = lines.joined(separator: "\n")
+    }
+
+    func firstNumericColumn(excluding excluded: Int) -> Int? {
+        columnStatisticsReport?.columns.first {
+            $0.index != excluded && [.integer, .float].contains($0.inferredType)
+        }?.index
+    }
+
+    func formatNumericDistribution(_ distribution: NumericDistribution) -> String {
+        let name = columnNames[safe: distribution.column] ?? L.t("Column \(distribution.column + 1)", "\(distribution.column + 1)열")
+        var lines = [
+            name,
+            "",
+            "Count: \(distribution.count.formatted())",
+            "Min: \(formatNumber(distribution.min))",
+            "Q1: \(formatNumber(distribution.q1))",
+            "Median: \(formatNumber(distribution.median))",
+            "Q3: \(formatNumber(distribution.q3))",
+            "Max: \(formatNumber(distribution.max))",
+            "Mean: \(formatNumber(distribution.mean))",
+            "Std: \(formatNumber(distribution.standardDeviation))",
+            "",
+            L.t("Histogram", "히스토그램")
+        ]
+        for bin in distribution.bins {
+            lines.append("\(formatNumber(bin.lowerBound)) - \(formatNumber(bin.upperBound)): \(bin.count.formatted())")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func formatDateHistogram(_ histogram: DateHistogram) -> String {
+        let dateName = columnNames[safe: histogram.dateColumn] ?? L.t("Column \(histogram.dateColumn + 1)", "\(histogram.dateColumn + 1)열")
+        var lines = [
+            dateName,
+            L.t("Period: \(histogram.period.rawValue)", "단위: \(histogram.period.rawValue)"),
+            ""
+        ]
+        for bin in histogram.bins {
+            if let sum = bin.sum, let average = bin.average {
+                lines.append("\(bin.label): count \(bin.count.formatted()), sum \(formatNumber(sum)), avg \(formatNumber(average))")
+            } else {
+                lines.append("\(bin.label): \(bin.count.formatted())")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func formatDuplicates(_ duplicates: [DuplicateGroup], columns: [Int]) -> String {
+        let names = columns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
+        var lines = [
+            names,
+            "",
+            L.t("Duplicate groups: \(duplicates.count.formatted())", "중복 그룹: \(duplicates.count.formatted())")
+        ]
+        for group in duplicates.prefix(100) {
+            lines.append("\(group.key.joined(separator: " | ")) -> rows \(group.sourceRows.map { $0.formatted() }.joined(separator: ", "))")
+        }
+        if duplicates.count > 100 {
+            lines.append("...")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func formatGroupBy(_ result: GroupByResult) -> String {
+        let groupNames = result.groupColumns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
+        let valueName = columnNames[safe: result.valueColumn] ?? L.t("Column \(result.valueColumn + 1)", "\(result.valueColumn + 1)열")
+        var lines = [
+            L.t("Group: \(groupNames)", "그룹: \(groupNames)"),
+            L.t("Value: \(valueName)", "값: \(valueName)"),
+            ""
+        ]
+        for row in result.rows.prefix(100) {
+            let metrics = result.functions.map { function in
+                "\(function.rawValue)=\(formatNumber(row.values[function] ?? 0))"
+            }.joined(separator: ", ")
+            lines.append("\(row.key.joined(separator: " | ")): \(metrics)")
+        }
+        if result.rows.count > 100 {
+            lines.append("...")
+        }
+        return lines.joined(separator: "\n")
     }
 
     func scheduleDetailPanelUpdate() {
