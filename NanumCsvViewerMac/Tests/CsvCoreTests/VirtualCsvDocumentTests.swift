@@ -191,6 +191,65 @@ final class VirtualCsvDocumentTests: XCTestCase {
             }
         }
     }
+
+    func testColumnStatisticsInfersTypesAndSummariesFromSample() throws {
+        let (doc, path) = try openIndexed("""
+        id,age,score,enrolled,visit_date,site
+        1,42,10.5,true,2026-01-02,A
+        2,,11.5,false,2026-01-03,A
+        3,65,9.0,true,2026-01-04,B
+        4,65,12.0,true,,B
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let stats = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+
+        XCTAssertEqual(stats.rowSampleCount, 4)
+        XCTAssertEqual(stats.columns[1].inferredType, .integer)
+        XCTAssertEqual(stats.columns[1].nullCount, 1)
+        XCTAssertEqual(stats.columns[1].nonNullCount, 3)
+        XCTAssertEqual(stats.columns[1].uniqueCount, 2)
+        XCTAssertEqual(stats.columns[1].numeric?.min, 42)
+        XCTAssertEqual(stats.columns[1].numeric?.max, 65)
+        XCTAssertEqual(stats.columns[1].numeric?.median, 65)
+        XCTAssertEqual(stats.columns[2].inferredType, .float)
+        XCTAssertEqual(stats.columns[3].inferredType, .boolean)
+        XCTAssertEqual(stats.columns[4].inferredType, .date)
+        XCTAssertEqual(stats.columns[5].inferredType, .categorical)
+        XCTAssertEqual(stats.columns[5].topValues.first?.value, "A")
+        XCTAssertEqual(stats.columns[5].topValues.first?.count, 2)
+    }
+
+    func testExpressionFilterSupportsComparisonContainsAndBooleanLogic() throws {
+        let (doc, path) = try openIndexed("""
+        name,age,sex,note
+        Alice,70,F,positive response
+        Bob,55,M,negative
+        Chris,72,M,positive response
+        Dana,40,F,pending
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let filter = try AdvancedFilterExpression.compile(#"age > 65 AND sex == "M" AND note contains "positive""#, headers: doc.header)
+        try doc.applyFilter(filter.predicate, progress: nil, cancellation: CancellationFlag())
+
+        XCTAssertEqual(doc.displayRowCount, 1)
+        XCTAssertEqual(try doc.getDisplayRow(0)[0], "Chris")
+        XCTAssertEqual(doc.getSourceRowNumber(0), 3)
+    }
+
+    func testDisplayIndexForSourceRowFindsRowsAfterFiltering() throws {
+        let (doc, path) = try openIndexed("name,city\nAlice,NY\nBob,LA\nCarol,NY\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        try doc.applyFilter({ $0.count > 1 && $0[1] == "NY" }, progress: nil, cancellation: CancellationFlag())
+
+        XCTAssertEqual(doc.displayIndexForSourceRowNumber(3), 1)
+        XCTAssertNil(doc.displayIndexForSourceRowNumber(2))
+        XCTAssertNil(doc.displayIndexForSourceRowNumber(0))
+    }
 }
 
 func temporaryPath() throws -> String {

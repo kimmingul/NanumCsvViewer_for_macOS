@@ -61,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let findNext = NSMenuItem(title: L.t("Find Next", "다음 찾기"), action: #selector(MainWindowController.findNext(_:)), keyEquivalent: "\u{F704}")
         findNext.target = target
         editMenu.addItem(findNext)
+        let goToRow = NSMenuItem(title: L.t("Go to Row...", "행으로 이동..."), action: #selector(MainWindowController.goToRow(_:)), keyEquivalent: "g")
+        goToRow.target = target
+        editMenu.addItem(goToRow)
         editMenu.addItem(.separator())
         let copyCell = NSMenuItem(title: L.t("Copy Cell", "셀 복사"), action: #selector(MainWindowController.copySelectedCellToPasteboard(_:)), keyEquivalent: "c")
         copyCell.target = target
@@ -99,6 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let details = NSMenuItem(title: L.t("Toggle Inspector", "인스펙터 토글"), action: #selector(MainWindowController.toggleDetailPanel(_:)), keyEquivalent: "\u{F705}")
         details.target = target
         viewMenu.addItem(details)
+        let statistics = NSMenuItem(title: L.t("Column Statistics", "컬럼 통계"), action: #selector(MainWindowController.showColumnStatistics(_:)), keyEquivalent: "i")
+        statistics.keyEquivalentModifierMask = [.command, .option]
+        statistics.target = target
+        viewMenu.addItem(statistics)
         viewMenu.addItem(.separator())
         let encodingItem = NSMenuItem(title: L.t("Encoding", "인코딩"), action: nil, keyEquivalent: "")
         let encodingMenu = NSMenu(title: encodingItem.title)

@@ -58,6 +58,7 @@ final class MainWindowController: NSWindowController {
     private var textFilterColumn = -1
     private var valueConditions: [(description: String, predicate: ([String]) -> Bool)] = []
     private var detailUpdateWorkItem: DispatchWorkItem?
+    private var columnStatisticsReport: ColumnStatisticsReport?
 
     private var hasAnyFilter: Bool {
         textCondition != nil || !valueConditions.isEmpty
@@ -697,7 +698,7 @@ extension MainWindowController: NSToolbarDelegate {
         filterColumnPopup.controlSize = .small
         filterColumnPopup.widthAnchor.constraint(equalToConstant: 150).isActive = true
 
-        filterField.placeholderString = L.t("Filter", "필터")
+        filterField.placeholderString = L.t("Filter or expression", "필터 또는 표현식")
         filterField.target = self
         filterField.action = #selector(applyTextFilter(_:))
         filterField.controlSize = .small
@@ -795,6 +796,8 @@ extension MainWindowController: NSMenuItemValidation {
                 return true
             case #selector(focusFindField(_:)), #selector(findNext(_:)):
                 return hasDocument && !busy
+            case #selector(goToRow(_:)):
+                return hasDocument && !busy
             case #selector(copySelectedCellToPasteboard(_:)):
                 return hasDocument && hasSelection
             case #selector(applyTextFilter(_:)), #selector(filterBySelectedCell(_:)), #selector(sortAscending(_:)), #selector(sortDescending(_:)):
@@ -809,6 +812,8 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(toggleDetailPanel(_:)):
                 menuItem.state = isInspectorVisible ? .on : .off
                 return hasDocument
+            case #selector(showColumnStatistics(_:)):
+                return ready
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
                     menuItem.state = name == csvDocument?.encodingName ? .on : .off
@@ -841,6 +846,7 @@ extension MainWindowController {
             let doc = try VirtualCsvDocument.open(path: url.path)
             csvDocument = doc
             indexingElapsed = nil
+            columnStatisticsReport = nil
             window?.title = "Nanum CSV Viewer - \(url.lastPathComponent)"
             resetViewState()
             buildColumns(from: doc.header)
@@ -920,6 +926,7 @@ extension MainWindowController {
         refreshRowCount()
         updateFeatureState()
         statusLabel.stringValue = ""
+        refreshColumnStatistics(for: doc)
     }
 
     private func startRowTimer() {
@@ -1054,14 +1061,34 @@ extension MainWindowController {
 
         let selected = filterColumnPopup.indexOfSelectedItem
         let column = selected <= 0 ? -1 : selected - 1
-        let predicate = Self.containsPredicate(term: term, column: column)
-        let columnName = column < 0 ? L.t("all columns", "전체 열") : columnNames[safe: column] ?? L.t("column \(column + 1)", "\(column + 1)열")
-        textCondition = predicate
-        textConditionDescription = L.t("\(columnName) contains \"\(truncated(term))\"", "\(columnName)에 \"\(truncated(term))\" 포함")
+        let compiledExpression: CompiledAdvancedFilter?
+        if Self.looksLikeExpression(term) {
+            do {
+                compiledExpression = try AdvancedFilterExpression.compile(term, headers: doc.header)
+            } catch {
+                presentError(error)
+                return
+            }
+        } else {
+            compiledExpression = nil
+        }
+
+        let activePredicate: ([String]) -> Bool
+        if let compiledExpression {
+            activePredicate = compiledExpression.predicate
+            textCondition = activePredicate
+            textConditionDescription = L.t("expression: \(truncated(term))", "표현식: \(truncated(term))")
+        } else {
+            let predicate = Self.containsPredicate(term: term, column: column)
+            activePredicate = predicate
+            let columnName = column < 0 ? L.t("all columns", "전체 열") : columnNames[safe: column] ?? L.t("column \(column + 1)", "\(column + 1)열")
+            textCondition = activePredicate
+            textConditionDescription = L.t("\(columnName) contains \"\(truncated(term))\"", "\(columnName)에 \"\(truncated(term))\" 포함")
+        }
         textFilterTerm = term
         textFilterColumn = column
         setFilterBarVisible(true)
-        let canUseColumnFastPath = column >= 0 && (!hadTextCondition || valueConditions.isEmpty)
+        let canUseColumnFastPath = compiledExpression == nil && column >= 0 && (!hadTextCondition || valueConditions.isEmpty)
         if canUseColumnFastPath {
             let withinCurrentView = !hadTextCondition && !valueConditions.isEmpty
             runViewOperation(message: L.t("Applying filter...", "필터 적용 중...")) { flag, progress in
@@ -1073,7 +1100,7 @@ extension MainWindowController {
             rebuildFilter(message: L.t("Applying filter...", "필터 적용 중..."))
         } else {
             runViewOperation(message: L.t("Applying filter...", "필터 적용 중...")) { flag, progress in
-                try doc.filterWithinView(predicate, progress: progress, cancellation: flag)
+                try doc.filterWithinView(activePredicate, progress: progress, cancellation: flag)
             } completion: { [weak self] in
                 self?.updateFilterStatus()
             }
@@ -1160,6 +1187,19 @@ extension MainWindowController {
         return { row in
             column < row.count && row[column].range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
+    }
+
+    private nonisolated static func looksLikeExpression(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        return lowered.contains(" and ")
+            || lowered.contains(" or ")
+            || lowered.contains(" contains ")
+            || lowered.contains("==")
+            || lowered.contains("!=")
+            || lowered.contains(">=")
+            || lowered.contains("<=")
+            || lowered.contains(" > ")
+            || lowered.contains(" < ")
     }
 
     private func updateFilterStatus() {
@@ -1280,6 +1320,42 @@ extension MainWindowController {
 
     @objc func toggleFilterBar(_ sender: Any?) {
         setFilterBarVisible(filterBarView.isHidden, focus: true)
+    }
+
+    @objc func goToRow(_ sender: Any?) {
+        guard let doc = csvDocument, !busy else { return }
+        let alert = NSAlert()
+        alert.messageText = L.t("Go to Row", "행으로 이동")
+        alert.informativeText = L.t("Enter a source row number.", "원본 행 번호를 입력하세요.")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        input.placeholderString = "1"
+        if tableView.selectedRow >= 0 {
+            input.stringValue = "\(doc.getSourceRowNumber(tableView.selectedRow))"
+        }
+        alert.accessoryView = input
+        alert.addButton(withTitle: L.t("Go", "이동"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let trimmed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let rowNumber = Int64(trimmed), rowNumber > 0 else {
+            statusLabel.stringValue = L.t("Enter a valid row number.", "올바른 행 번호를 입력하세요.")
+            return
+        }
+        guard let displayRow = doc.displayIndexForSourceRowNumber(rowNumber) else {
+            let suffix = doc.indexingComplete ? "" : L.t(" Indexing is still in progress.", " 아직 인덱싱 중입니다.")
+            statusLabel.stringValue = L.t("Row \(rowNumber.formatted()) is not currently visible.\(suffix)", "\(rowNumber.formatted())행은 현재 표시되지 않습니다.\(suffix)")
+            return
+        }
+        tableView.selectRowIndexes(IndexSet(integer: displayRow), byExtendingSelection: false)
+        tableView.scrollRowToVisible(displayRow)
+        statusLabel.stringValue = L.t("Moved to row \(rowNumber.formatted()).", "\(rowNumber.formatted())행으로 이동했습니다.")
+    }
+
+    @objc func showColumnStatistics(_ sender: Any?) {
+        guard csvDocument != nil else { return }
+        let column = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        setInspectorVisible(true, animated: true)
+        renderColumnStatistics(column: column)
     }
 
     @objc func changeEncoding(_ sender: Any?) {
@@ -1681,6 +1757,69 @@ private extension MainWindowController {
         }
     }
 
+    func refreshColumnStatistics(for doc: VirtualCsvDocument) {
+        let cancellation = CancellationFlag()
+        DispatchQueue.global(qos: .utility).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let report = try doc.analyzeColumns(sampleLimit: 5_000, cancellation: cancellation)
+                DispatchQueue.main.async {
+                    guard doc === self?.csvDocument else { return }
+                    self?.columnStatisticsReport = report
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard doc === self?.csvDocument else { return }
+                    self?.columnStatisticsReport = nil
+                }
+            }
+        }
+    }
+
+    func renderColumnStatistics(column: Int) {
+        guard let doc = csvDocument else { return }
+        detailHeaderLabel.stringValue = L.t("Column Statistics", "컬럼 통계")
+        guard let report = columnStatisticsReport else {
+            detailTextView.string = L.t("Statistics are still being calculated.", "통계를 계산 중입니다.")
+            refreshColumnStatistics(for: doc)
+            return
+        }
+        guard let summary = report.columns[safe: column] else {
+            detailTextView.string = ""
+            return
+        }
+
+        var lines: [String] = [
+            "\(summary.name)",
+            "",
+            L.t("Type: \(summary.inferredType.rawValue)", "타입: \(summary.inferredType.rawValue)"),
+            L.t("Sampled rows: \(report.rowSampleCount.formatted())", "샘플 행: \(report.rowSampleCount.formatted())"),
+            L.t("Null: \(summary.nullCount.formatted())", "Null: \(summary.nullCount.formatted())"),
+            L.t("Non-null: \(summary.nonNullCount.formatted())", "Non-null: \(summary.nonNullCount.formatted())"),
+            L.t("Unique: \(summary.uniqueCount.formatted())", "고유값: \(summary.uniqueCount.formatted())")
+        ]
+
+        if let numeric = summary.numeric {
+            lines.append("")
+            lines.append(L.t("Numeric", "숫자"))
+            lines.append("Min: \(formatNumber(numeric.min))")
+            lines.append("Max: \(formatNumber(numeric.max))")
+            lines.append("Mean: \(formatNumber(numeric.mean))")
+            lines.append("Median: \(formatNumber(numeric.median))")
+            lines.append("Std: \(formatNumber(numeric.standardDeviation))")
+        }
+
+        if !summary.topValues.isEmpty {
+            lines.append("")
+            lines.append(L.t("Top values", "상위 값"))
+            for value in summary.topValues.prefix(10) {
+                lines.append("\(value.value): \(value.count.formatted())")
+            }
+        }
+
+        detailTextView.string = lines.joined(separator: "\n")
+    }
+
     func scheduleDetailPanelUpdate() {
         detailUpdateWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
@@ -1820,6 +1959,13 @@ private extension MainWindowController {
             index += 1
         }
         return String(format: "%.1f %@", value, units[index])
+    }
+
+    func formatNumber(_ value: Double) -> String {
+        if value.rounded(.towardZero) == value {
+            return String(format: "%.0f", value)
+        }
+        return String(format: "%.3f", value)
     }
 
     func truncated(_ value: String) -> String {

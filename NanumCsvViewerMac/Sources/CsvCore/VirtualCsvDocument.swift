@@ -518,6 +518,15 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return Int64(dataRow) + 1
     }
 
+    public func displayIndexForSourceRowNumber(_ sourceRowNumber: Int64) -> Int? {
+        guard sourceRowNumber > 0 else { return nil }
+        let dataRow = Int(sourceRowNumber - 1)
+        if let map = viewMapSnapshot() {
+            return map.firstIndex(of: dataRow)
+        }
+        return dataRow < dataRowsAvailable ? dataRow : nil
+    }
+
     public func cachedDisplayRow(_ viewIndex: Int) -> [String]? {
         guard let dataRow = mapToDataRow(viewIndex) else { return nil }
         return cache.get(dataRow)
@@ -705,6 +714,17 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         encodingName = name
         cache.clear()
         header = try decodeAndParse(start: headerStart, end: headerEnd)
+    }
+
+    public func analyzeColumns(sampleLimit: Int = 5_000, cancellation: CancellationFlag) throws -> ColumnStatisticsReport {
+        let total = min(max(0, sampleLimit), dataRowsAvailable)
+        var rows: [[String]] = []
+        rows.reserveCapacity(total)
+        for row in 0..<total {
+            if row & 0x3FFF == 0 { try cancellation.check() }
+            rows.append(try getDataRowUncached(row))
+        }
+        return ColumnStatisticsBuilder.summarize(headers: header, rows: rows)
     }
 
     public func applyFilter(_ predicate: @escaping ([String]) -> Bool, progress: ((Int) -> Void)?, cancellation: CancellationFlag) throws {
