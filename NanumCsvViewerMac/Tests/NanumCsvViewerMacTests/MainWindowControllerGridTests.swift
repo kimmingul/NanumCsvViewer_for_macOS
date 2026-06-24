@@ -126,6 +126,28 @@ final class MainWindowControllerGridTests: XCTestCase {
         }
     }
 
+    func testLongMultilineCellsRenderAsBoundedPreview() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        let longValue = String(repeating: "abcdefghij\n", count: 80)
+        let escaped = longValue.replacingOccurrences(of: "\"", with: "\"\"")
+        try "id,note\n1,\"\(escaped)\"\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+
+        let rendered = controller.materializedDataRowForTesting(0)
+        XCTAssertEqual(rendered.first, "1")
+        XCTAssertEqual(rendered[1].count, 515)
+        XCTAssertFalse(rendered[1].contains("\n"))
+        XCTAssertTrue(rendered[1].hasSuffix("..."))
+    }
+
     private func waitUntilIndexed(_ controller: MainWindowController, file: StaticString = #filePath, line: UInt = #line) throws {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {

@@ -5,6 +5,7 @@ import AppKit
 final class MainWindowController: NSWindowController {
     private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
+    private static let tableCellPreviewLimit = 512
 
     private let tableView = CsvTableView()
     private let scrollView = NSScrollView()
@@ -1687,7 +1688,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             let column = columnIndex(from: identifier)
             do {
                 let fields = try doc.getDisplayRow(row)
-                cell.textField?.stringValue = column < fields.count ? fields[column] : ""
+                cell.textField?.stringValue = column < fields.count ? tableCellPreview(fields[column]) : ""
             } catch {
                 cell.textField?.stringValue = ""
             }
@@ -1729,6 +1730,9 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         cell.identifier = identifier
         let text = NSTextField(labelWithString: "")
         text.lineBreakMode = .byTruncatingTail
+        text.maximumNumberOfLines = 1
+        text.cell?.wraps = false
+        text.cell?.isScrollable = false
         text.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(text)
         cell.textField = text
@@ -1738,6 +1742,25 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
         ])
         return cell
+    }
+
+    private func tableCellPreview(_ value: String) -> String {
+        guard !value.isEmpty else { return value }
+        var preview = ""
+        preview.reserveCapacity(min(value.count, Self.tableCellPreviewLimit) + 3)
+
+        for character in value {
+            if preview.count >= Self.tableCellPreviewLimit {
+                preview += "..."
+                break
+            }
+            if character == "\n" || character == "\r" || character == "\t" {
+                preview.append(" ")
+            } else {
+                preview.append(character)
+            }
+        }
+        return preview
     }
 }
 
