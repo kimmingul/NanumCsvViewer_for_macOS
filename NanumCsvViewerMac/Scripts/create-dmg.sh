@@ -39,7 +39,11 @@ fi
 if [[ "${SKIP_DMG_SIGN:-0}" == "1" ]]; then
   echo "Skipping DMG signing because SKIP_DMG_SIGN=1."
 elif [[ -n "$IDENTITY" ]]; then
-  codesign --force --timestamp --sign "$IDENTITY" "$DMG_PATH"
+  if [[ "$IDENTITY" == "-" ]]; then
+    codesign --force --sign "$IDENTITY" "$DMG_PATH"
+  else
+    codesign --force --timestamp --sign "$IDENTITY" "$DMG_PATH"
+  fi
   codesign --verify --verbose=2 "$DMG_PATH"
 else
   echo "No Developer ID Application signing identity found; DMG left unsigned." >&2

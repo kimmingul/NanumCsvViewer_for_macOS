@@ -1,5 +1,46 @@
 # Release Notes
 
+## v1.5.0 - 2026-06-24
+
+This release completes the GitHub issue roadmap through v1.5 and includes performance fixes found while testing a real 1.2 GB clinical CSV with large multiline XML/CLOB fields.
+
+### Highlights
+
+- Added column statistics and type inference.
+- Added expression-based advanced filtering and direct Go to Row navigation.
+- Added export for the current filtered/sorted view.
+- Added persistent `.ncvidx` sidecar indexes for faster repeat opens.
+- Added enhanced cell inspector and copy formats.
+- Added column hide/show controls.
+- Added numeric distribution, date histogram, duplicate detection, group-by aggregation, pivot table, and basic statistical analysis tools.
+
+### Performance and Reliability
+
+- Moved persistent sidecar writes outside the indexing completion path.
+- Switched sidecar indexes from JSON to a compact binary format.
+- Ignored old JSON sidecars without reading the full file.
+- Added staged progress reporting for large parallel index builds.
+- Skipped sidecar writes when the index sidecar would exceed 256 MiB.
+- Bounded table-cell previews for long multiline/XML values so AppKit text layout does not stall on CLOB-heavy CSV files.
+- Preserved full cell values in the inspector and copy actions while showing a one-line preview in the grid.
+
+### Validation
+
+- `swift test`: 61 tests passing.
+- Real-file performance check: `/Users/min/Downloads/NTM-의사기록.csv` opens through the AppKit controller in 0.336 s with an existing sidecar.
+- Cold core indexing check for the same 1.2 GB file completed in about 3.7 s via `CsvBench`.
+
+### Distribution
+
+- Bundle version: `1.5.0`
+- Bundle build: `150`
+- Minimum macOS: `14.0`
+- Signing: ad-hoc codesign when no local Developer ID identity is available
+- Notarization: not included for ad-hoc builds
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.5.0.dmg`
+  - `Nanum-CSV-Viewer-v1.5.0.zip`
+
 ## v1.0.1 - 2026-06-24
 
 This patch release fixes intermittent blank or skipped rows in the grid when opening CSV files repeatedly.

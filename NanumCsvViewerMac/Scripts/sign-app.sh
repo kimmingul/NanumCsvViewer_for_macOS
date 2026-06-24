@@ -28,14 +28,24 @@ fi
 echo "Signing: $APP_PATH"
 echo "Identity: $IDENTITY"
 
-codesign \
-  --force \
-  --deep \
-  --timestamp \
-  --options runtime \
-  --entitlements "$ENTITLEMENTS" \
-  --sign "$IDENTITY" \
-  "$APP_PATH"
+if [[ "$IDENTITY" == "-" ]]; then
+  codesign \
+    --force \
+    --deep \
+    --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign "$IDENTITY" \
+    "$APP_PATH"
+else
+  codesign \
+    --force \
+    --deep \
+    --timestamp \
+    --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign "$IDENTITY" \
+    "$APP_PATH"
+fi
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 codesign --display --verbose=2 "$APP_PATH"

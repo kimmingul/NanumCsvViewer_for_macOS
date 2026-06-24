@@ -10,10 +10,16 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Recovery for malformed first-row quotes that would otherwise hide following rows
 - Virtual row rendering with `NSTableView`
 - Background indexing progress
-- Search, column filters, and selected-cell value filters
+- Column statistics and type inference panel
+- Expression-based advanced filters, column filters, and selected-cell value filters
+- Go to Row command for direct navigation by source row number
+- Export of the current filtered/sorted view
+- Persistent `.ncvidx` sidecar indexes for faster repeat opens
 - Fast single-column filter and sort paths
 - Shift-click multi-column sorting
-- Selected value bar, filter bar, and Inspector panel
+- Column hide/show controls, selected value bar, filter bar, and Inspector panel
+- Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
+- Numeric distribution, date histogram, duplicate detection, group-by aggregation, pivot table, and basic statistical analysis tools
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
 
@@ -155,6 +161,14 @@ To verify signing without notarization:
 SKIP_NOTARIZE=1 Scripts/release-app.sh
 ```
 
+If a Developer ID certificate is not available, ad-hoc signing can be used for local verification only:
+
+```bash
+SIGN_IDENTITY="-" SKIP_NOTARIZE=1 Scripts/release-app.sh
+```
+
+Ad-hoc signed builds are not notarized and are not a substitute for Developer ID distribution.
+
 ## Benchmark
 
 The 1 GiB benchmark CSV is not committed to the repository. Generate it when needed:
@@ -192,9 +206,11 @@ This file is excluded by `.gitignore` because of its size.
 
 - The app indexes record start offsets instead of pre-parsing every row into memory.
 - Only visible rows are decoded and retained in an LRU cache.
+- Table cells render bounded previews so very long XML/CLOB fields do not trigger expensive AppKit text layout.
 - Rows requested before indexing completes are not cached as blank rows.
 - Simple CSV files without quotes use a parallel newline-scan indexing fast path.
 - Quoted CSV files fall back to the accurate state-machine indexer.
+- Persistent sidecar index writes are performed outside the load-completion path and skipped when the sidecar would be too large.
 - Malformed first-row quote recovery is isolated to suspicious headers so valid quoted newline records still use the normal parser.
 - Column equality and contains filters extract only the selected column instead of parsing full rows.
 - Single-column sorting extracts only sort keys to reduce parsing cost.
