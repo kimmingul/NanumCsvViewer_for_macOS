@@ -287,6 +287,11 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(second.dataRowsAvailable, 2)
         XCTAssertEqual(try second.getDisplayRow(1), ["Bob", "LA"])
     }
+
+    func testIndexProgressCanOverrideDisplayedPercent() {
+        let progress = IndexProgress(bytesProcessed: 10, fileLength: 100, rowsSoFar: 0, percentOverride: 75)
+        XCTAssertEqual(progress.percent, 75)
+    }
 }
 
 func temporaryPath() throws -> String {

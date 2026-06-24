@@ -17,6 +17,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     private static let readUnit = MemoryFileBuffer.chunkSize
     private static let maxRecoveredHeaderEmbeddedLineBreaks = 4
     private static let sidecarVersion = 2
+    private static let sidecarMaxBytes = 256 * 1_024 * 1_024
 
     private let path: String
     private let index = RecordIndex()
@@ -347,7 +348,8 @@ public final class VirtualCsvDocument: @unchecked Sendable {
 
                 if done & 0x3 == 0 || done == chunkCount {
                     let processed = min(fileLength, Int64(done) * chunkSize)
-                    progress(IndexProgress(bytesProcessed: processed, fileLength: fileLength, rowsSoFar: 0))
+                    let scanPercent = min(70, Int(Int64(done) * 70 / Int64(max(1, chunkCount))))
+                    progress(IndexProgress(bytesProcessed: processed, fileLength: fileLength, rowsSoFar: 0, percentOverride: scanPercent))
                 }
             } catch {
                 lock.lock()
@@ -357,12 +359,21 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         if let firstError { throw firstError }
-        if foundQuote { return false }
+        if foundQuote {
+            progress(IndexProgress(bytesProcessed: 0, fileLength: fileLength, rowsSoFar: 0, percentOverride: 0))
+            return false
+        }
 
         index.add(Int64(preamble))
-        for offsets in chunkOffsets {
+        for chunkIndex in chunkOffsets.indices {
+            let offsets = chunkOffsets[chunkIndex]
             for offset in offsets ?? [] {
                 index.add(offset)
+            }
+            if chunkIndex & 0x3 == 0 || chunkIndex == chunkOffsets.count - 1 {
+                index.publish()
+                let mergePercent = 70 + Int(Int64(chunkIndex + 1) * 29 / Int64(max(1, chunkOffsets.count)))
+                progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count, percentOverride: mergePercent))
             }
         }
         index.publish()
@@ -1166,6 +1177,8 @@ private extension VirtualCsvDocument {
 
     func savePersistentIndexIfNeeded() {
         guard Self.persistentIndexEnabled, indexingComplete else { return }
+        guard index.count * Int64(MemoryLayout<Int64>.size) <= Int64(Self.sidecarMaxBytes) else { return }
+        let offsets = index.offsets()
         let sidecar = PersistentIndexSidecar(
             version: Self.sidecarVersion,
             fileLength: fileLength,
@@ -1173,7 +1186,7 @@ private extension VirtualCsvDocument {
             delimiter: delimiterByte,
             headerStart: headerStart,
             headerEnd: headerEnd,
-            offsets: index.offsets()
+            offsets: offsets
         )
         let data = sidecar.encoded()
         try? data.write(to: URL(fileURLWithPath: sidecarPath), options: .atomic)
