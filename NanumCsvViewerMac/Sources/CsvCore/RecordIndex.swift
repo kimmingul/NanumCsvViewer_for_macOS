@@ -54,6 +54,29 @@ public final class RecordIndex {
         countLock.unlock()
     }
 
+    public func replace(with offsets: [Int64]) {
+        segmentLock.lock()
+        for pointer in segments {
+            pointer.deallocate()
+        }
+        segments.removeAll()
+        currentSegment = nil
+        currentSegmentIndex = -1
+        writeCount = 0
+        segmentLock.unlock()
+
+        for offset in offsets {
+            add(offset)
+        }
+        publish()
+    }
+
+    public func offsets() -> [Int64] {
+        let total = count
+        guard total > 0 else { return [] }
+        return (0..<total).map { self[$0] }
+    }
+
     public subscript(index: Int64) -> Int64 {
         let segmentIndex = Int(index >> Int64(Self.segmentBits))
         let within = Int(index & Int64(Self.segmentMask))

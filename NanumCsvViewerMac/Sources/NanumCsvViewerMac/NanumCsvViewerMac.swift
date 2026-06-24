@@ -50,6 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let open = NSMenuItem(title: L.t("Open...", "열기..."), action: #selector(MainWindowController.openDocument(_:)), keyEquivalent: "o")
         open.target = target
         fileMenu.addItem(open)
+        let export = NSMenuItem(title: L.t("Export Current View...", "현재 보기 내보내기..."), action: #selector(MainWindowController.exportCurrentView(_:)), keyEquivalent: "e")
+        export.target = target
+        fileMenu.addItem(export)
 
         let editItem = NSMenuItem(title: L.t("Edit", "편집"), action: nil, keyEquivalent: "")
         mainMenu.addItem(editItem)
@@ -68,6 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let copyCell = NSMenuItem(title: L.t("Copy Cell", "셀 복사"), action: #selector(MainWindowController.copySelectedCellToPasteboard(_:)), keyEquivalent: "c")
         copyCell.target = target
         editMenu.addItem(copyCell)
+        let copyCsv = NSMenuItem(title: L.t("Copy Cell as CSV", "셀을 CSV로 복사"), action: #selector(MainWindowController.copySelectedCellAsCsv(_:)), keyEquivalent: "")
+        copyCsv.target = target
+        editMenu.addItem(copyCsv)
+        let copyJson = NSMenuItem(title: L.t("Copy Cell as JSON", "셀을 JSON으로 복사"), action: #selector(MainWindowController.copySelectedCellAsJson(_:)), keyEquivalent: "")
+        copyJson.target = target
+        editMenu.addItem(copyJson)
         editMenu.addItem(.separator())
         let applyFilter = NSMenuItem(title: L.t("Apply Filter", "필터 적용"), action: #selector(MainWindowController.applyTextFilter(_:)), keyEquivalent: "")
         applyFilter.target = target
@@ -106,6 +115,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statistics.keyEquivalentModifierMask = [.command, .option]
         statistics.target = target
         viewMenu.addItem(statistics)
+        let showAllColumns = NSMenuItem(title: L.t("Show All Columns", "모든 컬럼 보기"), action: #selector(MainWindowController.showAllColumns(_:)), keyEquivalent: "")
+        showAllColumns.target = target
+        viewMenu.addItem(showAllColumns)
+        let persistentIndex = NSMenuItem(title: L.t("Persistent Index", "인덱스 저장"), action: #selector(MainWindowController.togglePersistentIndex(_:)), keyEquivalent: "")
+        persistentIndex.target = target
+        viewMenu.addItem(persistentIndex)
         viewMenu.addItem(.separator())
         let encodingItem = NSMenuItem(title: L.t("Encoding", "인코딩"), action: nil, keyEquivalent: "")
         let encodingMenu = NSMenu(title: encodingItem.title)

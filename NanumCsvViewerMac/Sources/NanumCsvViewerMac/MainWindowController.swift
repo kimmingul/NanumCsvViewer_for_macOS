@@ -3,6 +3,9 @@ import AppKit
 
 @MainActor
 final class MainWindowController: NSWindowController {
+    private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
+    private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
+
     private let tableView = CsvTableView()
     private let scrollView = NSScrollView()
     private let selectedValueBar = NSVisualEffectView()
@@ -59,6 +62,7 @@ final class MainWindowController: NSWindowController {
     private var valueConditions: [(description: String, predicate: ([String]) -> Bool)] = []
     private var detailUpdateWorkItem: DispatchWorkItem?
     private var columnStatisticsReport: ColumnStatisticsReport?
+    private var hiddenColumnIndexes: Set<Int> = []
 
     private var hasAnyFilter: Bool {
         textCondition != nil || !valueConditions.isEmpty
@@ -74,6 +78,8 @@ final class MainWindowController: NSWindowController {
         window.title = "Nanum CSV Viewer"
         window.titlebarAppearsTransparent = false
         super.init(window: window)
+        VirtualCsvDocument.persistentIndexEnabled = UserDefaults.standard.object(forKey: Self.persistentIndexDefaultsKey) as? Bool ?? true
+        hiddenColumnIndexes = Set(UserDefaults.standard.array(forKey: Self.hiddenColumnsDefaultsKey) as? [Int] ?? [])
         buildInterface()
         configureToolbar()
     }
@@ -465,6 +471,7 @@ final class MainWindowController: NSWindowController {
         tableView.rowSizeStyle = .medium
         tableView.allowsMultipleSelection = false
         tableView.allowsColumnResizing = true
+        tableView.allowsColumnReordering = true
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.doubleAction = #selector(copySelectedCellToPasteboard(_:))
         tableView.target = self
@@ -495,9 +502,19 @@ final class MainWindowController: NSWindowController {
         let copy = NSMenuItem(title: L.t("Copy Cell", "셀 복사"), action: #selector(copySelectedCellToPasteboard(_:)), keyEquivalent: "")
         copy.target = self
         menu.addItem(copy)
+        let copyCsv = NSMenuItem(title: L.t("Copy as CSV", "CSV로 복사"), action: #selector(copySelectedCellAsCsv(_:)), keyEquivalent: "")
+        copyCsv.target = self
+        menu.addItem(copyCsv)
+        let copyJson = NSMenuItem(title: L.t("Copy as JSON", "JSON으로 복사"), action: #selector(copySelectedCellAsJson(_:)), keyEquivalent: "")
+        copyJson.target = self
+        menu.addItem(copyJson)
         let filter = NSMenuItem(title: L.t("Filter by This Cell", "이 셀 값으로 필터"), action: #selector(filterBySelectedCell(_:)), keyEquivalent: "")
         filter.target = self
         menu.addItem(filter)
+        menu.addItem(.separator())
+        let hide = NSMenuItem(title: L.t("Hide Column", "컬럼 숨기기"), action: #selector(hideCurrentColumn(_:)), keyEquivalent: "")
+        hide.target = self
+        menu.addItem(hide)
         menu.addItem(.separator())
         let sortAsc = NSMenuItem(title: L.t("Sort Ascending", "오름차순 정렬"), action: #selector(sortAscending(_:)), keyEquivalent: "")
         sortAsc.target = self
@@ -794,11 +811,13 @@ extension MainWindowController: NSMenuItemValidation {
             switch menuItem.action {
             case #selector(openDocument(_:)), #selector(showUsage(_:)):
                 return true
+            case #selector(exportCurrentView(_:)):
+                return ready
             case #selector(focusFindField(_:)), #selector(findNext(_:)):
                 return hasDocument && !busy
             case #selector(goToRow(_:)):
                 return hasDocument && !busy
-            case #selector(copySelectedCellToPasteboard(_:)):
+            case #selector(copySelectedCellToPasteboard(_:)), #selector(copySelectedCellAsCsv(_:)), #selector(copySelectedCellAsJson(_:)):
                 return hasDocument && hasSelection
             case #selector(applyTextFilter(_:)), #selector(filterBySelectedCell(_:)), #selector(sortAscending(_:)), #selector(sortDescending(_:)):
                 return ready
@@ -814,6 +833,13 @@ extension MainWindowController: NSMenuItemValidation {
                 return hasDocument
             case #selector(showColumnStatistics(_:)):
                 return ready
+            case #selector(showAllColumns(_:)):
+                return hasDocument && !hiddenColumnIndexes.isEmpty
+            case #selector(hideCurrentColumn(_:)):
+                return hasDocument && currentDataColumn >= 0
+            case #selector(togglePersistentIndex(_:)):
+                menuItem.state = VirtualCsvDocument.persistentIndexEnabled ? .on : .off
+                return true
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
                     menuItem.state = name == csvDocument?.encodingName ? .on : .off
@@ -836,6 +862,24 @@ extension MainWindowController {
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
                 self?.openFile(url)
+            }
+        }
+    }
+
+    @objc func exportCurrentView(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "export.csv"
+        panel.beginSheetModal(for: window!) { [weak self, weak doc] response in
+            guard response == .OK, let url = panel.url, let doc else { return }
+            Task { @MainActor in
+                self?.runViewOperation(message: L.t("Exporting...", "내보내는 중...")) { flag, progress in
+                    try doc.exportCurrentView(to: url.path, cancellation: flag)
+                    progress(100)
+                } completion: { [weak self] in
+                    self?.statusLabel.stringValue = L.t("Exported current view.", "현재 보기를 내보냈습니다.")
+                }
             }
         }
     }
@@ -970,6 +1014,7 @@ extension MainWindowController {
             column.headerCell = SortHeaderCell(textCell: name)
             column.width = 150
             column.minWidth = 60
+            column.isHidden = hiddenColumnIndexes.contains(index)
             tableView.addTableColumn(column)
         }
 
@@ -1415,6 +1460,22 @@ extension MainWindowController {
         statusLabel.stringValue = L.t("Copied selected cell.", "선택 셀을 복사했습니다.")
     }
 
+    @objc func copySelectedCellAsCsv(_ sender: Any?) {
+        guard let value = selectedCellValue() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(Self.csvEscaped(value), forType: .string)
+        statusLabel.stringValue = L.t("Copied selected cell as CSV.", "선택 셀을 CSV로 복사했습니다.")
+    }
+
+    @objc func copySelectedCellAsJson(_ sender: Any?) {
+        guard let value = selectedCellValue(),
+              let data = try? JSONSerialization.data(withJSONObject: ["value": value], options: [.prettyPrinted, .sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(json, forType: .string)
+        statusLabel.stringValue = L.t("Copied selected cell as JSON.", "선택 셀을 JSON으로 복사했습니다.")
+    }
+
     private func runViewOperation(
         message: String,
         operation: @escaping (_ cancellation: CancellationFlag, _ progress: @escaping (Int) -> Void) throws -> Void,
@@ -1542,7 +1603,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
     }
 }
 
-private extension MainWindowController {
+extension MainWindowController {
     func columnIndex(from identifier: NSUserInterfaceItemIdentifier) -> Int {
         Int(identifier.rawValue.dropFirst()) ?? 0
     }
@@ -1727,6 +1788,36 @@ private extension MainWindowController {
         }
     }
 
+    @objc func hideCurrentColumn(_ sender: Any?) {
+        guard currentDataColumn >= 0,
+              let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(currentDataColumn)")) else { return }
+        hiddenColumnIndexes.insert(currentDataColumn)
+        column.isHidden = true
+        persistColumnVisibility()
+        statusLabel.stringValue = L.t("Column hidden.", "컬럼을 숨겼습니다.")
+    }
+
+    @objc func showAllColumns(_ sender: Any?) {
+        hiddenColumnIndexes.removeAll()
+        for index in columnNames.indices {
+            tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden = false
+        }
+        persistColumnVisibility()
+        statusLabel.stringValue = L.t("All columns shown.", "모든 컬럼을 표시했습니다.")
+    }
+
+    @objc func togglePersistentIndex(_ sender: Any?) {
+        VirtualCsvDocument.persistentIndexEnabled.toggle()
+        UserDefaults.standard.set(VirtualCsvDocument.persistentIndexEnabled, forKey: Self.persistentIndexDefaultsKey)
+        statusLabel.stringValue = VirtualCsvDocument.persistentIndexEnabled
+            ? L.t("Persistent index enabled.", "인덱스 저장을 켰습니다.")
+            : L.t("Persistent index disabled.", "인덱스 저장을 껐습니다.")
+    }
+
+    func persistColumnVisibility() {
+        UserDefaults.standard.set(Array(hiddenColumnIndexes).sorted(), forKey: Self.hiddenColumnsDefaultsKey)
+    }
+
     func updateDetailPanel() {
         guard isInspectorVisible else { return }
         guard let doc = csvDocument, tableView.selectedRow >= 0 else {
@@ -1746,7 +1837,7 @@ private extension MainWindowController {
                     .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
                     .foregroundColor: NSColor.controlAccentColor
                 ]))
-                text.append(NSAttributedString(string: value + "\n\n", attributes: [
+                text.append(NSAttributedString(string: Self.prettyValue(value) + "\n\n", attributes: [
                     .font: NSFont.systemFont(ofSize: 13),
                     .foregroundColor: NSColor.labelColor
                 ]))
@@ -1966,6 +2057,31 @@ private extension MainWindowController {
             return String(format: "%.0f", value)
         }
         return String(format: "%.3f", value)
+    }
+
+    static func csvEscaped(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        }
+        return value
+    }
+
+    static func prettyValue(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return value }
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data),
+           JSONSerialization.isValidJSONObject(object),
+           let prettyData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+           let pretty = String(data: prettyData, encoding: .utf8) {
+            return pretty
+        }
+        if trimmed.hasPrefix("<"),
+           let data = trimmed.data(using: .utf8),
+           let document = try? XMLDocument(data: data, options: [.nodePreserveWhitespace]) {
+            return document.xmlString(options: [.nodePrettyPrint])
+        }
+        return value
     }
 
     func truncated(_ value: String) -> String {

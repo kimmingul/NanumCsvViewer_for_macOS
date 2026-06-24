@@ -1,6 +1,8 @@
 import Foundation
 
 public final class VirtualCsvDocument: @unchecked Sendable {
+    public static var persistentIndexEnabled = true
+
     public static var ramBufferBudgetBytes: Int64 {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         return min(max(1_500_000_000, physical / 4), 8_000_000_000)
@@ -14,6 +16,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
     private static let readUnit = MemoryFileBuffer.chunkSize
     private static let maxRecoveredHeaderEmbeddedLineBreaks = 4
+    private static let sidecarVersion = 1
 
     private let path: String
     private let index = RecordIndex()
@@ -110,6 +113,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         )
         headerEnd = recoverMalformedHeader ? physicalHeaderEnd : strictHeaderEnd
         header = try decodeAndParse(start: headerStart, end: headerEnd, repairUnbalancedQuotes: recoverMalformedHeader)
+
+        if Self.persistentIndexEnabled {
+            tryLoadPersistentIndex()
+        }
     }
 
     private static func detectDelimiter(in sample: Data, preamble: Int) -> UInt8 {
@@ -384,12 +391,19 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
 
     public func runIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws {
+        if indexingComplete {
+            progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
+            return
+        }
+
         if recoverMalformedHeader {
             try runMalformedHeaderRecoveryIndexing(progress: progress, cancellation: cancellation)
+            savePersistentIndexIfNeeded()
             return
         }
 
         if try runParallelSimpleIndexing(progress: progress, cancellation: cancellation) {
+            savePersistentIndexIfNeeded()
             return
         }
 
@@ -426,6 +440,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
+        savePersistentIndexIfNeeded()
     }
 
     private func runMalformedHeaderRecoveryIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws {
@@ -727,6 +742,25 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return ColumnStatisticsBuilder.summarize(headers: header, rows: rows)
     }
 
+    public func exportCurrentView(to outputPath: String, selectedColumns: [Int]? = nil, cancellation: CancellationFlag) throws {
+        let columns = (selectedColumns ?? Array(0..<columnCount)).filter { $0 >= 0 && $0 < columnCount }
+        FileManager.default.createFile(atPath: outputPath, contents: nil)
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: outputPath))
+        defer { try? handle.close() }
+
+        func writeLine(_ fields: [String]) throws {
+            let line = fields.map(Self.csvEscaped).joined(separator: ",") + "\n"
+            try handle.write(contentsOf: Data(line.utf8))
+        }
+
+        try writeLine(columns.map { header[$0] })
+        for row in 0..<displayRowCount {
+            if row & 0x3FFF == 0 { try cancellation.check() }
+            let fields = try getDisplayRow(row)
+            try writeLine(columns.map { $0 < fields.count ? fields[$0] : "" })
+        }
+    }
+
     public func applyFilter(_ predicate: @escaping ([String]) -> Bool, progress: ((Int) -> Void)?, cancellation: CancellationFlag) throws {
         let total = dataRowsAvailable
         var matches: [Int] = []
@@ -947,7 +981,69 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         setViewMap(nil)
     }
 
+    private static func csvEscaped(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        }
+        return value
+    }
+
     private static func identity(_ count: Int) -> [Int] {
         count <= 0 ? [] : Array(0..<count)
+    }
+}
+
+private extension VirtualCsvDocument {
+    struct PersistentIndexSidecar: Codable {
+        let magic: String
+        let version: Int
+        let fileLength: Int64
+        let modificationTime: TimeInterval
+        let delimiter: UInt8
+        let headerStart: Int64
+        let headerEnd: Int64
+        let offsets: [Int64]
+    }
+
+    var sidecarPath: String {
+        path + ".ncvidx"
+    }
+
+    func tryLoadPersistentIndex() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: sidecarPath)),
+              let sidecar = try? JSONDecoder().decode(PersistentIndexSidecar.self, from: data),
+              sidecar.magic == "NanumCsvIndex",
+              sidecar.version == Self.sidecarVersion,
+              sidecar.fileLength == fileLength,
+              sidecar.modificationTime == currentModificationTime(),
+              sidecar.delimiter == delimiterByte,
+              sidecar.headerStart == headerStart,
+              sidecar.headerEnd == headerEnd,
+              !sidecar.offsets.isEmpty else {
+            return
+        }
+        index.replace(with: sidecar.offsets)
+        markIndexingComplete()
+    }
+
+    func savePersistentIndexIfNeeded() {
+        guard Self.persistentIndexEnabled, indexingComplete else { return }
+        let sidecar = PersistentIndexSidecar(
+            magic: "NanumCsvIndex",
+            version: Self.sidecarVersion,
+            fileLength: fileLength,
+            modificationTime: currentModificationTime(),
+            delimiter: delimiterByte,
+            headerStart: headerStart,
+            headerEnd: headerEnd,
+            offsets: index.offsets()
+        )
+        guard let data = try? JSONEncoder().encode(sidecar) else { return }
+        try? data.write(to: URL(fileURLWithPath: sidecarPath), options: .atomic)
+    }
+
+    func currentModificationTime() -> TimeInterval {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        return (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
     }
 }

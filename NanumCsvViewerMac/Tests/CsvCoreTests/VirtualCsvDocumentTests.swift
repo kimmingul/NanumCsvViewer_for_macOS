@@ -250,6 +250,41 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertNil(doc.displayIndexForSourceRowNumber(2))
         XCTAssertNil(doc.displayIndexForSourceRowNumber(0))
     }
+
+    func testExportsCurrentFilteredSortedViewAsCsv() throws {
+        let (doc, path) = try openIndexed("name,city,note\nAlice,NY,\"hello, world\"\nBob,LA,plain\nCarol,NY,\"quoted \"\"value\"\"\"\n")
+        let exportPath = try temporaryPath()
+        defer {
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: exportPath)
+        }
+
+        try doc.filterColumnContains(column: 1, term: "NY", withinCurrentView: false, progress: nil, cancellation: CancellationFlag())
+        try doc.sort(column: 0, ascending: false, progress: nil, cancellation: CancellationFlag())
+        try doc.exportCurrentView(to: exportPath, selectedColumns: [0, 2], cancellation: CancellationFlag())
+
+        let exported = try String(contentsOfFile: exportPath, encoding: .utf8)
+        XCTAssertEqual(exported, "name,note\nCarol,\"quoted \"\"value\"\"\"\nAlice,\"hello, world\"\n")
+    }
+
+    func testPersistentIndexSidecarLoadsReopenedFile() throws {
+        let path = try temporaryPath()
+        try "name,city\nAlice,NY\nBob,LA\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer {
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: path + ".ncvidx")
+        }
+
+        let first = try VirtualCsvDocument.open(path: path)
+        XCTAssertFalse(first.indexingComplete)
+        try first.runIndexing(progress: { _ in }, cancellation: CancellationFlag())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".ncvidx"))
+
+        let second = try VirtualCsvDocument.open(path: path)
+        XCTAssertTrue(second.indexingComplete)
+        XCTAssertEqual(second.dataRowsAvailable, 2)
+        XCTAssertEqual(try second.getDisplayRow(1), ["Bob", "LA"])
+    }
 }
 
 func temporaryPath() throws -> String {
