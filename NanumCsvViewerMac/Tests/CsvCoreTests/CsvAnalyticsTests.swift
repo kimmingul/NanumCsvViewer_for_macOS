@@ -96,4 +96,33 @@ final class CsvAnalyticsTests: XCTestCase {
         XCTAssertEqual(histogram.bins[1].label, "2026-02")
         XCTAssertEqual(histogram.bins[1].count, 1)
     }
+
+    func testPivotTableAggregatesRowsAndColumns() throws {
+        let (doc, path) = try openIndexed("""
+        site,arm,event,value
+        A,T,AE,2
+        A,T,SAE,1
+        A,C,AE,3
+        B,T,AE,4
+
+        """)
+        let exportPath = try temporaryPath()
+        defer {
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: exportPath)
+        }
+
+        let pivot = try doc.pivotTable(rowColumns: [0], columnColumns: [1, 2], valueColumn: 3, function: .sum, cancellation: CancellationFlag())
+
+        XCTAssertEqual(pivot.rowKeys, [["A"], ["B"]])
+        XCTAssertEqual(pivot.columnKeys, [["C", "AE"], ["T", "AE"], ["T", "SAE"]])
+        XCTAssertEqual(pivot.value(row: ["A"], column: ["C", "AE"]), 3)
+        XCTAssertEqual(pivot.value(row: ["A"], column: ["T", "AE"]), 2)
+        XCTAssertEqual(pivot.value(row: ["A"], column: ["T", "SAE"]), 1)
+        XCTAssertEqual(pivot.value(row: ["B"], column: ["T", "AE"]), 4)
+
+        try pivot.exportCsv(to: exportPath)
+        let exported = try String(contentsOfFile: exportPath, encoding: .utf8)
+        XCTAssertEqual(exported, "site,C | AE,T | AE,T | SAE\nA,3,2,1\nB,0,4,0\n")
+    }
 }

@@ -149,6 +149,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let groupBy = NSMenuItem(title: L.t("Group By", "그룹화"), action: #selector(MainWindowController.showGroupBy(_:)), keyEquivalent: "")
         groupBy.target = target
         analysisMenu.addItem(groupBy)
+        let pivot = NSMenuItem(title: L.t("Pivot Table", "피벗 테이블"), action: #selector(MainWindowController.showPivotTable(_:)), keyEquivalent: "")
+        pivot.target = target
+        analysisMenu.addItem(pivot)
 
         let helpItem = NSMenuItem(title: L.t("Help", "도움말"), action: nil, keyEquivalent: "")
         mainMenu.addItem(helpItem)

@@ -799,6 +799,37 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return CsvAnalytics.dateHistogram(rows: rows, dateColumn: dateColumn, valueColumn: valueColumn, period: period)
     }
 
+    public func pivotTable(
+        rowColumns: [Int],
+        columnColumns: [Int],
+        valueColumn: Int,
+        function: AggregationFunction,
+        cancellation: CancellationFlag
+    ) throws -> PivotTableResult {
+        let rowColumns = rowColumns.filter { $0 >= 0 && $0 < columnCount }
+        let columnColumns = columnColumns.filter { $0 >= 0 && $0 < columnCount }
+        guard !rowColumns.isEmpty, !columnColumns.isEmpty, valueColumn >= 0, valueColumn < columnCount else {
+            return PivotTableResult(
+                rowColumns: rowColumns,
+                rowColumnNames: rowColumns.map { header[$0] },
+                columnColumns: columnColumns,
+                valueColumn: valueColumn,
+                function: function,
+                rowKeys: [],
+                columnKeys: [],
+                values: [:]
+            )
+        }
+        return CsvAnalytics.pivotTable(
+            rows: try currentDisplayRows(cancellation: cancellation),
+            rowColumns: rowColumns,
+            rowColumnNames: rowColumns.map { header[$0].isEmpty ? "Column \($0 + 1)" : header[$0] },
+            columnColumns: columnColumns,
+            valueColumn: valueColumn,
+            function: function
+        )
+    }
+
     public func applyFilter(_ predicate: @escaping ([String]) -> Bool, progress: ((Int) -> Void)?, cancellation: CancellationFlag) throws {
         let total = dataRowsAvailable
         var matches: [Int] = []

@@ -68,6 +68,54 @@ public struct DateHistogram: Equatable, Sendable {
     public let bins: [DateHistogramBin]
 }
 
+public struct PivotTableResult: Equatable, Sendable {
+    public let rowColumns: [Int]
+    public let rowColumnNames: [String]
+    public let columnColumns: [Int]
+    public let valueColumn: Int
+    public let function: AggregationFunction
+    public let rowKeys: [[String]]
+    public let columnKeys: [[String]]
+    public let values: [PivotCellKey: Double]
+
+    public func value(row: [String], column: [String]) -> Double {
+        values[PivotCellKey(row: row, column: column)] ?? 0
+    }
+
+    public func exportCsv(to outputPath: String) throws {
+        FileManager.default.createFile(atPath: outputPath, contents: nil)
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: outputPath))
+        defer { try? handle.close() }
+
+        func write(_ fields: [String]) throws {
+            let line = fields.map(csvEscaped).joined(separator: ",") + "\n"
+            try handle.write(contentsOf: Data(line.utf8))
+        }
+
+        let rowHeader = rowColumnNames.isEmpty ? rowColumns.map { "Column \($0 + 1)" }.joined(separator: " | ") : rowColumnNames.joined(separator: " | ")
+        try write([rowHeader] + columnKeys.map { $0.joined(separator: " | ") })
+        for row in rowKeys {
+            try write([row.joined(separator: " | ")] + columnKeys.map { formatNumber(value(row: row, column: $0)) })
+        }
+    }
+
+    private func csvEscaped(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        }
+        return value
+    }
+
+    private func formatNumber(_ value: Double) -> String {
+        value.rounded(.towardZero) == value ? String(format: "%.0f", value) : String(format: "%.3f", value)
+    }
+}
+
+public struct PivotCellKey: Hashable, Codable, Sendable {
+    public let row: [String]
+    public let column: [String]
+}
+
 enum CsvAnalytics {
     static func findDuplicates(rows: [(fields: [String], sourceRow: Int64)], columns: [Int]) -> [DuplicateGroup] {
         var groups: [[String]: [Int64]] = [:]
@@ -155,6 +203,47 @@ enum CsvAnalytics {
             )
         }
         return DateHistogram(dateColumn: dateColumn, valueColumn: valueColumn, period: period, bins: bins)
+    }
+
+    static func pivotTable(
+        rows: [[String]],
+        rowColumns: [Int],
+        rowColumnNames: [String] = [],
+        columnColumns: [Int],
+        valueColumn: Int,
+        function: AggregationFunction
+    ) -> PivotTableResult {
+        var raw: [PivotCellKey: [String]] = [:]
+        var rowKeySet: Set<[String]> = []
+        var columnKeySet: Set<[String]> = []
+
+        for row in rows {
+            let rowKey = rowColumns.map { column in column < row.count ? row[column] : "" }
+            let columnKey = columnColumns.map { column in column < row.count ? row[column] : "" }
+            let value = valueColumn < row.count ? row[valueColumn] : ""
+            rowKeySet.insert(rowKey)
+            columnKeySet.insert(columnKey)
+            raw[PivotCellKey(row: rowKey, column: columnKey), default: []].append(value)
+        }
+
+        let rowKeys = rowKeySet.sorted { $0.joined(separator: "\u{1F}") < $1.joined(separator: "\u{1F}") }
+        let columnKeys = columnKeySet.sorted { $0.joined(separator: "\u{1F}") < $1.joined(separator: "\u{1F}") }
+        var values: [PivotCellKey: Double] = [:]
+        for (key, cellValues) in raw {
+            let numbers = cellValues.compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            values[key] = aggregate(function, rawValues: cellValues, numbers: numbers)
+        }
+
+        return PivotTableResult(
+            rowColumns: rowColumns,
+            rowColumnNames: rowColumnNames,
+            columnColumns: columnColumns,
+            valueColumn: valueColumn,
+            function: function,
+            rowKeys: rowKeys,
+            columnKeys: columnKeys,
+            values: values
+        )
     }
 
     static func parseDate(_ value: String) -> Date? {

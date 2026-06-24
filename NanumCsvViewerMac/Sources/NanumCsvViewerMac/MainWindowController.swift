@@ -840,7 +840,7 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(togglePersistentIndex(_:)):
                 menuItem.state = VirtualCsvDocument.persistentIndexEnabled ? .on : .off
                 return true
-            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)):
+            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)):
                 return ready
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
@@ -1466,6 +1466,27 @@ extension MainWindowController {
         }
     }
 
+    @objc func showPivotTable(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy, columnNames.count >= 2 else { return }
+        let rowColumn = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        let columnColumn = firstNonNumericColumn(excluding: rowColumn) ?? min(rowColumn + 1, columnNames.count - 1)
+        let valueColumn = firstNumericColumn(excluding: rowColumn) ?? rowColumn
+        do {
+            let pivot = try doc.pivotTable(
+                rowColumns: [rowColumn],
+                columnColumns: [columnColumn],
+                valueColumn: valueColumn,
+                function: .sum,
+                cancellation: CancellationFlag()
+            )
+            setInspectorVisible(true, animated: true)
+            detailHeaderLabel.stringValue = L.t("Pivot Table", "피벗 테이블")
+            detailTextView.string = formatPivotTable(pivot)
+        } catch {
+            presentError(error)
+        }
+    }
+
     @objc func changeEncoding(_ sender: Any?) {
         guard let doc = csvDocument, !busy else { return }
         let name = encodingPopup.titleOfSelectedItem ?? CsvEncodingName.utf8
@@ -1980,6 +2001,12 @@ extension MainWindowController {
         }?.index
     }
 
+    func firstNonNumericColumn(excluding excluded: Int) -> Int? {
+        columnStatisticsReport?.columns.first {
+            $0.index != excluded && ![.integer, .float].contains($0.inferredType)
+        }?.index
+    }
+
     func formatNumericDistribution(_ distribution: NumericDistribution) -> String {
         let name = columnNames[safe: distribution.column] ?? L.t("Column \(distribution.column + 1)", "\(distribution.column + 1)열")
         var lines = [
@@ -2050,6 +2077,28 @@ extension MainWindowController {
             lines.append("\(row.key.joined(separator: " | ")): \(metrics)")
         }
         if result.rows.count > 100 {
+            lines.append("...")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func formatPivotTable(_ pivot: PivotTableResult) -> String {
+        let rowNames = pivot.rowColumns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
+        let columnNamesText = pivot.columnColumns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
+        let valueName = columnNames[safe: pivot.valueColumn] ?? L.t("Column \(pivot.valueColumn + 1)", "\(pivot.valueColumn + 1)열")
+        var lines: [String] = [
+            L.t("Rows: \(rowNames)", "행: \(rowNames)"),
+            L.t("Columns: \(columnNamesText)", "열: \(columnNamesText)"),
+            L.t("Values: \(pivot.function.rawValue)(\(valueName))", "값: \(pivot.function.rawValue)(\(valueName))"),
+            ""
+        ]
+        lines.append(([rowNames] + pivot.columnKeys.map { $0.joined(separator: " | ") }).joined(separator: "\t"))
+
+        for row in pivot.rowKeys.prefix(80) {
+            let fields = [row.joined(separator: " | ")] + pivot.columnKeys.map { formatNumber(pivot.value(row: row, column: $0)) }
+            lines.append(fields.joined(separator: "\t"))
+        }
+        if pivot.rowKeys.count > 80 {
             lines.append("...")
         }
         return lines.joined(separator: "\n")
