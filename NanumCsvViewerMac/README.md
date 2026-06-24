@@ -1,0 +1,48 @@
+# Nanum CSV Viewer for macOS
+
+Swift/AppKit 기반 macOS용 대용량 CSV 뷰어입니다. Windows WinForms 버전의 핵심 구조인 바이트 오프셋 인덱스, 가상 테이블, 보이는 행만 디코딩하는 방식을 Swift로 포팅했습니다.
+
+## Build
+
+```bash
+swift build
+swift test
+swift run NanumCsvViewerMac
+```
+
+샌드박스 환경에서 SwiftPM이 모듈 캐시 권한 문제를 내면 다음처럼 로컬 캐시를 지정합니다.
+
+```bash
+CLANG_MODULE_CACHE_PATH=../.clang-cache swift build
+CLANG_MODULE_CACHE_PATH=../.clang-cache swift test
+CLANG_MODULE_CACHE_PATH=../.clang-cache swift run NanumCsvViewerMac
+```
+
+## App Bundle
+
+SwiftPM 실행 파일을 간단한 `.app` 번들로 묶으려면:
+
+```bash
+Scripts/build-app.sh
+open "dist/Nanum CSV Viewer.app"
+```
+
+## Implemented
+
+- UTF-8 / UTF-8 BOM / CP949(EUC-KR) 자동 감지
+- UTF-16/UTF-32 고속 모드 차단
+- CSV 레코드 바이트 오프셋 인덱싱
+- 따옴표 안 줄바꿈/구분자 처리
+- `NSTableView` 기반 가상 행 표시
+- 백그라운드 인덱싱 진행률
+- 검색, 전체/컬럼 필터, 선택 셀 값 AND 필터
+- 단일/Shift 클릭 다중 컬럼 안정 정렬
+- 원본 행 번호 표시
+- 우측 상세 패널
+- 라이트/다크 시스템 외형 대응
+
+## Structure
+
+- `Sources/CsvCore`: 대용량 CSV 엔진
+- `Sources/NanumCsvViewerMac`: AppKit UI
+- `Tests/CsvCoreTests`: C# 원본 테스트에서 포팅한 엔진 동등성 테스트
