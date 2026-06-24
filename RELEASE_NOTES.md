@@ -27,8 +27,8 @@ This release completes the GitHub issue roadmap through v1.5 and includes perfor
 ### Validation
 
 - `swift test`: 61 tests passing.
-- Real-file performance check: `/Users/min/Downloads/NTM-의사기록.csv` opens through the AppKit controller in 0.336 s with an existing sidecar.
-- Cold core indexing check for the same 1.2 GB file completed in about 3.7 s via `CsvBench`.
+- Real-file performance check: a 1.2 GB multiline XML/CLOB CSV opens through the AppKit controller in 0.336 s with an existing sidecar.
+- Cold core indexing check for the same file completed in about 3.7 s via `CsvBench`.
 
 ### Distribution
 
