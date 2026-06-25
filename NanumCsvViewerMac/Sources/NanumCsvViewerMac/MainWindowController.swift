@@ -1371,17 +1371,17 @@ extension MainWindowController {
         }
     }
 
-    private nonisolated static func looksLikeExpression(_ text: String) -> Bool {
-        let lowered = text.lowercased()
-        return lowered.contains(" and ")
-            || lowered.contains(" or ")
-            || lowered.contains(" contains ")
-            || lowered.contains("==")
-            || lowered.contains("!=")
-            || lowered.contains(">=")
-            || lowered.contains("<=")
-            || lowered.contains(" > ")
-            || lowered.contains(" < ")
+    nonisolated static func looksLikeExpression(_ text: String) -> Bool {
+        if text.range(of: #"(?i)\b(and|or|contains)\b"#, options: .regularExpression) != nil {
+            return true
+        }
+        return text.contains("==")
+            || text.contains("!=")
+            || text.contains(">=")
+            || text.contains("<=")
+            || text.contains(">")
+            || text.contains("<")
+            || text.contains("=")
     }
 
     private func updateFilterStatus() {

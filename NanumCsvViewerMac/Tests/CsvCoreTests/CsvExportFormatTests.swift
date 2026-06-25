@@ -64,6 +64,37 @@ final class CsvExportFormatTests: XCTestCase {
         """)
     }
 
+    func testJsonExportStreamsRowsAndPreservesDuplicateHeadersWithUniqueKeys() throws {
+        let (doc, path) = try openIndexed("""
+        value,value,note
+        A,B,first
+        C,D,second
+
+        """)
+        let jsonPath = try temporaryPath()
+        defer {
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: jsonPath)
+        }
+
+        try doc.exportCurrentView(to: jsonPath, format: .json, selectedColumns: nil, cancellation: CancellationFlag())
+
+        XCTAssertEqual(try String(contentsOfFile: jsonPath, encoding: .utf8), """
+        [
+          {
+            "note" : "first",
+            "value" : "A",
+            "value (2)" : "B"
+          },
+          {
+            "note" : "second",
+            "value" : "C",
+            "value (2)" : "D"
+          }
+        ]
+        """)
+    }
+
     private func openIndexed(_ content: String) throws -> (VirtualCsvDocument, String) {
         let path = try temporaryPath()
         try content.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))

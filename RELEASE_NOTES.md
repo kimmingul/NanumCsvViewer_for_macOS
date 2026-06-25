@@ -2,7 +2,7 @@
 
 ## v1.6.0 - 2026-06-25
 
-This release implements the v1.6 GitHub issue roadmap for viewer completeness and day-to-day CSV workflow polish.
+This release ships the first v1.6 viewer workflow slice for day-to-day CSV workflow polish. A post-release multi-review audit found that some GitHub v1 roadmap items remain partial and should stay open as follow-up work.
 
 ### Highlights
 
@@ -16,6 +16,17 @@ This release implements the v1.6 GitHub issue roadmap for viewer completeness an
 - Added Markdown, JSON, and HTML export formats for the current filtered/sorted view.
 - Export now respects currently visible columns when columns are hidden.
 
+### Post-Release Audit Status
+
+- Visual analytics for numeric distributions, date histograms, group-by results, and pivot tables are currently inspector/text summaries rather than Swift Charts views.
+- Column management supports hide/show, but frozen columns and persisted reorder workflows are still pending.
+- Saved views restore one per-file state; multiple named bookmarks and a picker are still pending.
+- The performance dashboard shows row, file, storage, indexing, and throughput metrics; memory metrics and repeatable benchmark UI are still pending.
+- Theme, font, and row-density customization controls are still pending beyond system light/dark appearance support.
+- JSON export now preserves duplicate headers with stable unique keys and streams rows without materializing the full export array in memory.
+- Advanced filter routing now recognizes compact comparison expressions such as `age>65` and `age=65`.
+- Statistical p-values and 95% confidence intervals now use Student t / gamma-based calculations instead of the earlier normal approximations.
+
 ### Developer Notes
 
 - Added dedicated search query/match types in `CsvCore`.
@@ -25,7 +36,7 @@ This release implements the v1.6 GitHub issue roadmap for viewer completeness an
 
 ### Validation
 
-- `swift test`: 79 tests passing.
+- `swift test`: 85 tests passing after post-release audit fixes.
 
 ### Distribution
 

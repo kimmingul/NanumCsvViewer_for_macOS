@@ -780,6 +780,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         let headers = columns.map { header[$0] }
+        let jsonHeaders = Self.uniqueJsonHeaders(headers)
         switch format {
         case .csv:
             try writeCsvLine(headers)
@@ -798,19 +799,23 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 try write("| " + selected.map(Self.markdownEscaped).joined(separator: " | ") + " |\n")
             }
         case .json:
-            var rows: [[String: String]] = []
-            rows.reserveCapacity(displayRowCount)
+            try write("[\n")
             for row in 0..<displayRowCount {
                 if row & 0x3FFF == 0 { try cancellation.check() }
                 let fields = try getDisplayRow(row)
                 var object: [String: String] = [:]
                 for (index, column) in columns.enumerated() {
-                    object[headers[index]] = column < fields.count ? fields[column] : ""
+                    object[jsonHeaders[index]] = column < fields.count ? fields[column] : ""
                 }
-                rows.append(object)
+                let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+                let text = String(decoding: data, as: UTF8.self)
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { "  " + $0 }
+                    .joined(separator: "\n")
+                try write(text)
+                try write(row == displayRowCount - 1 ? "\n" : ",\n")
             }
-            let data = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
-            try handle.write(contentsOf: data)
+            try write("]")
         case .html:
             try write("<!doctype html>\n<html>\n<head><meta charset=\"utf-8\"><title>Nanum CSV Viewer Export</title></head>\n<body>\n<table>\n")
             try write("<thead><tr>" + headers.map { "<th>\(Self.htmlEscaped($0))</th>" }.joined() + "</tr></thead>\n<tbody>\n")
@@ -828,21 +833,22 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         let total = displayRowCount
         guard total > 0 else { return nil }
         let boundedStart = max(0, min(start, total))
+        let matcher = try CsvSearchMatcher(query: query)
 
-        if let match = try findNextInRange(query: query, range: boundedStart..<total, cancellation: cancellation) {
+        if let match = try findNextInRange(matcher: matcher, range: boundedStart..<total, cancellation: cancellation) {
             return match
         }
         if wrap, boundedStart > 0 {
-            return try findNextInRange(query: query, range: 0..<boundedStart, cancellation: cancellation)
+            return try findNextInRange(matcher: matcher, range: 0..<boundedStart, cancellation: cancellation)
         }
         return nil
     }
 
-    private func findNextInRange(query: CsvSearchQuery, range: Range<Int>, cancellation: CancellationFlag) throws -> CsvSearchMatch? {
+    private func findNextInRange(matcher: CsvSearchMatcher, range: Range<Int>, cancellation: CancellationFlag) throws -> CsvSearchMatch? {
         for viewRow in range {
             if viewRow & 0x3FFF == 0 { try cancellation.check() }
             let row = try getDisplayRow(viewRow)
-            if let match = try CsvSearchMatcher.firstMatch(in: row, query: query) {
+            if let match = matcher.firstMatch(in: row) {
                 return CsvSearchMatch(
                     viewRow: viewRow,
                     sourceRowNumber: getSourceRowNumber(viewRow),
@@ -1210,6 +1216,16 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
         }
         return value
+    }
+
+    private static func uniqueJsonHeaders(_ headers: [String]) -> [String] {
+        var counts: [String: Int] = [:]
+        return headers.enumerated().map { index, header in
+            let base = header.isEmpty ? "Column \(index + 1)" : header
+            let count = (counts[base] ?? 0) + 1
+            counts[base] = count
+            return count == 1 ? base : "\(base) (\(count))"
+        }
     }
 
     private static func markdownEscaped(_ value: String) -> String {

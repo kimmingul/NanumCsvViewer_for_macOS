@@ -64,8 +64,24 @@ public struct CsvSearchMatch: Equatable, Sendable {
     }
 }
 
-enum CsvSearchMatcher {
-    static func firstMatch(in row: [String], query: CsvSearchQuery) throws -> (column: Int, value: String)? {
+struct CsvSearchMatcher {
+    let query: CsvSearchQuery
+    private let regex: NSRegularExpression?
+
+    init(query: CsvSearchQuery) throws {
+        self.query = query
+        if query.mode == .regex {
+            do {
+                self.regex = try NSRegularExpression(pattern: query.text, options: [.caseInsensitive])
+            } catch {
+                throw CsvSearchError.invalidRegularExpression(query.text)
+            }
+        } else {
+            self.regex = nil
+        }
+    }
+
+    func firstMatch(in row: [String]) -> (column: Int, value: String)? {
         let columns: [Int]
         if let column = query.column {
             guard column >= 0, column < row.count else { return nil }
@@ -76,23 +92,23 @@ enum CsvSearchMatcher {
 
         for column in columns {
             let value = row[column]
-            if try matches(value, query: query) {
+            if matches(value) {
                 return (column, value)
             }
         }
         return nil
     }
 
-    private static func matches(_ value: String, query: CsvSearchQuery) throws -> Bool {
+    private func matches(_ value: String) -> Bool {
         switch query.mode {
         case .contains:
             return value.range(of: query.text, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         case .regex:
-            let regex = try NSRegularExpression(pattern: query.text, options: [.caseInsensitive])
+            guard let regex else { return false }
             let range = NSRange(value.startIndex..<value.endIndex, in: value)
             return regex.firstMatch(in: value, range: range) != nil
         case .fuzzy:
-            return fuzzyContains(value, query: query.text)
+            return Self.fuzzyContains(value, query: query.text)
         }
     }
 
