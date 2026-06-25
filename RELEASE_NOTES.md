@@ -26,6 +26,12 @@ This patch release applies the post-release v1 roadmap audit fixes and documents
 - Bundle version: `1.6.1`
 - Bundle build: `161`
 - Minimum macOS: `14.0`
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.6.1.dmg`
+  - `Nanum-CSV-Viewer-v1.6.1.zip`
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.6.1.dmg`: `12a204d2e839c0b6ea0e31a37d36d3ea9f0bbd3c1ad78b481fad401ad6c1683f`
+  - `Nanum-CSV-Viewer-v1.6.1.zip`: `136235fe46a097997aa3b52ea9ae1d2bf47f9de71237c424541b82c8d4f50ba1`
 
 ## v1.6.0 - 2026-06-25
 
