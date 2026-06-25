@@ -1,8 +1,35 @@
 # Release Notes
 
+## v1.6.1 - 2026-06-26
+
+This patch release applies the post-release v1 roadmap audit fixes and documents the remaining v1/v1.6 gaps. It does not close the full roadmap; graphical analytics, frozen columns, multiple named bookmarks, performance benchmark UI, and UI customization controls remain follow-up work.
+
+### Fixes
+
+- Corrected statistical p-values and 95% confidence intervals to use Student t / gamma-based calculations instead of normal approximations.
+- Fixed advanced filter routing so compact comparison expressions such as `age>65`, `age=65`, and `score<=10` are parsed as expressions.
+- Fixed JSON export to preserve duplicate headers with stable unique keys such as `value` and `value (2)`.
+- Changed JSON export to stream objects row by row instead of materializing the full export array in memory.
+- Refactored regex search to compile the regular expression once per search request instead of once per cell.
+
+### Documentation
+
+- Added `ROADMAP_STATUS.md` with the multi-review audit summary and follow-up checklist.
+- Updated README and v1.6 release notes so v1.6 is described as a workflow slice rather than full roadmap completion.
+
+### Validation
+
+- `swift test`: 85 tests passing.
+
+### Distribution
+
+- Bundle version: `1.6.1`
+- Bundle build: `161`
+- Minimum macOS: `14.0`
+
 ## v1.6.0 - 2026-06-25
 
-This release ships the first v1.6 viewer workflow slice for day-to-day CSV workflow polish. A post-release multi-review audit found that some GitHub v1 roadmap items remain partial and should stay open as follow-up work.
+This release ships the first v1.6 viewer workflow slice for day-to-day CSV workflow polish. A later multi-review audit found that some GitHub v1 roadmap items remained partial and should stay open as follow-up work.
 
 ### Highlights
 
@@ -23,10 +50,6 @@ This release ships the first v1.6 viewer workflow slice for day-to-day CSV workf
 - Saved views restore one per-file state; multiple named bookmarks and a picker are still pending.
 - The performance dashboard shows row, file, storage, indexing, and throughput metrics; memory metrics and repeatable benchmark UI are still pending.
 - Theme, font, and row-density customization controls are still pending beyond system light/dark appearance support.
-- JSON export now preserves duplicate headers with stable unique keys and streams rows without materializing the full export array in memory.
-- Advanced filter routing now recognizes compact comparison expressions such as `age>65` and `age=65`.
-- Statistical p-values and 95% confidence intervals now use Student t / gamma-based calculations instead of the earlier normal approximations.
-
 ### Developer Notes
 
 - Added dedicated search query/match types in `CsvCore`.
@@ -36,7 +59,7 @@ This release ships the first v1.6 viewer workflow slice for day-to-day CSV workf
 
 ### Validation
 
-- `swift test`: 85 tests passing after post-release audit fixes.
+- `swift test`: 79 tests passing.
 
 ### Distribution
 
