@@ -22,7 +22,7 @@ public struct IndexProgress: Sendable {
     }
 }
 
-public struct SortKey: Sendable, Equatable {
+public struct SortKey: Sendable, Equatable, Codable {
     public let column: Int
     public let ascending: Bool
 

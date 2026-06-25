@@ -64,6 +64,13 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return viewMap != nil
     }
 
+    public enum ExportFormat: String, Sendable {
+        case csv
+        case markdown
+        case json
+        case html
+    }
+
     private init(path: String, detection: EncodingDetectionResult) throws {
         self.path = path
         encoding = detection.encoding
@@ -754,22 +761,97 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
 
     public func exportCurrentView(to outputPath: String, selectedColumns: [Int]? = nil, cancellation: CancellationFlag) throws {
+        try exportCurrentView(to: outputPath, format: .csv, selectedColumns: selectedColumns, cancellation: cancellation)
+    }
+
+    public func exportCurrentView(to outputPath: String, format: ExportFormat, selectedColumns: [Int]? = nil, cancellation: CancellationFlag) throws {
         let columns = (selectedColumns ?? Array(0..<columnCount)).filter { $0 >= 0 && $0 < columnCount }
         FileManager.default.createFile(atPath: outputPath, contents: nil)
         let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: outputPath))
         defer { try? handle.close() }
 
-        func writeLine(_ fields: [String]) throws {
-            let line = fields.map(Self.csvEscaped).joined(separator: ",") + "\n"
-            try handle.write(contentsOf: Data(line.utf8))
+        func write(_ text: String) throws {
+            try handle.write(contentsOf: Data(text.utf8))
         }
 
-        try writeLine(columns.map { header[$0] })
-        for row in 0..<displayRowCount {
-            if row & 0x3FFF == 0 { try cancellation.check() }
-            let fields = try getDisplayRow(row)
-            try writeLine(columns.map { $0 < fields.count ? fields[$0] : "" })
+        func writeCsvLine(_ fields: [String]) throws {
+            let line = fields.map(Self.csvEscaped).joined(separator: ",") + "\n"
+            try write(line)
         }
+
+        let headers = columns.map { header[$0] }
+        switch format {
+        case .csv:
+            try writeCsvLine(headers)
+            for row in 0..<displayRowCount {
+                if row & 0x3FFF == 0 { try cancellation.check() }
+                let fields = try getDisplayRow(row)
+                try writeCsvLine(columns.map { $0 < fields.count ? fields[$0] : "" })
+            }
+        case .markdown:
+            try write("| " + headers.map(Self.markdownEscaped).joined(separator: " | ") + " |\n")
+            try write("| " + Array(repeating: "---", count: headers.count).joined(separator: " | ") + " |\n")
+            for row in 0..<displayRowCount {
+                if row & 0x3FFF == 0 { try cancellation.check() }
+                let fields = try getDisplayRow(row)
+                let selected = columns.map { $0 < fields.count ? fields[$0] : "" }
+                try write("| " + selected.map(Self.markdownEscaped).joined(separator: " | ") + " |\n")
+            }
+        case .json:
+            var rows: [[String: String]] = []
+            rows.reserveCapacity(displayRowCount)
+            for row in 0..<displayRowCount {
+                if row & 0x3FFF == 0 { try cancellation.check() }
+                let fields = try getDisplayRow(row)
+                var object: [String: String] = [:]
+                for (index, column) in columns.enumerated() {
+                    object[headers[index]] = column < fields.count ? fields[column] : ""
+                }
+                rows.append(object)
+            }
+            let data = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
+            try handle.write(contentsOf: data)
+        case .html:
+            try write("<!doctype html>\n<html>\n<head><meta charset=\"utf-8\"><title>Nanum CSV Viewer Export</title></head>\n<body>\n<table>\n")
+            try write("<thead><tr>" + headers.map { "<th>\(Self.htmlEscaped($0))</th>" }.joined() + "</tr></thead>\n<tbody>\n")
+            for row in 0..<displayRowCount {
+                if row & 0x3FFF == 0 { try cancellation.check() }
+                let fields = try getDisplayRow(row)
+                let selected = columns.map { $0 < fields.count ? fields[$0] : "" }
+                try write("<tr>" + selected.map { "<td>\(Self.htmlEscaped($0))</td>" }.joined() + "</tr>\n")
+            }
+            try write("</tbody>\n</table>\n</body>\n</html>")
+        }
+    }
+
+    public func findNext(query: CsvSearchQuery, start: Int, wrap: Bool, cancellation: CancellationFlag) throws -> CsvSearchMatch? {
+        let total = displayRowCount
+        guard total > 0 else { return nil }
+        let boundedStart = max(0, min(start, total))
+
+        if let match = try findNextInRange(query: query, range: boundedStart..<total, cancellation: cancellation) {
+            return match
+        }
+        if wrap, boundedStart > 0 {
+            return try findNextInRange(query: query, range: 0..<boundedStart, cancellation: cancellation)
+        }
+        return nil
+    }
+
+    private func findNextInRange(query: CsvSearchQuery, range: Range<Int>, cancellation: CancellationFlag) throws -> CsvSearchMatch? {
+        for viewRow in range {
+            if viewRow & 0x3FFF == 0 { try cancellation.check() }
+            let row = try getDisplayRow(viewRow)
+            if let match = try CsvSearchMatcher.firstMatch(in: row, query: query) {
+                return CsvSearchMatch(
+                    viewRow: viewRow,
+                    sourceRowNumber: getSourceRowNumber(viewRow),
+                    column: match.column,
+                    value: match.value
+                )
+            }
+        }
+        return nil
     }
 
     public func findDuplicates(columns: [Int], cancellation: CancellationFlag) throws -> [DuplicateGroup] {
@@ -1128,6 +1210,24 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
         }
         return value
+    }
+
+    private static func markdownEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "|", with: "\\|")
+            .replacingOccurrences(of: "\r\n", with: "<br>")
+            .replacingOccurrences(of: "\n", with: "<br>")
+            .replacingOccurrences(of: "\r", with: "<br>")
+    }
+
+    private static func htmlEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 
     private static func identity(_ count: Int) -> [Int] {

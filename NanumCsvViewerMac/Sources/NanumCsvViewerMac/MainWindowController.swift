@@ -1,16 +1,19 @@
 import AppKit
+import UniformTypeIdentifiers
 @preconcurrency import CsvCore
 
 @MainActor
 final class MainWindowController: NSWindowController {
     private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
+    private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
     private static let tableCellPreviewLimit = 512
 
     private let tableView = CsvTableView()
     private let scrollView = NSScrollView()
     private let selectedValueBar = NSVisualEffectView()
     private let selectedAddressLabel = NSTextField(labelWithString: "")
+    private let selectedValueExpandButton = NSButton()
     private let selectedValueTextView = NSTextView()
     private let selectedValueScrollView = NSScrollView()
     private let detailHeaderLabel = NSTextField(labelWithString: L.t("Inspector", "인스펙터"))
@@ -34,11 +37,14 @@ final class MainWindowController: NSWindowController {
     private let clearFilterButton = NSButton()
     private let findNextButton = NSButton()
     private let mainSplit = NSSplitView()
-    private let contentContainer = NSView()
+    private let contentContainer = CsvDropView()
     private let filterBarView = FilterBarView()
     private let filterTokensStack = NSStackView()
-    private let emptyStateView = NSView()
+    private let emptyStateView = CsvDropView()
     private let detailPanel = NSView()
+    private var selectedValueBarHeightConstraint: NSLayoutConstraint?
+    private var selectedValueScrollHeightConstraint: NSLayoutConstraint?
+    private var selectedValueExpanded = false
     private var didSetInitialSplit = false
     private var preferredInspectorWidth: CGFloat = 360
 
@@ -64,6 +70,9 @@ final class MainWindowController: NSWindowController {
     private var detailUpdateWorkItem: DispatchWorkItem?
     private var columnStatisticsReport: ColumnStatisticsReport?
     private var hiddenColumnIndexes: Set<Int> = []
+    private var currentFilePath: String?
+    var openAdditionalFilesHandler: (([URL], NSWindow?) -> Void)?
+    var closeHandler: ((MainWindowController) -> Void)?
 
     private var hasAnyFilter: Bool {
         textCondition != nil || !valueConditions.isEmpty
@@ -78,6 +87,8 @@ final class MainWindowController: NSWindowController {
         )
         window.title = "Nanum CSV Viewer"
         window.titlebarAppearsTransparent = false
+        window.tabbingIdentifier = "NanumCsvViewerMac.Documents"
+        window.tabbingMode = .preferred
         super.init(window: window)
         VirtualCsvDocument.persistentIndexEnabled = UserDefaults.standard.object(forKey: Self.persistentIndexDefaultsKey) as? Bool ?? true
         hiddenColumnIndexes = Set(UserDefaults.standard.array(forKey: Self.hiddenColumnsDefaultsKey) as? [Int] ?? [])
@@ -95,6 +106,7 @@ final class MainWindowController: NSWindowController {
         rowTimer?.invalidate()
         detailUpdateWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
+        closeHandler?(self)
         super.close()
     }
 
@@ -124,6 +136,7 @@ final class MainWindowController: NSWindowController {
         configureDetailPanel()
         configureEncodingPopup()
         configureEmptyState()
+        configureDropTargets()
         setFilterBarVisible(false)
         setInspectorVisible(false, rememberWidth: false, animated: false)
         updateFeatureState()
@@ -339,7 +352,9 @@ final class MainWindowController: NSWindowController {
         bar.state = .active
         bar.translatesAutoresizingMaskIntoConstraints = false
         bar.isHidden = true
-        bar.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        let height = bar.heightAnchor.constraint(equalToConstant: 34)
+        selectedValueBarHeightConstraint = height
+        height.isActive = true
 
         selectedAddressLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         selectedAddressLabel.textColor = .secondaryLabelColor
@@ -352,6 +367,8 @@ final class MainWindowController: NSWindowController {
         selectedValueTextView.font = .systemFont(ofSize: 13, weight: .regular)
         selectedValueTextView.textColor = .labelColor
         selectedValueTextView.textContainerInset = NSSize(width: 2, height: 3)
+        selectedValueTextView.textContainer?.widthTracksTextView = true
+        selectedValueTextView.isVerticallyResizable = true
         selectedValueScrollView.documentView = selectedValueTextView
         selectedValueScrollView.hasVerticalScroller = false
         selectedValueScrollView.autohidesScrollers = true
@@ -359,21 +376,38 @@ final class MainWindowController: NSWindowController {
         selectedValueScrollView.borderType = .noBorder
         selectedValueScrollView.translatesAutoresizingMaskIntoConstraints = false
 
+        selectedValueExpandButton.title = ""
+        selectedValueExpandButton.bezelStyle = .texturedRounded
+        selectedValueExpandButton.controlSize = .small
+        selectedValueExpandButton.imageScaling = .scaleProportionallyDown
+        selectedValueExpandButton.target = self
+        selectedValueExpandButton.action = #selector(toggleSelectedValueExpansion(_:))
+        selectedValueExpandButton.toolTip = L.t("Expand selected value", "선택값 펼치기")
+        selectedValueExpandButton.translatesAutoresizingMaskIntoConstraints = false
+        updateSelectedValueExpansionButton()
+
         let separator = NSBox()
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
 
         bar.addSubview(selectedAddressLabel)
         bar.addSubview(selectedValueScrollView)
+        bar.addSubview(selectedValueExpandButton)
         bar.addSubview(separator)
+        let scrollHeight = selectedValueScrollView.heightAnchor.constraint(equalToConstant: 24)
+        selectedValueScrollHeightConstraint = scrollHeight
         NSLayoutConstraint.activate([
             selectedAddressLabel.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 10),
-            selectedAddressLabel.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            selectedAddressLabel.topAnchor.constraint(equalTo: bar.topAnchor, constant: 8),
             selectedAddressLabel.widthAnchor.constraint(equalToConstant: 170),
             selectedValueScrollView.leadingAnchor.constraint(equalTo: selectedAddressLabel.trailingAnchor, constant: 10),
-            selectedValueScrollView.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -10),
-            selectedValueScrollView.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            selectedValueScrollView.heightAnchor.constraint(equalToConstant: 24),
+            selectedValueScrollView.trailingAnchor.constraint(equalTo: selectedValueExpandButton.leadingAnchor, constant: -8),
+            selectedValueScrollView.topAnchor.constraint(equalTo: bar.topAnchor, constant: 5),
+            scrollHeight,
+            selectedValueExpandButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -10),
+            selectedValueExpandButton.topAnchor.constraint(equalTo: bar.topAnchor, constant: 5),
+            selectedValueExpandButton.widthAnchor.constraint(equalToConstant: 28),
+            selectedValueExpandButton.heightAnchor.constraint(equalToConstant: 24),
             separator.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: bar.bottomAnchor)
@@ -601,6 +635,14 @@ final class MainWindowController: NSWindowController {
         ])
     }
 
+    private func configureDropTargets() {
+        let handler: ([URL], String?) -> Void = { [weak self] urls, text in
+            self?.openDroppedContent(urls: urls, text: text)
+        }
+        contentContainer.dropHandler = handler
+        emptyStateView.dropHandler = handler
+    }
+
     private func configureEncodingPopup() {
         encodingPopup.removeAllItems()
         encodingPopup.addItems(withTitles: CsvEncodingName.selectable)
@@ -810,9 +852,9 @@ extension MainWindowController: NSMenuItemValidation {
             let hasSelection = tableView.selectedRow >= 0
 
             switch menuItem.action {
-            case #selector(openDocument(_:)), #selector(showUsage(_:)):
+            case #selector(openDocument(_:)), #selector(openFromClipboard(_:)), #selector(showUsage(_:)):
                 return true
-            case #selector(exportCurrentView(_:)):
+            case #selector(exportCurrentView(_:)), #selector(exportCurrentViewAsMarkdown(_:)), #selector(exportCurrentViewAsJson(_:)), #selector(exportCurrentViewAsHtml(_:)):
                 return ready
             case #selector(focusFindField(_:)), #selector(findNext(_:)):
                 return hasDocument && !busy
@@ -834,8 +876,12 @@ extension MainWindowController: NSMenuItemValidation {
                 return hasDocument
             case #selector(showColumnStatistics(_:)):
                 return ready
+            case #selector(showPerformanceDashboard(_:)):
+                return hasDocument
             case #selector(showAllColumns(_:)):
                 return hasDocument && !hiddenColumnIndexes.isEmpty
+            case #selector(saveCurrentView(_:)), #selector(restoreSavedView(_:)):
+                return hasDocument && ready
             case #selector(hideCurrentColumn(_:)):
                 return hasDocument && currentDataColumn >= 0
             case #selector(togglePersistentIndex(_:)):
@@ -859,26 +905,65 @@ extension MainWindowController {
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.commaSeparatedText, .plainText]
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.beginSheetModal(for: window!) { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
+            guard response == .OK, !panel.urls.isEmpty else { return }
             Task { @MainActor in
-                self?.openFile(url)
+                self?.openURLs(panel.urls)
             }
         }
     }
 
+    @objc func openFromClipboard(_ sender: Any?) {
+        guard let text = NSPasteboard.general.string(forType: .string) else {
+            statusLabel.stringValue = L.t("Clipboard does not contain CSV text or a file path.", "클립보드에 CSV 텍스트나 파일 경로가 없습니다.")
+            return
+        }
+        do {
+            let importResult = try ClipboardImportResolver.resolve(text: text)
+            openURLs([importResult.url])
+            statusLabel.stringValue = importResultStatus(importResult)
+        } catch ClipboardImportResolver.ImportError.emptyClipboardText {
+            statusLabel.stringValue = L.t("Clipboard is empty.", "클립보드가 비어 있습니다.")
+        } catch {
+            presentError(error)
+        }
+    }
+
     @objc func exportCurrentView(_ sender: Any?) {
+        exportCurrentView(format: .csv, defaultName: "export.csv")
+    }
+
+    @objc func exportCurrentViewAsMarkdown(_ sender: Any?) {
+        exportCurrentView(format: .markdown, defaultName: "export.md")
+    }
+
+    @objc func exportCurrentViewAsJson(_ sender: Any?) {
+        exportCurrentView(format: .json, defaultName: "export.json")
+    }
+
+    @objc func exportCurrentViewAsHtml(_ sender: Any?) {
+        exportCurrentView(format: .html, defaultName: "export.html")
+    }
+
+    private func exportCurrentView(format: VirtualCsvDocument.ExportFormat, defaultName: String) {
         guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "export.csv"
+        panel.allowedContentTypes = [
+            .commaSeparatedText,
+            UTType(filenameExtension: "md") ?? .plainText,
+            .json,
+            .html
+        ]
+        panel.nameFieldStringValue = defaultName
         panel.beginSheetModal(for: window!) { [weak self, weak doc] response in
             guard response == .OK, let url = panel.url, let doc else { return }
             Task { @MainActor in
+                let resolvedFormat = self?.exportFormat(for: url, fallback: format) ?? format
+                let selectedColumns = self?.visibleColumnIndexesForExport()
                 self?.runViewOperation(message: L.t("Exporting...", "내보내는 중...")) { flag, progress in
-                    try doc.exportCurrentView(to: url.path, cancellation: flag)
+                    try doc.exportCurrentView(to: url.path, format: resolvedFormat, selectedColumns: selectedColumns, cancellation: flag)
                     progress(100)
                 } completion: { [weak self] in
                     self?.statusLabel.stringValue = L.t("Exported current view.", "현재 보기를 내보냈습니다.")
@@ -887,11 +972,69 @@ extension MainWindowController {
         }
     }
 
+    private func exportFormat(for url: URL, fallback: VirtualCsvDocument.ExportFormat) -> VirtualCsvDocument.ExportFormat {
+        switch url.pathExtension.lowercased() {
+        case "csv": return .csv
+        case "md", "markdown": return .markdown
+        case "json": return .json
+        case "html", "htm": return .html
+        default: return fallback
+        }
+    }
+
+    private func visibleColumnIndexesForExport() -> [Int]? {
+        let visible = columnNames.indices.filter { index in
+            tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden != true
+        }
+        return visible.count == columnNames.count ? nil : visible
+    }
+
+    func openFileURL(_ url: URL) {
+        openFile(url)
+    }
+
+    private func openURLs(_ urls: [URL]) {
+        let route = DocumentOpenRouting.route(urls: urls, currentWindowHasDocument: csvDocument != nil)
+        if let currentURL = route.currentWindowURL {
+            openFile(currentURL)
+        }
+        if !route.additionalWindowURLs.isEmpty {
+            openAdditionalFilesHandler?(route.additionalWindowURLs, window)
+        }
+    }
+
+    private func openDroppedContent(urls: [URL], text: String?) {
+        if !urls.isEmpty {
+            openURLs(urls)
+            return
+        }
+        guard let text else { return }
+        do {
+            let importResult = try ClipboardImportResolver.resolve(text: text)
+            openURLs([importResult.url])
+            statusLabel.stringValue = importResultStatus(importResult)
+        } catch ClipboardImportResolver.ImportError.emptyClipboardText {
+            statusLabel.stringValue = L.t("Dropped text is empty.", "드롭한 텍스트가 비어 있습니다.")
+        } catch {
+            presentError(error)
+        }
+    }
+
+    private func importResultStatus(_ result: ClipboardImportResolver.ImportResult) -> String {
+        switch result {
+        case .existingFile:
+            return L.t("Opened file from clipboard.", "클립보드의 파일을 열었습니다.")
+        case .createdFile:
+            return L.t("Opened CSV text from clipboard.", "클립보드의 CSV 텍스트를 열었습니다.")
+        }
+    }
+
     private func openFile(_ url: URL) {
         cancelAll()
         do {
             let doc = try VirtualCsvDocument.open(path: url.path)
             csvDocument = doc
+            currentFilePath = url.path
             indexingElapsed = nil
             columnStatisticsReport = nil
             window?.title = "Nanum CSV Viewer - \(url.lastPathComponent)"
@@ -905,6 +1048,7 @@ extension MainWindowController {
             updateFeatureState()
         } catch {
             indexingElapsed = nil
+            currentFilePath = nil
             presentError(error)
             statusLabel.stringValue = L.t("Open failed.", "열기에 실패했습니다.")
             updateEmptyState()
@@ -1039,6 +1183,13 @@ extension MainWindowController {
         guard !term.isEmpty else { return }
         let total = doc.displayRowCount
         guard total > 0 else { return }
+        let query: CsvSearchQuery
+        do {
+            query = try SearchFieldParser.parse(term, column: nil)
+        } catch {
+            presentError(error)
+            return
+        }
 
         findCancellation?.cancel()
         let cancellation = CancellationFlag()
@@ -1048,45 +1199,29 @@ extension MainWindowController {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
             guard let doc else { return }
-            let found: Int?
+            let match: CsvSearchMatch?
             do {
-                found = try Self.searchForward(csvDocument: doc, term: term, start: start, total: total, cancellation: cancellation)
+                match = try doc.findNext(query: query, start: start, wrap: true, cancellation: cancellation)
             } catch {
                 return
             }
             DispatchQueue.main.async {
                 guard doc === self?.csvDocument else { return }
                 self?.setBusy(false)
-                if let found {
-                    self?.tableView.selectRowIndexes(IndexSet(integer: found), byExtendingSelection: false)
-                    self?.tableView.scrollRowToVisible(found)
-                    self?.statusLabel.stringValue = L.t("Found \"\(term)\" at row \((found + 1).formatted()).", "\"\(term)\" 검색 결과: \((found + 1).formatted())행")
+                if let match {
+                    self?.tableView.selectRowIndexes(IndexSet(integer: match.viewRow), byExtendingSelection: false)
+                    self?.tableView.scrollRowToVisible(match.viewRow)
+                    self?.currentDataColumn = match.column
+                    self?.updateSelectedValue()
+                    self?.statusLabel.stringValue = L.t(
+                        "Found \"\(term)\" at source row \(match.sourceRowNumber.formatted()).",
+                        "\"\(term)\" 검색 결과: 원본 \(match.sourceRowNumber.formatted())행"
+                    )
                 } else {
                     self?.statusLabel.stringValue = L.t("No match for \"\(term)\".", "\"\(term)\" 검색 결과가 없습니다.")
                 }
             }
         }
-    }
-
-    private nonisolated static func searchForward(csvDocument: VirtualCsvDocument, term: String, start: Int, total: Int, cancellation: CancellationFlag) throws -> Int? {
-        if start < total {
-            for row in start..<total {
-                if row & 0x3FFF == 0 { try cancellation.check() }
-                if try rowContains(csvDocument: csvDocument, viewRow: row, term: term) { return row }
-            }
-        }
-        if start > 0 {
-            for row in 0..<min(start, total) {
-                if row & 0x3FFF == 0 { try cancellation.check() }
-                if try rowContains(csvDocument: csvDocument, viewRow: row, term: term) { return row }
-            }
-        }
-        return nil
-    }
-
-    private nonisolated static func rowContains(csvDocument: VirtualCsvDocument, viewRow: Int, term: String) throws -> Bool {
-        let row = try csvDocument.getDisplayRow(viewRow)
-        return row.contains { $0.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
     }
 
     @objc func applyTextFilter(_ sender: Any?) {
@@ -1109,34 +1244,18 @@ extension MainWindowController {
 
         let selected = filterColumnPopup.indexOfSelectedItem
         let column = selected <= 0 ? -1 : selected - 1
-        let compiledExpression: CompiledAdvancedFilter?
-        if Self.looksLikeExpression(term) {
-            do {
-                compiledExpression = try AdvancedFilterExpression.compile(term, headers: doc.header)
-            } catch {
-                presentError(error)
-                return
-            }
-        } else {
-            compiledExpression = nil
+        let configured: (predicate: ([String]) -> Bool, usesExpression: Bool)
+        do {
+            configured = try configureTextCondition(term: term, column: column, document: doc)
+        } catch {
+            presentError(error)
+            return
         }
-
-        let activePredicate: ([String]) -> Bool
-        if let compiledExpression {
-            activePredicate = compiledExpression.predicate
-            textCondition = activePredicate
-            textConditionDescription = L.t("expression: \(truncated(term))", "표현식: \(truncated(term))")
-        } else {
-            let predicate = Self.containsPredicate(term: term, column: column)
-            activePredicate = predicate
-            let columnName = column < 0 ? L.t("all columns", "전체 열") : columnNames[safe: column] ?? L.t("column \(column + 1)", "\(column + 1)열")
-            textCondition = activePredicate
-            textConditionDescription = L.t("\(columnName) contains \"\(truncated(term))\"", "\(columnName)에 \"\(truncated(term))\" 포함")
-        }
+        let activePredicate = configured.predicate
         textFilterTerm = term
         textFilterColumn = column
         setFilterBarVisible(true)
-        let canUseColumnFastPath = compiledExpression == nil && column >= 0 && (!hadTextCondition || valueConditions.isEmpty)
+        let canUseColumnFastPath = !configured.usesExpression && column >= 0 && (!hadTextCondition || valueConditions.isEmpty)
         if canUseColumnFastPath {
             let withinCurrentView = !hadTextCondition && !valueConditions.isEmpty
             runViewOperation(message: L.t("Applying filter...", "필터 적용 중...")) { flag, progress in
@@ -1153,6 +1272,21 @@ extension MainWindowController {
                 self?.updateFilterStatus()
             }
         }
+    }
+
+    private func configureTextCondition(term: String, column: Int, document: VirtualCsvDocument) throws -> (predicate: ([String]) -> Bool, usesExpression: Bool) {
+        if Self.looksLikeExpression(term) {
+            let compiled = try AdvancedFilterExpression.compile(term, headers: document.header)
+            textCondition = compiled.predicate
+            textConditionDescription = L.t("expression: \(truncated(term))", "표현식: \(truncated(term))")
+            return (compiled.predicate, true)
+        }
+
+        let predicate = Self.containsPredicate(term: term, column: column)
+        let columnName = column < 0 ? L.t("all columns", "전체 열") : columnNames[safe: column] ?? L.t("column \(column + 1)", "\(column + 1)열")
+        textCondition = predicate
+        textConditionDescription = L.t("\(columnName) contains \"\(truncated(term))\"", "\(columnName)에 \"\(truncated(term))\" 포함")
+        return (predicate, false)
     }
 
     @objc func filterBySelectedCell(_ sender: Any?) {
@@ -1370,6 +1504,11 @@ extension MainWindowController {
         setFilterBarVisible(filterBarView.isHidden, focus: true)
     }
 
+    @objc func toggleSelectedValueExpansion(_ sender: Any?) {
+        selectedValueExpanded.toggle()
+        updateSelectedValueExpansionLayout()
+    }
+
     @objc func goToRow(_ sender: Any?) {
         guard let doc = csvDocument, !busy else { return }
         let alert = NSAlert()
@@ -1404,6 +1543,13 @@ extension MainWindowController {
         let column = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
         setInspectorVisible(true, animated: true)
         renderColumnStatistics(column: column)
+    }
+
+    @objc func showPerformanceDashboard(_ sender: Any?) {
+        guard let snapshot = performanceSnapshot() else { return }
+        setInspectorVisible(true, animated: true)
+        detailHeaderLabel.stringValue = L.t("Performance", "성능")
+        detailTextView.string = snapshot.formattedLines().joined(separator: "\n")
     }
 
     @objc func showNumericDistribution(_ sender: Any?) {
@@ -1569,20 +1715,26 @@ extension MainWindowController {
             """
             Open a CSV or text file, then browse rows while indexing continues in the background.
 
+            File: open multiple files as tabs, drag files in, or open CSV text from the clipboard.
             Toolbar: Open, sort, find, and detail panel.
+            Find: use plain text, regex:pattern, /pattern/, or fuzzy:term.
             Filter bar: choose a column, enter text, apply or clear filters.
+            View: save/restore the current view and inspect performance.
             Table: right-click a cell to copy it or filter by that value.
             Headers: click to sort, Shift-click to add another sort key.
-            Encoding: use the status-bar popup or View > Encoding.
+            Export: CSV, Markdown, JSON, or HTML using the currently visible columns.
             """,
             """
             CSV 또는 텍스트 파일을 열면 백그라운드 인덱싱 중에도 행을 탐색할 수 있습니다.
 
+            파일: 여러 파일을 탭으로 열거나, 파일을 드롭하거나, 클립보드의 CSV 텍스트를 열 수 있습니다.
             툴바: 열기, 정렬, 찾기, 상세 패널.
+            찾기: 일반 텍스트, regex:패턴, /패턴/, fuzzy:검색어를 사용할 수 있습니다.
             필터 바: 열 선택, 텍스트 입력, 필터 적용/해제.
+            보기: 현재 보기 저장/복원 및 성능 확인.
             표: 셀을 우클릭해 복사하거나 해당 값으로 필터.
             헤더: 클릭하면 정렬, Shift+클릭하면 정렬 기준 추가.
-            인코딩: 상태바 팝업 또는 보기 > 인코딩.
+            내보내기: 현재 표시 중인 컬럼을 CSV, Markdown, JSON, HTML로 내보낼 수 있습니다.
             """
         )
         let alert = NSAlert()
@@ -1790,6 +1942,24 @@ extension MainWindowController {
         }
     }
 
+    func updateSelectedValueExpansionLayout() {
+        selectedValueBarHeightConstraint?.constant = selectedValueExpanded ? 140 : 34
+        selectedValueScrollHeightConstraint?.constant = selectedValueExpanded ? 130 : 24
+        selectedValueScrollView.hasVerticalScroller = selectedValueExpanded
+        selectedValueTextView.textContainer?.heightTracksTextView = !selectedValueExpanded
+        updateSelectedValueExpansionButton()
+        selectedValueBar.superview?.layoutSubtreeIfNeeded()
+    }
+
+    private func updateSelectedValueExpansionButton() {
+        let symbol = selectedValueExpanded ? "chevron.down.circle" : "chevron.up.circle"
+        let tooltip = selectedValueExpanded
+            ? L.t("Collapse selected value", "선택값 접기")
+            : L.t("Expand selected value", "선택값 펼치기")
+        selectedValueExpandButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
+        selectedValueExpandButton.toolTip = tooltip
+    }
+
     func setFilterBarVisible(_ visible: Bool, focus: Bool = false) {
         filterBarView.isHidden = !visible
         filterToggleButton.state = visible ? .on : .off
@@ -1973,6 +2143,105 @@ extension MainWindowController {
         statusLabel.stringValue = VirtualCsvDocument.persistentIndexEnabled
             ? L.t("Persistent index enabled.", "인덱스 저장을 켰습니다.")
             : L.t("Persistent index disabled.", "인덱스 저장을 껐습니다.")
+    }
+
+    @objc func saveCurrentView(_ sender: Any?) {
+        guard csvDocument != nil, let currentFilePath else { return }
+        let searchQuery = findField.stringValue.isEmpty ? nil : try? SearchFieldParser.parse(findField.stringValue, column: nil)
+        let saved = SavedCsvView(
+            name: URL(fileURLWithPath: currentFilePath).lastPathComponent,
+            filterText: textFilterTerm.isEmpty ? nil : textFilterTerm,
+            filterColumn: textFilterColumn < 0 ? nil : textFilterColumn,
+            sortKeys: sortKeys,
+            hiddenColumnIndexes: Array(hiddenColumnIndexes),
+            searchQuery: searchQuery,
+            currentColumn: currentDataColumn
+        )
+        do {
+            let data = try JSONEncoder().encode(saved)
+            var map = savedViewMap()
+            map[currentFilePath] = data.base64EncodedString()
+            UserDefaults.standard.set(map, forKey: Self.savedViewsDefaultsKey)
+            statusLabel.stringValue = L.t("Saved current view.", "현재 보기를 저장했습니다.")
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func restoreSavedView(_ sender: Any?) {
+        guard let doc = csvDocument, let currentFilePath, !busy else { return }
+        guard let encoded = savedViewMap()[currentFilePath],
+              let data = Data(base64Encoded: encoded),
+              let saved = try? JSONDecoder().decode(SavedCsvView.self, from: data) else {
+            statusLabel.stringValue = L.t("No saved view for this file.", "이 파일에 저장된 보기가 없습니다.")
+            return
+        }
+
+        valueConditions.removeAll()
+        textCondition = nil
+        textConditionDescription = ""
+        textFilterTerm = saved.filterText ?? ""
+        textFilterColumn = saved.filterColumn ?? -1
+        filterField.stringValue = textFilterTerm
+        filterColumnPopup.selectItem(at: textFilterColumn < 0 ? 0 : textFilterColumn + 1)
+        sortKeys = saved.sortKeys
+        currentDataColumn = min(saved.currentColumn, max(0, columnNames.count - 1))
+        hiddenColumnIndexes = Set(saved.hiddenColumnIndexes)
+        applyColumnVisibility()
+        if let query = saved.searchQuery {
+            findField.stringValue = Self.displayText(for: query)
+        }
+
+        let predicate: (([String]) -> Bool)?
+        do {
+            if let filterText = saved.filterText {
+                predicate = try configureTextCondition(term: filterText, column: textFilterColumn, document: doc).predicate
+            } else {
+                predicate = nil
+            }
+        } catch {
+            presentError(error)
+            return
+        }
+
+        let keys = sortKeys
+        runViewOperation(message: L.t("Restoring view...", "보기 복원 중...")) { flag, progress in
+            doc.clearView()
+            if let predicate {
+                try doc.applyFilter(predicate, progress: progress, cancellation: flag)
+            }
+            if !keys.isEmpty {
+                try doc.sort(keys: keys, progress: progress, cancellation: flag)
+            }
+            progress(100)
+        } completion: { [weak self] in
+            self?.updateSortHeaders()
+            self?.refreshFilterTokens()
+            self?.updateFilterStatus()
+            self?.statusLabel.stringValue = L.t("Restored saved view.", "저장된 보기를 복원했습니다.")
+        }
+    }
+
+    private func savedViewMap() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: Self.savedViewsDefaultsKey) as? [String: String] ?? [:]
+    }
+
+    private func applyColumnVisibility() {
+        for index in columnNames.indices {
+            tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden = hiddenColumnIndexes.contains(index)
+        }
+        persistColumnVisibility()
+    }
+
+    private static func displayText(for query: CsvSearchQuery) -> String {
+        switch query.mode {
+        case .contains:
+            return query.text
+        case .regex:
+            return "regex:\(query.text)"
+        case .fuzzy:
+            return "fuzzy:\(query.text)"
+        }
     }
 
     func persistColumnVisibility() {
@@ -2263,6 +2532,8 @@ extension MainWindowController {
         selectedValueBar.isHidden = true
         selectedAddressLabel.stringValue = ""
         selectedValueTextView.string = ""
+        selectedValueExpanded = false
+        updateSelectedValueExpansionLayout()
         updateSortHeaders()
         refreshFilterTokens()
         setFilterBarVisible(false)
@@ -2352,6 +2623,20 @@ extension MainWindowController {
         documentInfoLabel.stringValue = parts.joined(separator: " · ")
         storageModeLabel.stringValue = ""
         storageModeLabel.isHidden = true
+    }
+
+    func performanceSnapshot() -> PerformanceSnapshot? {
+        guard let doc = csvDocument else { return nil }
+        let storageMode = doc.indexingComplete ? (doc.inMemory ? "RAM" : "Disk") : (doc.willUseRam ? "RAM" : "Disk")
+        return PerformanceSnapshot(
+            fileBytes: doc.fileLength,
+            totalRows: doc.dataRowsAvailable,
+            visibleRows: doc.displayRowCount,
+            columnCount: doc.columnCount,
+            storageMode: storageMode,
+            indexingElapsed: indexingElapsed,
+            indexingComplete: doc.indexingComplete
+        )
     }
 
     func setProgressVisible(_ visible: Bool) {
@@ -2458,6 +2743,28 @@ extension MainWindowController {
             let view = tableView.view(atColumn: columnIndex, row: row, makeIfNecessary: true) as? NSTableCellView
             return view?.textField?.stringValue ?? ""
         }
+    }
+
+    func selectCellForTesting(row: Int, column: Int) {
+        currentDataColumn = column
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        updateSelectedValue()
+    }
+
+    func toggleSelectedValueExpansionForTesting() {
+        toggleSelectedValueExpansion(nil)
+    }
+
+    var selectedValueBarHeightForTesting: CGFloat {
+        selectedValueBarHeightConstraint?.constant ?? 0
+    }
+
+    var selectedValueScrollsVerticallyForTesting: Bool {
+        selectedValueScrollView.hasVerticalScroller
+    }
+
+    var selectedValueTextForTesting: String {
+        selectedValueTextView.string
     }
 }
 #endif

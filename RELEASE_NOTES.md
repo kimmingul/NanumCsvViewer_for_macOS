@@ -1,5 +1,44 @@
 # Release Notes
 
+## v1.6.0 - 2026-06-25
+
+This release implements the v1.6 GitHub issue roadmap for viewer completeness and day-to-day CSV workflow polish.
+
+### Highlights
+
+- Added native multi-file opening with macOS tab grouping.
+- Added drag-and-drop opening for CSV files and CSV text.
+- Added clipboard quick import for copied CSV text, file paths, and `file://` URLs.
+- Added advanced Find support for plain text, `regex:pattern`, `/pattern/`, and `fuzzy:term`.
+- Added per-file saved views for filters, sort keys, hidden columns, search mode, and current column.
+- Added an expandable selected value bar for multiline cell contents.
+- Added a performance dashboard in the Inspector.
+- Added Markdown, JSON, and HTML export formats for the current filtered/sorted view.
+- Export now respects currently visible columns when columns are hidden.
+
+### Developer Notes
+
+- Added dedicated search query/match types in `CsvCore`.
+- Added saved view serialization for stable view-state round trips.
+- Added import/routing helpers for clipboard and multi-document open behavior.
+- Kept all new behavior covered by focused unit and AppKit regression tests.
+
+### Validation
+
+- `swift test`: 79 tests passing.
+
+### Distribution
+
+- Bundle version: `1.6.0`
+- Bundle build: `160`
+- Minimum macOS: `14.0`
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.6.0.dmg`
+  - `Nanum-CSV-Viewer-v1.6.0.zip`
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.6.0.dmg`: `c4a54f348f291ab2b3f6fe1ee3549098eaebf1e432e897eb8d2d0f73015517d3`
+  - `Nanum-CSV-Viewer-v1.6.0.zip`: `98dc41a5c0c3adae5a5ba1f7645bc36a14676ed825281bbbe8186fd288dc5598`
+
 ## v1.5.0 - 2026-06-24
 
 This release completes the GitHub issue roadmap through v1.5 and includes performance fixes found while testing a real 1.2 GB clinical CSV with large multiline XML/CLOB fields.

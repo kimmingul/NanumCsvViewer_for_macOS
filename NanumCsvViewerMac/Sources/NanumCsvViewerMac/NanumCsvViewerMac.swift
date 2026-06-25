@@ -17,12 +17,11 @@ struct NanumCsvViewerMacApp {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var mainWindowController: MainWindowController?
+    private var windowControllers: [MainWindowController] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let controller = MainWindowController()
-        mainWindowController = controller
-        buildMenu(target: controller)
+        buildMenu()
+        let controller = makeWindowController()
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -31,7 +30,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    private func buildMenu(target: MainWindowController) {
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        openAdditionalDocuments([URL(fileURLWithPath: filename)], tabbedTo: NSApp.keyWindow)
+        return true
+    }
+
+    private func makeWindowController(opening url: URL? = nil) -> MainWindowController {
+        let controller = MainWindowController()
+        controller.openAdditionalFilesHandler = { [weak self] urls, sourceWindow in
+            self?.openAdditionalDocuments(urls, tabbedTo: sourceWindow)
+        }
+        controller.closeHandler = { [weak self] controller in
+            self?.windowControllers.removeAll { $0 === controller }
+        }
+        windowControllers.append(controller)
+
+        if let url {
+            controller.openFileURL(url)
+        }
+        return controller
+    }
+
+    private func openAdditionalDocuments(_ urls: [URL], tabbedTo baseWindow: NSWindow?) {
+        for url in urls {
+            let controller = makeWindowController(opening: url)
+            controller.showWindow(nil)
+            if let baseWindow, let window = controller.window, baseWindow !== window {
+                baseWindow.addTabbedWindow(window, ordered: .above)
+            }
+        }
+    }
+
+    private func buildMenu() {
         let mainMenu = NSMenu()
         NSApp.mainMenu = mainMenu
 
@@ -48,56 +78,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: fileItem.title)
         fileItem.submenu = fileMenu
         let open = NSMenuItem(title: L.t("Open...", "열기..."), action: #selector(MainWindowController.openDocument(_:)), keyEquivalent: "o")
-        open.target = target
         fileMenu.addItem(open)
+        let clipboard = NSMenuItem(title: L.t("Open from Clipboard", "클립보드에서 열기"), action: #selector(MainWindowController.openFromClipboard(_:)), keyEquivalent: "v")
+        clipboard.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(clipboard)
+        fileMenu.addItem(.separator())
         let export = NSMenuItem(title: L.t("Export Current View...", "현재 보기 내보내기..."), action: #selector(MainWindowController.exportCurrentView(_:)), keyEquivalent: "e")
-        export.target = target
         fileMenu.addItem(export)
+        let exportMarkdown = NSMenuItem(title: L.t("Export as Markdown...", "Markdown으로 내보내기..."), action: #selector(MainWindowController.exportCurrentViewAsMarkdown(_:)), keyEquivalent: "")
+        fileMenu.addItem(exportMarkdown)
+        let exportJson = NSMenuItem(title: L.t("Export as JSON...", "JSON으로 내보내기..."), action: #selector(MainWindowController.exportCurrentViewAsJson(_:)), keyEquivalent: "")
+        fileMenu.addItem(exportJson)
+        let exportHtml = NSMenuItem(title: L.t("Export as HTML...", "HTML로 내보내기..."), action: #selector(MainWindowController.exportCurrentViewAsHtml(_:)), keyEquivalent: "")
+        fileMenu.addItem(exportHtml)
 
         let editItem = NSMenuItem(title: L.t("Edit", "편집"), action: nil, keyEquivalent: "")
         mainMenu.addItem(editItem)
         let editMenu = NSMenu(title: editItem.title)
         editItem.submenu = editMenu
         let find = NSMenuItem(title: L.t("Find", "찾기"), action: #selector(MainWindowController.focusFindField(_:)), keyEquivalent: "f")
-        find.target = target
         editMenu.addItem(find)
         let findNext = NSMenuItem(title: L.t("Find Next", "다음 찾기"), action: #selector(MainWindowController.findNext(_:)), keyEquivalent: "\u{F704}")
-        findNext.target = target
         editMenu.addItem(findNext)
         let goToRow = NSMenuItem(title: L.t("Go to Row...", "행으로 이동..."), action: #selector(MainWindowController.goToRow(_:)), keyEquivalent: "g")
-        goToRow.target = target
         editMenu.addItem(goToRow)
         editMenu.addItem(.separator())
         let copyCell = NSMenuItem(title: L.t("Copy Cell", "셀 복사"), action: #selector(MainWindowController.copySelectedCellToPasteboard(_:)), keyEquivalent: "c")
-        copyCell.target = target
         editMenu.addItem(copyCell)
         let copyCsv = NSMenuItem(title: L.t("Copy Cell as CSV", "셀을 CSV로 복사"), action: #selector(MainWindowController.copySelectedCellAsCsv(_:)), keyEquivalent: "")
-        copyCsv.target = target
         editMenu.addItem(copyCsv)
         let copyJson = NSMenuItem(title: L.t("Copy Cell as JSON", "셀을 JSON으로 복사"), action: #selector(MainWindowController.copySelectedCellAsJson(_:)), keyEquivalent: "")
-        copyJson.target = target
         editMenu.addItem(copyJson)
         editMenu.addItem(.separator())
         let applyFilter = NSMenuItem(title: L.t("Apply Filter", "필터 적용"), action: #selector(MainWindowController.applyTextFilter(_:)), keyEquivalent: "")
-        applyFilter.target = target
         editMenu.addItem(applyFilter)
         let filterByCell = NSMenuItem(title: L.t("Filter by Cell", "이 셀 값으로 필터"), action: #selector(MainWindowController.filterBySelectedCell(_:)), keyEquivalent: "b")
-        filterByCell.target = target
         editMenu.addItem(filterByCell)
         let clearFilter = NSMenuItem(title: L.t("Clear Filter", "필터 해제"), action: #selector(MainWindowController.clearFilter(_:)), keyEquivalent: "L")
         clearFilter.keyEquivalentModifierMask = [.command, .shift]
-        clearFilter.target = target
         editMenu.addItem(clearFilter)
         editMenu.addItem(.separator())
         let sortAsc = NSMenuItem(title: L.t("Sort Ascending", "오름차순 정렬"), action: #selector(MainWindowController.sortAscending(_:)), keyEquivalent: "")
-        sortAsc.target = target
         editMenu.addItem(sortAsc)
         let sortDesc = NSMenuItem(title: L.t("Sort Descending", "내림차순 정렬"), action: #selector(MainWindowController.sortDescending(_:)), keyEquivalent: "")
-        sortDesc.target = target
         editMenu.addItem(sortDesc)
         let clearSort = NSMenuItem(title: L.t("Clear Sort", "정렬 해제"), action: #selector(MainWindowController.clearSort(_:)), keyEquivalent: "S")
         clearSort.keyEquivalentModifierMask = [.command, .shift]
-        clearSort.target = target
         editMenu.addItem(clearSort)
 
         let viewItem = NSMenuItem(title: L.t("View", "보기"), action: nil, keyEquivalent: "")
@@ -106,20 +132,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewItem.submenu = viewMenu
         let filterBar = NSMenuItem(title: L.t("Show Filter Bar", "필터 바 보기"), action: #selector(MainWindowController.toggleFilterBar(_:)), keyEquivalent: "F")
         filterBar.keyEquivalentModifierMask = [.command, .option]
-        filterBar.target = target
         viewMenu.addItem(filterBar)
         let details = NSMenuItem(title: L.t("Toggle Inspector", "인스펙터 토글"), action: #selector(MainWindowController.toggleDetailPanel(_:)), keyEquivalent: "\u{F705}")
-        details.target = target
         viewMenu.addItem(details)
         let statistics = NSMenuItem(title: L.t("Column Statistics", "컬럼 통계"), action: #selector(MainWindowController.showColumnStatistics(_:)), keyEquivalent: "i")
         statistics.keyEquivalentModifierMask = [.command, .option]
-        statistics.target = target
         viewMenu.addItem(statistics)
+        let performance = NSMenuItem(title: L.t("Performance Dashboard", "성능 대시보드"), action: #selector(MainWindowController.showPerformanceDashboard(_:)), keyEquivalent: "p")
+        performance.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(performance)
         let showAllColumns = NSMenuItem(title: L.t("Show All Columns", "모든 컬럼 보기"), action: #selector(MainWindowController.showAllColumns(_:)), keyEquivalent: "")
-        showAllColumns.target = target
         viewMenu.addItem(showAllColumns)
+        viewMenu.addItem(.separator())
+        let saveView = NSMenuItem(title: L.t("Save Current View", "현재 보기 저장"), action: #selector(MainWindowController.saveCurrentView(_:)), keyEquivalent: "s")
+        saveView.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(saveView)
+        let restoreView = NSMenuItem(title: L.t("Restore Saved View", "저장된 보기 복원"), action: #selector(MainWindowController.restoreSavedView(_:)), keyEquivalent: "r")
+        restoreView.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(restoreView)
         let persistentIndex = NSMenuItem(title: L.t("Persistent Index", "인덱스 저장"), action: #selector(MainWindowController.togglePersistentIndex(_:)), keyEquivalent: "")
-        persistentIndex.target = target
         viewMenu.addItem(persistentIndex)
         viewMenu.addItem(.separator())
         let encodingItem = NSMenuItem(title: L.t("Encoding", "인코딩"), action: nil, keyEquivalent: "")
@@ -127,7 +158,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for name in CsvEncodingName.selectable {
             let item = NSMenuItem(title: name, action: #selector(MainWindowController.changeEncodingFromMenu(_:)), keyEquivalent: "")
             item.representedObject = name
-            item.target = target
             encodingMenu.addItem(item)
         }
         encodingItem.submenu = encodingMenu
@@ -138,32 +168,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let analysisMenu = NSMenu(title: analysisItem.title)
         analysisItem.submenu = analysisMenu
         let numeric = NSMenuItem(title: L.t("Numeric Distribution", "숫자 분포"), action: #selector(MainWindowController.showNumericDistribution(_:)), keyEquivalent: "")
-        numeric.target = target
         analysisMenu.addItem(numeric)
         let dateHistogram = NSMenuItem(title: L.t("Date Histogram", "날짜 히스토그램"), action: #selector(MainWindowController.showDateHistogram(_:)), keyEquivalent: "")
-        dateHistogram.target = target
         analysisMenu.addItem(dateHistogram)
         let duplicates = NSMenuItem(title: L.t("Find Duplicates", "중복 찾기"), action: #selector(MainWindowController.showDuplicateRows(_:)), keyEquivalent: "")
-        duplicates.target = target
         analysisMenu.addItem(duplicates)
         let groupBy = NSMenuItem(title: L.t("Group By", "그룹화"), action: #selector(MainWindowController.showGroupBy(_:)), keyEquivalent: "")
-        groupBy.target = target
         analysisMenu.addItem(groupBy)
         let pivot = NSMenuItem(title: L.t("Pivot Table", "피벗 테이블"), action: #selector(MainWindowController.showPivotTable(_:)), keyEquivalent: "")
-        pivot.target = target
         analysisMenu.addItem(pivot)
         analysisMenu.addItem(.separator())
         let correlation = NSMenuItem(title: L.t("Correlation", "상관분석"), action: #selector(MainWindowController.showCorrelation(_:)), keyEquivalent: "")
-        correlation.target = target
         analysisMenu.addItem(correlation)
         let tTest = NSMenuItem(title: L.t("t-test", "t-검정"), action: #selector(MainWindowController.showTTest(_:)), keyEquivalent: "")
-        tTest.target = target
         analysisMenu.addItem(tTest)
         let chiSquare = NSMenuItem(title: L.t("Chi-square Test", "카이제곱 검정"), action: #selector(MainWindowController.showChiSquare(_:)), keyEquivalent: "")
-        chiSquare.target = target
         analysisMenu.addItem(chiSquare)
         let quickStats = NSMenuItem(title: L.t("Quick Stats", "빠른 통계"), action: #selector(MainWindowController.showQuickStats(_:)), keyEquivalent: "")
-        quickStats.target = target
         analysisMenu.addItem(quickStats)
 
         let helpItem = NSMenuItem(title: L.t("Help", "도움말"), action: nil, keyEquivalent: "")
@@ -171,7 +192,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let helpMenu = NSMenu(title: helpItem.title)
         helpItem.submenu = helpMenu
         let usage = NSMenuItem(title: L.t("How to Use", "사용법"), action: #selector(MainWindowController.showUsage(_:)), keyEquivalent: "?")
-        usage.target = target
         helpMenu.addItem(usage)
     }
 }

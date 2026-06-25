@@ -148,6 +148,30 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertTrue(rendered[1].hasSuffix("..."))
     }
 
+    func testSelectedValueBarExpandsForMultilineValues() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try "id,note\n1,\"line one\nline two\nline three\"\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+        controller.selectCellForTesting(row: 0, column: 1)
+
+        XCTAssertEqual(controller.selectedValueBarHeightForTesting, 34)
+        XCTAssertFalse(controller.selectedValueScrollsVerticallyForTesting)
+
+        controller.toggleSelectedValueExpansionForTesting()
+
+        XCTAssertGreaterThanOrEqual(controller.selectedValueBarHeightForTesting, 132)
+        XCTAssertTrue(controller.selectedValueScrollsVerticallyForTesting)
+        XCTAssertEqual(controller.selectedValueTextForTesting, "line one\nline two\nline three")
+    }
+
     private func waitUntilIndexed(_ controller: MainWindowController, file: StaticString = #filePath, line: UInt = #line) throws {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {

@@ -12,12 +12,19 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Background indexing progress
 - Column statistics and type inference panel
 - Expression-based advanced filters, column filters, and selected-cell value filters
+- Advanced find with plain text, `regex:pattern`, `/pattern/`, and `fuzzy:term`
 - Go to Row command for direct navigation by source row number
-- Export of the current filtered/sorted view
+- Export of the current filtered/sorted view as CSV, Markdown, JSON, or HTML
 - Persistent `.ncvidx` sidecar indexes for faster repeat opens
 - Fast single-column filter and sort paths
 - Shift-click multi-column sorting
 - Column hide/show controls, selected value bar, filter bar, and Inspector panel
+- Saved views for restoring filters, sort order, hidden columns, search mode, and current column per file
+- Multi-file opening with native macOS tab support
+- Clipboard quick import for CSV text or file paths
+- Drag-and-drop import for files and CSV text
+- Expandable selected value bar for multiline cells
+- Performance dashboard with row, file, storage, indexing, and throughput metrics
 - Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
 - Numeric distribution, date histogram, duplicate detection, group-by aggregation, pivot table, and basic statistical analysis tools
 - macOS light and dark appearance support
@@ -32,9 +39,9 @@ NanumCsvViewerMac/
     CsvCore/              # Large-file CSV engine
     NanumCsvViewerMac/    # AppKit UI
     CsvBench/             # 1 GiB benchmark CLI
-  Tests/CsvCoreTests/     # CSV parser, index, filter, and sort tests
+  Tests/CsvCoreTests/     # CSV parser, index, filter, search, export, and sort tests
   Tests/NanumCsvViewerMacTests/
-                         # AppKit grid materialization regression tests
+                         # AppKit grid, import, routing, search parser, and UI state tests
   Scripts/build-app.sh    # .app bundle creation script
 ```
 
@@ -64,6 +71,20 @@ CLANG_MODULE_CACHE_PATH=../.clang-cache swift test
 cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
+
+## v1.6 User Workflows
+
+- Open several CSV files at once from `File > Open...`; additional files open in native macOS tabs.
+- Drag CSV files or CSV text onto the empty state or table area to open them quickly.
+- Use `File > Open from Clipboard` to open copied CSV text, a copied file path, or a copied `file://` URL.
+- Use the toolbar Find field with:
+  - plain text for case-insensitive contains search
+  - `regex:pattern` or `/pattern/` for regular expressions
+  - `fuzzy:term` for ordered-character fuzzy matching
+- Use `View > Save Current View` and `View > Restore Saved View` to keep a per-file view state.
+- Use `View > Performance Dashboard` to inspect row counts, storage mode, indexing time, and throughput.
+- Use `File > Export as Markdown...`, `Export as JSON...`, or `Export as HTML...` to share the current filtered/sorted view with only visible columns.
+- Expand the selected value bar with the chevron button when a selected cell contains multiline content.
 
 To create a macOS `.app` bundle:
 
