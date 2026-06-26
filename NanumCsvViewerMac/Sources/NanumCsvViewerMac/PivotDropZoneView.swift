@@ -4,13 +4,19 @@ import AppKit
 final class PivotDropZoneView: NSView {
     private let zone: PivotDropZone
     private let onDrop: (Int, PivotDropZone) -> Void
+    private let onRemove: (Int, PivotDropZone) -> Void
     private let titleLabel = NSTextField(labelWithString: "")
     private let stack = NSStackView()
     private var names: [String] = []
 
-    init(zone: PivotDropZone, onDrop: @escaping (Int, PivotDropZone) -> Void) {
+    init(
+        zone: PivotDropZone,
+        onDrop: @escaping (Int, PivotDropZone) -> Void,
+        onRemove: @escaping (Int, PivotDropZone) -> Void = { _, _ in }
+    ) {
         self.zone = zone
         self.onDrop = onDrop
+        self.onRemove = onRemove
         super.init(frame: .zero)
         configure()
     }
@@ -25,13 +31,21 @@ final class PivotDropZoneView: NSView {
     }
 
     func setFieldNames(_ names: [String]) {
-        self.names = names
+        setFieldItems(names.enumerated().map { (index: $0.offset, name: $0.element, removable: false) })
+    }
+
+    func setFields(_ fields: [PivotField]) {
+        setFieldItems(fields.map { (index: $0.index, name: $0.name, removable: true) })
+    }
+
+    func setFieldItems(_ items: [(index: Int, name: String, removable: Bool)]) {
+        names = items.map(\.name)
         stack.arrangedSubviews.forEach { view in
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
 
-        if names.isEmpty {
+        if items.isEmpty {
             let empty = NSTextField(labelWithString: L.t("Drop fields here", "여기에 필드 놓기"))
             empty.font = .systemFont(ofSize: 12)
             empty.textColor = .secondaryLabelColor
@@ -40,11 +54,35 @@ final class PivotDropZoneView: NSView {
             return
         }
 
-        for name in names {
-            let label = NSTextField(labelWithString: name)
+        for item in items {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 4
+
+            let label = NSTextField(labelWithString: item.name)
             label.font = .systemFont(ofSize: 12)
             label.lineBreakMode = .byTruncatingTail
-            stack.addArrangedSubview(label)
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            row.addArrangedSubview(label)
+
+            if item.removable {
+                let button = NSButton()
+                button.title = ""
+                button.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: L.t("Remove field", "필드 제거"))
+                button.imageScaling = .scaleProportionallyDown
+                button.bezelStyle = .inline
+                button.isBordered = false
+                button.tag = item.index
+                button.target = self
+                button.action = #selector(removeField(_:))
+                button.toolTip = L.t("Remove field", "필드 제거")
+                button.widthAnchor.constraint(equalToConstant: 18).isActive = true
+                button.heightAnchor.constraint(equalToConstant: 18).isActive = true
+                row.addArrangedSubview(button)
+            }
+
+            stack.addArrangedSubview(row)
         }
     }
 
@@ -88,5 +126,9 @@ final class PivotDropZoneView: NSView {
               let index = Int(raw) else { return false }
         onDrop(index, zone)
         return true
+    }
+
+    @objc private func removeField(_ sender: NSButton) {
+        onRemove(sender.tag, zone)
     }
 }

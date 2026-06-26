@@ -67,6 +67,23 @@ final class PivotBuilderWindowController: NSWindowController {
         refreshPreview()
     }
 
+    func removeField(_ index: Int, from zone: PivotDropZone) {
+        switch zone {
+        case .rows:
+            layout.rows.removeAll { $0 == index }
+        case .columns:
+            layout.columns.removeAll { $0 == index }
+        case .values:
+            if layout.value == index {
+                layout.value = nil
+            }
+        case .filters:
+            layout.filters.removeAll { $0 == index }
+        }
+        refreshZones()
+        refreshPreview()
+    }
+
     private func appendUnique(_ index: Int, to target: inout [Int]) {
         guard !target.contains(index) else { return }
         target.append(index)
@@ -109,6 +126,7 @@ final class PivotBuilderWindowController: NSWindowController {
         fieldTable.usesAlternatingRowBackgroundColors = false
         fieldTable.rowHeight = 28
         fieldTable.registerForDraggedTypes([.pivotFieldIndex])
+        fieldTable.setDraggingSourceOperationMask(.copy, forLocal: true)
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("field"))
         column.title = L.t("Field", "필드")
@@ -179,6 +197,8 @@ final class PivotBuilderWindowController: NSWindowController {
     private func makeDropZone(_ zone: PivotDropZone) -> PivotDropZoneView {
         let view = PivotDropZoneView(zone: zone) { [weak self] index, zone in
             self?.assignField(index, to: zone)
+        } onRemove: { [weak self] index, zone in
+            self?.removeField(index, from: zone)
         }
         zoneViews[zone] = view
         return view
@@ -257,14 +277,16 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func refreshZones() {
-        zoneViews[.rows]?.setFieldNames(layout.rows.map { fields[$0].name })
-        zoneViews[.columns]?.setFieldNames(layout.columns.map { fields[$0].name })
+        zoneViews[.rows]?.setFields(layout.rows.compactMap { fields[safe: $0] })
+        zoneViews[.columns]?.setFields(layout.columns.compactMap { fields[safe: $0] })
         if let value = layout.value {
-            zoneViews[.values]?.setFieldNames(["\(layout.function.rawValue) of \(fields[value].name)"])
+            zoneViews[.values]?.setFieldItems([
+                (index: value, name: "\(layout.function.rawValue) of \(fields[value].name)", removable: true)
+            ])
         } else {
-            zoneViews[.values]?.setFieldNames([])
+            zoneViews[.values]?.setFieldItems([])
         }
-        zoneViews[.filters]?.setFieldNames(layout.filters.map { fields[$0].name })
+        zoneViews[.filters]?.setFields(layout.filters.compactMap { fields[safe: $0] })
     }
 
     private func refreshPreview() {
@@ -395,6 +417,10 @@ extension PivotBuilderWindowController {
 
     func setAggregationForTesting(_ function: AggregationFunction) {
         setAggregation(function)
+    }
+
+    func removeFieldForTesting(_ index: Int, from zone: PivotDropZone) {
+        removeField(index, from: zone)
     }
 
     var layoutForTesting: PivotBuilderLayout {
