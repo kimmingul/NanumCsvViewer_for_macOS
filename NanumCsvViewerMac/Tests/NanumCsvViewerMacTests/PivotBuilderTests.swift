@@ -51,4 +51,40 @@ final class PivotBuilderTests: XCTestCase {
 
         XCTAssertEqual(chart.modelForTesting, model)
     }
+
+    func testBuilderAssignsFieldsAndBuildsPreview() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .columns)
+        builder.assignFieldForTesting(2, to: .values)
+        builder.setAggregationForTesting(.sum)
+
+        XCTAssertEqual(builder.layoutForTesting.rows, [0])
+        XCTAssertEqual(builder.layoutForTesting.columns, [1])
+        XCTAssertEqual(builder.layoutForTesting.value, 2)
+        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Control", "Treatment"])
+        XCTAssertEqual(builder.previewRowForTesting(0), ["A", "3", "7"])
+        XCTAssertEqual(builder.previewRowForTesting(1), ["B", "2", "5"])
+        XCTAssertEqual(builder.chartModelForTesting?.categories, ["A", "B"])
+    }
+
+    private func openIndexed(_ content: String) throws -> (VirtualCsvDocument, String) {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let path = directory.appendingPathComponent("nanumcsv_pivot_\(UUID().uuidString).csv").path
+        try content.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        let doc = try VirtualCsvDocument.open(path: path)
+        try doc.runIndexing(progress: { _ in }, cancellation: CancellationFlag())
+        return (doc, path)
+    }
 }
