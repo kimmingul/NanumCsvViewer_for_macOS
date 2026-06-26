@@ -207,11 +207,28 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(builder.fieldListScrollWidthForTesting, 280)
         XCTAssertGreaterThanOrEqual(builder.fieldListTableWidthForTesting, 260)
         XCTAssertGreaterThanOrEqual(builder.fieldListScrollHeightForTesting, 160)
+        XCTAssertLessThanOrEqual(builder.fieldListScrollHeightForTesting, 340)
+        XCTAssertLessThanOrEqual(builder.fieldListScrollMinXForTesting, 24)
+        XCTAssertLessThanOrEqual(builder.fieldListToLayoutGapForTesting, 40)
         XCTAssertGreaterThanOrEqual(builder.fieldListTableHeightForTesting, 84)
         XCTAssertGreaterThan(builder.fieldListVisibleRowsForTesting.length, 0)
         XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 0), "site")
         XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 1), "arm")
         XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 2), "value")
+    }
+
+    func testBuilderResultTableDoesNotStripeEmptyPreviewArea() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        XCTAssertFalse(builder.pivotTableUsesAlternatingRowsForTesting)
     }
 
     func testMainWindowCreatesPivotBuilderForIndexedDocument() throws {

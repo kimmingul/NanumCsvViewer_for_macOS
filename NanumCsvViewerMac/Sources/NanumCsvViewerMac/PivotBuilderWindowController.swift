@@ -122,39 +122,39 @@ final class PivotBuilderWindowController: NSWindowController {
         controlPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
         controlPane.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
 
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.alignment = .width
-        root.spacing = 12
-        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        root.translatesAutoresizingMaskIntoConstraints = false
-        controlPane.addSubview(root)
-
+        let fieldSection = makeFieldListSection()
+        let layoutSection = makeDropZoneSection()
         let aggregationSection = makeAggregationSection()
-        root.addArrangedSubview(makeFieldListSection())
-        root.addArrangedSubview(makeDropZoneSection())
-        root.addArrangedSubview(aggregationSection)
-        root.setVisibilityPriority(.mustHold, for: aggregationSection)
+
+        for section in [fieldSection, layoutSection, aggregationSection] {
+            section.translatesAutoresizingMaskIntoConstraints = false
+            controlPane.addSubview(section)
+        }
 
         NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor),
-            root.topAnchor.constraint(equalTo: controlPane.topAnchor),
-            root.bottomAnchor.constraint(equalTo: controlPane.bottomAnchor)
+            fieldSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
+            fieldSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
+            fieldSection.topAnchor.constraint(equalTo: controlPane.topAnchor, constant: 12),
+            fieldSection.heightAnchor.constraint(equalToConstant: 300),
+            layoutSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
+            layoutSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
+            layoutSection.topAnchor.constraint(equalTo: fieldSection.bottomAnchor, constant: 12),
+            aggregationSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
+            aggregationSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
+            aggregationSection.topAnchor.constraint(equalTo: layoutSection.bottomAnchor, constant: 12),
+            aggregationSection.bottomAnchor.constraint(lessThanOrEqualTo: controlPane.bottomAnchor, constant: -12)
         ])
 
         return controlPane
     }
 
     private func makeFieldListSection() -> NSView {
-        let section = NSStackView()
-        section.orientation = .vertical
-        section.alignment = .width
-        section.spacing = 8
-        section.translatesAutoresizingMaskIntoConstraints = false
+        let section = NSView()
 
         let title = NSTextField(labelWithString: L.t("Fields", "필드"))
         title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.alignment = .left
+        title.translatesAutoresizingMaskIntoConstraints = false
 
         fieldTable.headerView = nil
         fieldTable.delegate = self
@@ -174,32 +174,41 @@ final class PivotBuilderWindowController: NSWindowController {
         fieldScroll.hasVerticalScroller = true
         fieldScroll.translatesAutoresizingMaskIntoConstraints = false
         fieldScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
-        fieldScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
 
-        section.addArrangedSubview(title)
-        section.addArrangedSubview(fieldScroll)
+        section.addSubview(title)
+        section.addSubview(fieldScroll)
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            title.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            title.topAnchor.constraint(equalTo: section.topAnchor),
+            fieldScroll.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            fieldScroll.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            fieldScroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            fieldScroll.bottomAnchor.constraint(equalTo: section.bottomAnchor)
+        ])
         return section
     }
 
     private func makeDropZoneSection() -> NSView {
-        let section = NSStackView()
-        section.orientation = .vertical
-        section.alignment = .width
-        section.spacing = 8
-        section.translatesAutoresizingMaskIntoConstraints = false
+        let section = NSView()
+        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 222).isActive = true
 
         let title = NSTextField(labelWithString: L.t("Layout", "레이아웃"))
         title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.alignment = .left
+        title.translatesAutoresizingMaskIntoConstraints = false
 
         let firstRow = NSStackView()
         firstRow.orientation = .horizontal
         firstRow.spacing = 8
         firstRow.distribution = .fillEqually
+        firstRow.translatesAutoresizingMaskIntoConstraints = false
 
         let secondRow = NSStackView()
         secondRow.orientation = .horizontal
         secondRow.spacing = 8
         secondRow.distribution = .fillEqually
+        secondRow.translatesAutoresizingMaskIntoConstraints = false
 
         let rows = makeDropZone(.rows)
         let columns = makeDropZone(.columns)
@@ -210,9 +219,23 @@ final class PivotBuilderWindowController: NSWindowController {
         secondRow.addArrangedSubview(values)
         secondRow.addArrangedSubview(filters)
 
-        section.addArrangedSubview(title)
-        section.addArrangedSubview(firstRow)
-        section.addArrangedSubview(secondRow)
+        section.addSubview(title)
+        section.addSubview(firstRow)
+        section.addSubview(secondRow)
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            title.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            title.topAnchor.constraint(equalTo: section.topAnchor),
+            firstRow.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            firstRow.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            firstRow.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            firstRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
+            secondRow.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            secondRow.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            secondRow.topAnchor.constraint(equalTo: firstRow.bottomAnchor, constant: 8),
+            secondRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
+            secondRow.bottomAnchor.constraint(equalTo: section.bottomAnchor)
+        ])
         return section
     }
 
@@ -296,7 +319,8 @@ final class PivotBuilderWindowController: NSWindowController {
 
         tablePreview.delegate = self
         tablePreview.dataSource = self
-        tablePreview.usesAlternatingRowBackgroundColors = true
+        tablePreview.usesAlternatingRowBackgroundColors = false
+        tablePreview.gridStyleMask = .solidHorizontalGridLineMask
         tablePreview.rowHeight = 24
         tableScroll.documentView = tablePreview
         tableScroll.hasVerticalScroller = true
@@ -611,6 +635,10 @@ extension PivotBuilderWindowController {
         fieldScroll.frame.width
     }
 
+    var fieldListScrollMinXForTesting: CGFloat {
+        fieldScroll.convert(fieldScroll.bounds, to: controlPane).minX
+    }
+
     var fieldListTableHeightForTesting: CGFloat {
         fieldTable.frame.height
     }
@@ -621,6 +649,17 @@ extension PivotBuilderWindowController {
 
     var fieldListVisibleRowsForTesting: NSRange {
         fieldTable.rows(in: fieldScroll.contentView.bounds)
+    }
+
+    var fieldListToLayoutGapForTesting: CGFloat {
+        guard let rowsView = zoneViews[.rows] else { return .greatestFiniteMagnitude }
+        let fieldRect = fieldScroll.convert(fieldScroll.bounds, to: controlPane)
+        let rowsRect = rowsView.convert(rowsView.bounds, to: controlPane)
+        return fieldRect.minY - rowsRect.maxY
+    }
+
+    var pivotTableUsesAlternatingRowsForTesting: Bool {
+        tablePreview.usesAlternatingRowBackgroundColors
     }
 
     func fieldListVisibleTextForTesting(row: Int) -> String? {
