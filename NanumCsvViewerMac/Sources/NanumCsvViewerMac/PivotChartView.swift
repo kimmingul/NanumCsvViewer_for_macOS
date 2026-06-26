@@ -28,8 +28,8 @@ final class PivotChartView: NSView {
         super.draw(dirtyRect)
         guard let model else {
             drawCentered(L.t(
-                "Configure rows, columns, and values to preview a chart.",
-                "행, 열, 값을 설정하면 차트를 미리 볼 수 있습니다."
+                "Drag a field into Values to preview a chart.",
+                "값에 필드를 끌어 놓으면 차트를 미리 볼 수 있습니다."
             ))
             return
         }

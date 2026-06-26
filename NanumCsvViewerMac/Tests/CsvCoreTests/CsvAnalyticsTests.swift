@@ -125,4 +125,73 @@ final class CsvAnalyticsTests: XCTestCase {
         let exported = try String(contentsOfFile: exportPath, encoding: .utf8)
         XCTAssertEqual(exported, "site,C | AE,T | AE,T | SAE\nA,3,2,1\nB,0,4,0\n")
     }
+
+    func testPivotTableSupportsValueOnlyAndSingleAxisLayouts() throws {
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let valueOnly = try doc.pivotTable(
+            rowColumns: [],
+            columnColumns: [],
+            valueColumn: 2,
+            function: .sum,
+            cancellation: CancellationFlag()
+        )
+        XCTAssertEqual(valueOnly.rowKeys, [[]])
+        XCTAssertEqual(valueOnly.columnKeys, [[]])
+        XCTAssertEqual(valueOnly.value(row: [], column: []), 17)
+
+        let rowsOnly = try doc.pivotTable(
+            rowColumns: [0],
+            columnColumns: [],
+            valueColumn: 2,
+            function: .sum,
+            cancellation: CancellationFlag()
+        )
+        XCTAssertEqual(rowsOnly.rowKeys, [["A"], ["B"]])
+        XCTAssertEqual(rowsOnly.columnKeys, [[]])
+        XCTAssertEqual(rowsOnly.value(row: ["A"], column: []), 10)
+        XCTAssertEqual(rowsOnly.value(row: ["B"], column: []), 7)
+
+        let columnsOnly = try doc.pivotTable(
+            rowColumns: [],
+            columnColumns: [1],
+            valueColumn: 2,
+            function: .sum,
+            cancellation: CancellationFlag()
+        )
+        XCTAssertEqual(columnsOnly.rowKeys, [[]])
+        XCTAssertEqual(columnsOnly.columnKeys, [["Control"], ["Treatment"]])
+        XCTAssertEqual(columnsOnly.value(row: [], column: ["Control"]), 5)
+        XCTAssertEqual(columnsOnly.value(row: [], column: ["Treatment"]), 12)
+    }
+
+    func testPivotTableHonorsCancellationDuringAggregation() {
+        let rows = (0..<20_000).map { index in
+            ["A", "\(index)"]
+        }
+        let cancellation = CancellationFlag()
+        cancellation.cancel()
+
+        XCTAssertThrowsError(try CsvAnalytics.pivotTable(
+            rows: rows,
+            rowColumns: [0],
+            columnColumns: [],
+            valueColumn: 1,
+            function: .sum,
+            cancellation: cancellation
+        )) { error in
+            guard case CsvError.cancelled = error else {
+                XCTFail("Expected CsvError.cancelled, got \(error)")
+                return
+            }
+        }
+    }
 }

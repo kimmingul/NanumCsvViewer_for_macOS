@@ -907,7 +907,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     ) throws -> PivotTableResult {
         let rowColumns = rowColumns.filter { $0 >= 0 && $0 < columnCount }
         let columnColumns = columnColumns.filter { $0 >= 0 && $0 < columnCount }
-        guard !rowColumns.isEmpty, !columnColumns.isEmpty, valueColumn >= 0, valueColumn < columnCount else {
+        guard valueColumn >= 0, valueColumn < columnCount else {
             return PivotTableResult(
                 rowColumns: rowColumns,
                 rowColumnNames: rowColumns.map { header[$0] },
@@ -919,13 +919,14 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 values: [:]
             )
         }
-        return CsvAnalytics.pivotTable(
+        return try CsvAnalytics.pivotTable(
             rows: try currentDisplayRows(cancellation: cancellation),
             rowColumns: rowColumns,
             rowColumnNames: rowColumns.map { header[$0].isEmpty ? "Column \($0 + 1)" : header[$0] },
             columnColumns: columnColumns,
             valueColumn: valueColumn,
-            function: function
+            function: function,
+            cancellation: cancellation
         )
     }
 

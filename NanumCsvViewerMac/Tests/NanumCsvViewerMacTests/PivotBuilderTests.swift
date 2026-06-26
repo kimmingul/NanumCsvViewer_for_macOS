@@ -69,6 +69,7 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(1, to: .columns)
         builder.assignFieldForTesting(2, to: .values)
         builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
 
         XCTAssertEqual(builder.layoutForTesting.rows, [0])
         XCTAssertEqual(builder.layoutForTesting.columns, [1])
@@ -93,11 +94,78 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(0, to: .rows)
         builder.assignFieldForTesting(1, to: .columns)
         builder.assignFieldForTesting(2, to: .values)
-        builder.removeFieldForTesting(0, from: .rows)
+        try waitForPreview(builder)
+        builder.removeFieldForTesting(2, from: .values)
 
-        XCTAssertEqual(builder.layoutForTesting.rows, [])
+        XCTAssertNil(builder.layoutForTesting.value)
         XCTAssertEqual(builder.previewHeadersForTesting, [])
         XCTAssertNil(builder.chartModelForTesting)
+    }
+
+    func testBuilderSupportsValueOnlyPivot() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(2, to: .values)
+        try waitForPreview(builder)
+
+        XCTAssertEqual(builder.previewHeadersForTesting, [L.t("Metric", "지표"), "Sum of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "17"])
+        XCTAssertEqual(builder.chartModelForTesting?.categories, [L.t("Total", "합계")])
+    }
+
+    func testBuilderSupportsRowsAndValuesWithoutColumns() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(2, to: .values)
+        try waitForPreview(builder)
+
+        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Sum of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), ["A", "10"])
+        XCTAssertEqual(builder.previewRowForTesting(1), ["B", "7"])
+        XCTAssertEqual(builder.chartModelForTesting?.categories, ["A", "B"])
+    }
+
+    func testBuilderSupportsColumnsAndValuesWithoutRows() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(1, to: .columns)
+        builder.assignFieldForTesting(2, to: .values)
+        try waitForPreview(builder)
+
+        XCTAssertEqual(builder.previewHeadersForTesting, [L.t("Total", "합계"), "Control", "Treatment"])
+        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "5", "12"])
+        XCTAssertEqual(builder.chartModelForTesting?.categories, ["Control", "Treatment"])
     }
 
     func testMainWindowCreatesPivotBuilderForIndexedDocument() throws {
@@ -146,5 +214,16 @@ final class PivotBuilderTests: XCTestCase {
             }
         }
         XCTFail("Timed out waiting for indexing", file: file, line: line)
+    }
+
+    private func waitForPreview(_ builder: PivotBuilderWindowController, file: StaticString = #filePath, line: UInt = #line) throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            if !builder.previewHeadersForTesting.isEmpty {
+                return
+            }
+        }
+        XCTFail("Timed out waiting for pivot preview", file: file, line: line)
     }
 }

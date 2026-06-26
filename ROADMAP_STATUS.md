@@ -24,7 +24,7 @@ This audit checks whether the GitHub v1 roadmap, including the v1.6 issue list, 
 | Multi-file workflow | Implemented | Native macOS tabs and multi-open workflows exist. |
 | Saved views/bookmarks | Partial | One per-file saved view exists. Multiple named bookmarks, a picker, auto-restore, and stronger UI tests remain pending. |
 | Advanced search | Implemented | Plain text, regex, slash-regex, fuzzy, and column-scoped search exist. Regex matching now compiles the pattern once per search. |
-| Analytics and statistics | Partial | Text-summary tools exist for distribution, date histogram, duplicates, group-by, and statistical tests. Pivot now has an interactive builder with table and chart previews. Broader graphical chart views are pending. Statistical p-values and confidence intervals were corrected after the audit. |
+| Analytics and statistics | Partial | Text-summary tools exist for distribution, date histogram, duplicates, group-by, and statistical tests. Pivot now has an interactive builder with table and chart previews, including Values-only and single-axis layouts. Broader graphical chart views are pending. Statistical p-values and confidence intervals were corrected after the audit. |
 | Performance dashboard | Partial | Row count, file size, storage, indexing time, and throughput are shown. Memory metrics and repeatable benchmark UI remain pending. |
 | UI customization | Partial | System light/dark appearance works. Custom themes, font controls, and row density controls remain pending. |
 | Clipboard and drag/drop import | Implemented | Clipboard CSV/path/URL import and drag/drop import exist. Temp-file lifecycle cleanup can be improved. |
@@ -38,6 +38,8 @@ This audit checks whether the GitHub v1 roadmap, including the v1.6 issue list, 
 - Fixed JSON export to preserve duplicate headers using stable keys such as `value` and `value (2)`.
 - Changed JSON export to stream objects row by row instead of materializing the whole export array.
 - Refactored regex search to compile the regular expression once per search request instead of once per cell.
+- Expanded Pivot Builder layouts so Values-only, Rows+Values, Columns+Values, and Rows+Columns+Values previews work.
+- Moved Pivot Builder preview aggregation off the main thread and added cancellation for stale pivot aggregation work.
 
 ## Follow-Up Work
 

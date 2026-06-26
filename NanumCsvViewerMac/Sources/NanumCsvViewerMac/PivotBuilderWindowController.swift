@@ -9,6 +9,9 @@ final class PivotBuilderWindowController: NSWindowController {
     private var pivot: PivotTableResult?
     private var previewRows: [[String]] = []
     private var previewHeaders: [String] = []
+    private var previewCancellation: CancellationFlag?
+    private var previewGeneration = 0
+    private var previewIsComputing = false
 
     private let fieldTable = NSTableView()
     private let fieldScroll = NSScrollView()
@@ -249,8 +252,8 @@ final class PivotBuilderWindowController: NSWindowController {
         emptyPreviewLabel.textColor = .secondaryLabelColor
         emptyPreviewLabel.alignment = .center
         emptyPreviewLabel.stringValue = L.t(
-            "Drag fields into Rows, Columns, and Values to build a pivot table.",
-            "행, 열, 값에 필드를 끌어 놓아 피벗 테이블을 만드세요."
+            "Drag a field into Values. Rows and Columns are optional.",
+            "값에 필드를 끌어 놓으세요. 행과 열은 선택 사항입니다."
         )
 
         for view in [tableScroll, chartView, emptyPreviewLabel] {
@@ -290,43 +293,108 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func refreshPreview() {
+        previewCancellation?.cancel()
+        previewGeneration += 1
+        let generation = previewGeneration
+
         guard layout.isRunnable, let value = layout.value else {
+            previewIsComputing = false
+            previewCancellation = nil
             pivot = nil
             previewHeaders = []
             previewRows = []
             rebuildPreviewColumns()
             chartView.update(model: nil)
+            emptyPreviewLabel.stringValue = L.t(
+                "Drag a field into Values. Rows and Columns are optional.",
+                "값에 필드를 끌어 놓으세요. 행과 열은 선택 사항입니다."
+            )
             updatePreviewVisibility()
             return
         }
 
-        do {
-            let result = try csvDocument.pivotTable(
-                rowColumns: layout.rows,
-                columnColumns: layout.columns,
-                valueColumn: value,
-                function: layout.function,
-                cancellation: CancellationFlag()
-            )
-            pivot = result
-            previewHeaders = [layout.rows.map { fields[$0].name }.joined(separator: " | ")]
-                + result.columnKeys.map { $0.joined(separator: " | ") }
+        let cancellation = CancellationFlag()
+        previewCancellation = cancellation
+        previewIsComputing = true
+        emptyPreviewLabel.stringValue = L.t("Calculating pivot...", "피벗 계산 중...")
+        updatePreviewVisibility()
+
+        let document = csvDocument
+        let rows = layout.rows
+        let columns = layout.columns
+        let function = layout.function
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let result = try document.pivotTable(
+                    rowColumns: rows,
+                    columnColumns: columns,
+                    valueColumn: value,
+                    function: function,
+                    cancellation: cancellation
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.previewGeneration == generation,
+                          self.previewCancellation === cancellation else { return }
+                    self.previewIsComputing = false
+                    self.applyPreview(result, valueColumn: value)
+                }
+            } catch CsvError.cancelled {
+                return
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.previewGeneration == generation,
+                          self.previewCancellation === cancellation else { return }
+                    self.previewIsComputing = false
+                    self.pivot = nil
+                    self.previewHeaders = []
+                    self.previewRows = []
+                    self.rebuildPreviewColumns()
+                    self.chartView.update(model: nil)
+                    self.emptyPreviewLabel.stringValue = error.localizedDescription
+                    self.updatePreviewVisibility()
+                }
+            }
+        }
+    }
+
+    private func applyPreview(_ result: PivotTableResult, valueColumn: Int) {
+        pivot = result
+        let valueName = fields[safe: valueColumn]?.name ?? L.t("Value", "값")
+        let valueHeader = "\(result.function.rawValue) of \(valueName)"
+
+        if result.rowColumns.isEmpty, result.columnColumns.isEmpty {
+            previewHeaders = [L.t("Metric", "지표"), valueHeader]
+            previewRows = [[L.t("Total", "합계"), Self.formatNumber(result.value(row: [], column: []))]]
+        } else if result.columnColumns.isEmpty {
+            previewHeaders = [rowHeaderTitle(), valueHeader]
             previewRows = result.rowKeys.map { rowKey in
-                [rowKey.joined(separator: " | ")]
+                [Self.label(rowKey, fallback: L.t("Total", "합계")), Self.formatNumber(result.value(row: rowKey, column: []))]
+            }
+        } else {
+            let rowHeader = result.rowColumns.isEmpty ? L.t("Total", "합계") : rowHeaderTitle()
+            previewHeaders = [rowHeader] + result.columnKeys.map { Self.label($0, fallback: L.t("Total", "합계")) }
+            let rowKeys = result.rowColumns.isEmpty ? [[]] : result.rowKeys
+            previewRows = rowKeys.map { rowKey in
+                [Self.label(rowKey, fallback: L.t("Total", "합계"))]
                     + result.columnKeys.map { Self.formatNumber(result.value(row: rowKey, column: $0)) }
             }
-            rebuildPreviewColumns()
-            chartView.update(model: PivotChartModel.make(from: result))
-            updatePreviewVisibility()
-        } catch {
-            pivot = nil
-            previewHeaders = []
-            previewRows = []
-            rebuildPreviewColumns()
-            chartView.update(model: nil)
-            emptyPreviewLabel.stringValue = error.localizedDescription
-            updatePreviewVisibility()
         }
+
+        rebuildPreviewColumns()
+        chartView.update(model: PivotChartModel.make(from: result))
+        updatePreviewVisibility()
+    }
+
+    private func rowHeaderTitle() -> String {
+        let title = layout.rows.compactMap { fields[safe: $0]?.name }.joined(separator: " | ")
+        return title.isEmpty ? L.t("Total", "합계") : title
+    }
+
+    private static func label(_ key: [String], fallback: String) -> String {
+        let joined = key.joined(separator: " | ")
+        return joined.isEmpty ? fallback : joined
     }
 
     private func rebuildPreviewColumns() {
@@ -345,7 +413,7 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func updatePreviewVisibility() {
         let hasPreview = !previewHeaders.isEmpty
-        emptyPreviewLabel.isHidden = hasPreview
+        emptyPreviewLabel.isHidden = hasPreview && !previewIsComputing
         tableScroll.isHidden = !hasPreview || previewTabs.selectedSegment != 0
         chartView.isHidden = !hasPreview || previewTabs.selectedSegment != 1
     }

@@ -39,7 +39,7 @@ struct PivotBuilderLayout: Equatable {
     var function: AggregationFunction = .sum
 
     var isRunnable: Bool {
-        !rows.isEmpty && !columns.isEmpty && value != nil
+        value != nil
     }
 }
 
@@ -54,6 +54,20 @@ struct PivotChartModel: Equatable {
     let unsupportedReason: String?
 
     static func make(from pivot: PivotTableResult) -> PivotChartModel {
+        if pivot.rowColumns.isEmpty {
+            let categories = pivot.columnColumns.isEmpty
+                ? [L.t("Total", "합계")]
+                : pivot.columnKeys.map { label($0, fallback: L.t("Total", "합계")) }
+            let values = pivot.columnColumns.isEmpty
+                ? [pivot.value(row: [], column: [])]
+                : pivot.columnKeys.map { pivot.value(row: [], column: $0) }
+            return PivotChartModel(
+                categories: categories,
+                series: [PivotChartSeries(name: pivot.function.rawValue, values: values)],
+                unsupportedReason: nil
+            )
+        }
+
         guard pivot.rowColumns.count == 1 else {
             return PivotChartModel(
                 categories: [],
@@ -66,15 +80,21 @@ struct PivotChartModel: Equatable {
         }
 
         let categories = pivot.rowKeys.map { $0.joined(separator: " | ") }
-        let series = pivot.columnKeys.map { columnKey in
+        let columnKeys = pivot.columnColumns.isEmpty ? [[]] : pivot.columnKeys
+        let series = columnKeys.map { columnKey in
             PivotChartSeries(
-                name: columnKey.joined(separator: " | "),
+                name: label(columnKey, fallback: pivot.function.rawValue),
                 values: pivot.rowKeys.map { rowKey in
                     pivot.value(row: rowKey, column: columnKey)
                 }
             )
         }
         return PivotChartModel(categories: categories, series: series, unsupportedReason: nil)
+    }
+
+    private static func label(_ key: [String], fallback: String) -> String {
+        let joined = key.joined(separator: " | ")
+        return joined.isEmpty ? fallback : joined
     }
 }
 

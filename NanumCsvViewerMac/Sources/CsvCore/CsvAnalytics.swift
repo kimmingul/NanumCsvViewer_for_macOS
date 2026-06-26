@@ -211,13 +211,15 @@ enum CsvAnalytics {
         rowColumnNames: [String] = [],
         columnColumns: [Int],
         valueColumn: Int,
-        function: AggregationFunction
-    ) -> PivotTableResult {
+        function: AggregationFunction,
+        cancellation: CancellationFlag? = nil
+    ) throws -> PivotTableResult {
         var raw: [PivotCellKey: [String]] = [:]
         var rowKeySet: Set<[String]> = []
         var columnKeySet: Set<[String]> = []
 
-        for row in rows {
+        for (index, row) in rows.enumerated() {
+            if index & 0x3FFF == 0 { try cancellation?.check() }
             let rowKey = rowColumns.map { column in column < row.count ? row[column] : "" }
             let columnKey = columnColumns.map { column in column < row.count ? row[column] : "" }
             let value = valueColumn < row.count ? row[valueColumn] : ""
@@ -229,7 +231,9 @@ enum CsvAnalytics {
         let rowKeys = rowKeySet.sorted { $0.joined(separator: "\u{1F}") < $1.joined(separator: "\u{1F}") }
         let columnKeys = columnKeySet.sorted { $0.joined(separator: "\u{1F}") < $1.joined(separator: "\u{1F}") }
         var values: [PivotCellKey: Double] = [:]
-        for (key, cellValues) in raw {
+        for (index, element) in raw.enumerated() {
+            if index & 0x3FFF == 0 { try cancellation?.check() }
+            let (key, cellValues) = element
             let numbers = cellValues.compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             values[key] = aggregate(function, rawValues: cellValues, numbers: numbers)
         }

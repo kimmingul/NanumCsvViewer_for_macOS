@@ -27,7 +27,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Performance dashboard with row, file, storage, indexing, and throughput metrics; memory and repeatable benchmark UI remain roadmap follow-ups
 - Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
 - Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests
-- Drag-and-drop Pivot Builder with table and chart previews
+- Drag-and-drop Pivot Builder with table and chart previews; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
 
@@ -84,7 +84,7 @@ swift run NanumCsvViewerMac
   - `fuzzy:term` for ordered-character fuzzy matching
 - Use `View > Save Current View` and `View > Restore Saved View` to keep a per-file view state.
 - Use `View > Performance Dashboard` to inspect row counts, storage mode, indexing time, and throughput.
-- Use `Analysis > Pivot Table` to open the Pivot Builder, then drag fields into Rows, Columns, Values, and Filters.
+- Use `Analysis > Pivot Table` to open the Pivot Builder, then drag a field into Values. Rows and Columns are optional and can be added for grouped or cross-tab previews.
 - Use `File > Export as Markdown...`, `Export as JSON...`, or `Export as HTML...` to share the current filtered/sorted view with only visible columns.
 - Expand the selected value bar with the chevron button when a selected cell contains multiline content.
 
