@@ -38,4 +38,17 @@ final class PivotBuilderTests: XCTestCase {
 
         XCTAssertEqual(zone.fieldNamesForTesting, ["site", "visit"])
     }
+
+    func testChartViewStoresModelForRendering() {
+        let chart = PivotChartView()
+        let model = PivotChartModel(
+            categories: ["A"],
+            series: [PivotChartSeries(name: "Treatment", values: [4])],
+            unsupportedReason: nil
+        )
+
+        chart.update(model: model)
+
+        XCTAssertEqual(chart.modelForTesting, model)
+    }
 }
