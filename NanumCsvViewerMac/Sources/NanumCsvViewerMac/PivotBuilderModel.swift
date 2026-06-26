@@ -4,7 +4,15 @@ import AppKit
 struct PivotField: Equatable {
     let index: Int
     let name: String
-    let typeHint: String?
+    let valueType: ColumnValueType?
+
+    var typeHint: String? {
+        valueType?.rawValue
+    }
+
+    var isMeasureCandidate: Bool {
+        valueType == .integer || valueType == .float
+    }
 
     var displayName: String {
         typeHint.map { "\(name)  \($0)" } ?? name

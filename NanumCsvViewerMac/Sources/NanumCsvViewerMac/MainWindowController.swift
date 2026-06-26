@@ -1623,7 +1623,11 @@ extension MainWindowController {
 
     private func makePivotBuilder() -> PivotBuilderWindowController? {
         guard let doc = csvDocument, doc.indexingComplete, !busy, columnNames.count >= 2 else { return nil }
-        return PivotBuilderWindowController(document: doc, columnNames: columnNames)
+        return PivotBuilderWindowController(
+            document: doc,
+            columnNames: columnNames,
+            columnStatisticsReport: columnStatisticsReport
+        )
     }
 
     @objc func showCorrelation(_ sender: Any?) {

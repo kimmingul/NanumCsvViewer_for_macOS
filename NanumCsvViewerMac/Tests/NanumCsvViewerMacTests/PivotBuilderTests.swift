@@ -217,6 +217,80 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 2), "value")
     }
 
+    func testBuilderDisplaysFieldTypeTagsAndAutohidesFieldScroller() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,active,value
+        A,true,3
+        B,false,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(
+            document: doc,
+            columnNames: doc.header,
+            columnStatisticsReport: statistics
+        )
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.layoutWindowForTesting()
+
+        XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 0), "site")
+        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 0), "Categorical")
+        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 1), "Boolean")
+        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 2), "Integer")
+        XCTAssertTrue(builder.fieldListAutohidesScrollersForTesting)
+    }
+
+    func testBuilderSupportsSelectionBasedFieldAssignmentActions() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(
+            document: doc,
+            columnNames: doc.header,
+            columnStatisticsReport: statistics
+        )
+
+        builder.selectFieldForTesting(row: 2)
+        builder.addSelectedFieldToDefaultZoneForTesting()
+        builder.selectFieldForTesting(row: 1)
+        builder.addSelectedFieldForTesting(to: .columns)
+
+        XCTAssertEqual(builder.layoutForTesting.value, 2)
+        XCTAssertEqual(builder.layoutForTesting.columns, [1])
+    }
+
+    func testBuilderSeparatesDimensionsFromMeasuresInControlLayout() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        XCTAssertEqual(builder.controlSectionTitlesForTesting, [
+            L.t("Fields", "필드"),
+            L.t("Dimensions", "차원"),
+            L.t("Measures", "측정값")
+        ])
+        XCTAssertFalse(builder.isMeasureZoneForTesting(.rows))
+        XCTAssertFalse(builder.isMeasureZoneForTesting(.columns))
+        XCTAssertFalse(builder.isMeasureZoneForTesting(.filters))
+        XCTAssertTrue(builder.isMeasureZoneForTesting(.values))
+    }
+
     func testBuilderResultTableDoesNotStripeEmptyPreviewArea() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""

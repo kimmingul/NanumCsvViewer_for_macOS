@@ -4,19 +4,21 @@ import AppKit
 @MainActor
 final class PivotBuilderWindowController: NSWindowController {
     private let csvDocument: VirtualCsvDocument
-    private let fields: [PivotField]
+    private var fields: [PivotField]
     private var layout = PivotBuilderLayout()
     private var pivot: PivotTableResult?
     private var previewRows: [[String]] = []
     private var previewHeaders: [String] = []
     private var previewCancellation: CancellationFlag?
+    private var typeAnalysisCancellation: CancellationFlag?
     private var previewGeneration = 0
     private var previewIsComputing = false
+    private var controlSectionTitles: [String] = []
 
     private let rootSplit = NSSplitView()
     private let controlPane = NSView()
     private let resultPane = PivotResultPaneView()
-    private let fieldTable = NSTableView()
+    private let fieldTable = PivotFieldTableView()
     private let fieldScroll = NSScrollView()
     private let tablePreview = NSTableView()
     private let tableScroll = NSScrollView()
@@ -27,29 +29,84 @@ final class PivotBuilderWindowController: NSWindowController {
     private let emptyPreviewLabel = NSTextField(labelWithString: "")
     private let resultSummaryLabel = NSTextField(labelWithString: "")
     private var zoneViews: [PivotDropZone: PivotDropZoneView] = [:]
+    private var fieldActionButtons: [PivotDropZone: NSButton] = [:]
 
-    init(document: VirtualCsvDocument, columnNames: [String]) {
+    init(document: VirtualCsvDocument, columnNames: [String], columnStatisticsReport: ColumnStatisticsReport? = nil) {
         csvDocument = document
-        fields = columnNames.enumerated().map { index, name in
-            PivotField(index: index, name: name.isEmpty ? "Column \(index + 1)" : name, typeHint: nil)
-        }
+        fields = Self.makeFields(columnNames: columnNames, columnStatisticsReport: columnStatisticsReport)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.minSize = NSSize(width: 900, height: 560)
+        window.minSize = NSSize(width: 900, height: 680)
         window.title = L.t("Pivot Builder", "피벗 빌더")
         super.init(window: window)
         buildInterface()
         refreshZones()
         refreshPreview()
+        loadFieldTypesIfNeeded()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        previewCancellation?.cancel()
+        typeAnalysisCancellation?.cancel()
+    }
+
+    private static func makeFields(
+        columnNames: [String],
+        columnStatisticsReport: ColumnStatisticsReport?
+    ) -> [PivotField] {
+        let typesByIndex = Dictionary(
+            uniqueKeysWithValues: columnStatisticsReport?.columns.map { ($0.index, $0.inferredType) } ?? []
+        )
+        return columnNames.enumerated().map { index, name in
+            PivotField(
+                index: index,
+                name: name.isEmpty ? "Column \(index + 1)" : name,
+                valueType: typesByIndex[index]
+            )
+        }
+    }
+
+    private func loadFieldTypesIfNeeded() {
+        guard fields.contains(where: { $0.valueType == nil }) else { return }
+        let cancellation = CancellationFlag()
+        typeAnalysisCancellation = cancellation
+        let document = csvDocument
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            do {
+                let report = try document.analyzeColumns(sampleLimit: 5_000, cancellation: cancellation)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.typeAnalysisCancellation === cancellation else { return }
+                    self.applyColumnStatistics(report)
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.typeAnalysisCancellation === cancellation else { return }
+                    self.typeAnalysisCancellation = nil
+                }
+            }
+        }
+    }
+
+    private func applyColumnStatistics(_ report: ColumnStatisticsReport) {
+        let typesByIndex = Dictionary(uniqueKeysWithValues: report.columns.map { ($0.index, $0.inferredType) })
+        fields = fields.map { field in
+            PivotField(index: field.index, name: field.name, valueType: typesByIndex[field.index])
+        }
+        typeAnalysisCancellation = nil
+        fieldTable.reloadData()
+        refreshZones()
+        updateFieldActionButtons()
     }
 
     func assignField(_ index: Int, to zone: PivotDropZone) {
@@ -123,10 +180,15 @@ final class PivotBuilderWindowController: NSWindowController {
         controlPane.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
 
         let fieldSection = makeFieldListSection()
-        let layoutSection = makeDropZoneSection()
-        let aggregationSection = makeAggregationSection()
+        let dimensionSection = makeDimensionSection()
+        let measureSection = makeMeasureSection()
+        controlSectionTitles = [
+            L.t("Fields", "필드"),
+            L.t("Dimensions", "차원"),
+            L.t("Measures", "측정값")
+        ]
 
-        for section in [fieldSection, layoutSection, aggregationSection] {
+        for section in [fieldSection, dimensionSection, measureSection] {
             section.translatesAutoresizingMaskIntoConstraints = false
             controlPane.addSubview(section)
         }
@@ -135,14 +197,14 @@ final class PivotBuilderWindowController: NSWindowController {
             fieldSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
             fieldSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
             fieldSection.topAnchor.constraint(equalTo: controlPane.topAnchor, constant: 12),
-            fieldSection.heightAnchor.constraint(equalToConstant: 300),
-            layoutSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
-            layoutSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
-            layoutSection.topAnchor.constraint(equalTo: fieldSection.bottomAnchor, constant: 12),
-            aggregationSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
-            aggregationSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
-            aggregationSection.topAnchor.constraint(equalTo: layoutSection.bottomAnchor, constant: 12),
-            aggregationSection.bottomAnchor.constraint(lessThanOrEqualTo: controlPane.bottomAnchor, constant: -12)
+            fieldSection.heightAnchor.constraint(equalToConstant: 260),
+            dimensionSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
+            dimensionSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
+            dimensionSection.topAnchor.constraint(equalTo: fieldSection.bottomAnchor, constant: 12),
+            measureSection.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor, constant: 12),
+            measureSection.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor, constant: -12),
+            measureSection.topAnchor.constraint(equalTo: dimensionSection.bottomAnchor, constant: 12),
+            measureSection.bottomAnchor.constraint(lessThanOrEqualTo: controlPane.bottomAnchor, constant: -12)
         ])
 
         return controlPane
@@ -164,6 +226,9 @@ final class PivotBuilderWindowController: NSWindowController {
         fieldTable.rowHeight = 28
         fieldTable.registerForDraggedTypes([.pivotFieldIndex])
         fieldTable.setDraggingSourceOperationMask(.copy, forLocal: true)
+        fieldTable.target = self
+        fieldTable.doubleAction = #selector(fieldDoubleClicked(_:))
+        fieldTable.menu = makeFieldContextMenu()
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("field"))
         column.title = L.t("Field", "필드")
@@ -172,28 +237,58 @@ final class PivotBuilderWindowController: NSWindowController {
 
         fieldScroll.documentView = fieldTable
         fieldScroll.hasVerticalScroller = true
+        fieldScroll.autohidesScrollers = true
+        fieldScroll.scrollerStyle = .overlay
         fieldScroll.translatesAutoresizingMaskIntoConstraints = false
         fieldScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
 
+        let actions = makeFieldActionBar()
+        actions.translatesAutoresizingMaskIntoConstraints = false
+
         section.addSubview(title)
+        section.addSubview(actions)
         section.addSubview(fieldScroll)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             title.trailingAnchor.constraint(equalTo: section.trailingAnchor),
             title.topAnchor.constraint(equalTo: section.topAnchor),
+            actions.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            actions.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            actions.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             fieldScroll.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             fieldScroll.trailingAnchor.constraint(equalTo: section.trailingAnchor),
-            fieldScroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            fieldScroll.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 8),
             fieldScroll.bottomAnchor.constraint(equalTo: section.bottomAnchor)
         ])
+        updateFieldActionButtons()
         return section
     }
 
-    private func makeDropZoneSection() -> NSView {
+    private func makeFieldActionBar() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.spacing = 6
+        stack.distribution = .fillEqually
+
+        for zone in [PivotDropZone.rows, .columns, .values, .filters] {
+            let button = NSButton(title: zone.title, target: self, action: #selector(addSelectedFieldFromButton(_:)))
+            button.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: zone.title)
+            button.imagePosition = .imageLeading
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.tag = Self.tag(for: zone)
+            button.toolTip = L.t("Add selected field to \(zone.title)", "선택한 필드를 \(zone.title)에 추가")
+            fieldActionButtons[zone] = button
+            stack.addArrangedSubview(button)
+        }
+        return stack
+    }
+
+    private func makeDimensionSection() -> NSView {
         let section = NSView()
         section.heightAnchor.constraint(greaterThanOrEqualToConstant: 222).isActive = true
 
-        let title = NSTextField(labelWithString: L.t("Layout", "레이아웃"))
+        let title = NSTextField(labelWithString: L.t("Dimensions", "차원"))
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.alignment = .left
         title.translatesAutoresizingMaskIntoConstraints = false
@@ -204,24 +299,16 @@ final class PivotBuilderWindowController: NSWindowController {
         firstRow.distribution = .fillEqually
         firstRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let secondRow = NSStackView()
-        secondRow.orientation = .horizontal
-        secondRow.spacing = 8
-        secondRow.distribution = .fillEqually
-        secondRow.translatesAutoresizingMaskIntoConstraints = false
-
         let rows = makeDropZone(.rows)
         let columns = makeDropZone(.columns)
-        let values = makeDropZone(.values)
         let filters = makeDropZone(.filters)
+        filters.translatesAutoresizingMaskIntoConstraints = false
         firstRow.addArrangedSubview(rows)
         firstRow.addArrangedSubview(columns)
-        secondRow.addArrangedSubview(values)
-        secondRow.addArrangedSubview(filters)
 
         section.addSubview(title)
         section.addSubview(firstRow)
-        section.addSubview(secondRow)
+        section.addSubview(filters)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             title.trailingAnchor.constraint(equalTo: section.trailingAnchor),
@@ -230,11 +317,60 @@ final class PivotBuilderWindowController: NSWindowController {
             firstRow.trailingAnchor.constraint(equalTo: section.trailingAnchor),
             firstRow.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             firstRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
-            secondRow.leadingAnchor.constraint(equalTo: section.leadingAnchor),
-            secondRow.trailingAnchor.constraint(equalTo: section.trailingAnchor),
-            secondRow.topAnchor.constraint(equalTo: firstRow.bottomAnchor, constant: 8),
-            secondRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
-            secondRow.bottomAnchor.constraint(equalTo: section.bottomAnchor)
+            filters.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            filters.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            filters.topAnchor.constraint(equalTo: firstRow.bottomAnchor, constant: 8),
+            filters.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
+            filters.bottomAnchor.constraint(equalTo: section.bottomAnchor)
+        ])
+        return section
+    }
+
+    private func makeMeasureSection() -> NSView {
+        let section = NSView()
+        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 138).isActive = true
+
+        let header = NSStackView()
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 8
+        header.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: L.t("Measures", "측정값"))
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        aggregationPopup.removeAllItems()
+        aggregationPopup.addItems(withTitles: AggregationFunction.allCases.map(\.rawValue))
+        aggregationPopup.selectItem(withTitle: layout.function.rawValue)
+        aggregationPopup.target = self
+        aggregationPopup.action = #selector(aggregationChanged(_:))
+
+        let aggregationLabel = NSTextField(labelWithString: L.t("Aggregation", "집계"))
+        aggregationLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        aggregationLabel.textColor = .secondaryLabelColor
+
+        header.addArrangedSubview(title)
+        header.addArrangedSubview(spacer)
+        header.addArrangedSubview(aggregationLabel)
+        header.addArrangedSubview(aggregationPopup)
+
+        let values = makeDropZone(.values)
+        values.translatesAutoresizingMaskIntoConstraints = false
+
+        section.addSubview(header)
+        section.addSubview(values)
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            header.topAnchor.constraint(equalTo: section.topAnchor),
+            values.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            values.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            values.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            values.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
+            values.bottomAnchor.constraint(equalTo: section.bottomAnchor)
         ])
         return section
     }
@@ -247,25 +383,6 @@ final class PivotBuilderWindowController: NSWindowController {
         }
         zoneViews[zone] = view
         return view
-    }
-
-    private func makeAggregationSection() -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 8
-
-        aggregationPopup.removeAllItems()
-        aggregationPopup.addItems(withTitles: AggregationFunction.allCases.map(\.rawValue))
-        aggregationPopup.selectItem(withTitle: layout.function.rawValue)
-        aggregationPopup.target = self
-        aggregationPopup.action = #selector(aggregationChanged(_:))
-
-        let label = NSTextField(labelWithString: L.t("Aggregation", "집계"))
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        stack.addArrangedSubview(label)
-        stack.addArrangedSubview(aggregationPopup)
-        return stack
     }
 
     private func makeResultsPane() -> NSView {
@@ -330,8 +447,8 @@ final class PivotBuilderWindowController: NSWindowController {
         emptyPreviewLabel.textColor = .secondaryLabelColor
         emptyPreviewLabel.alignment = .center
         emptyPreviewLabel.stringValue = L.t(
-            "Drag a field into Values. Rows and Columns are optional.",
-            "값에 필드를 끌어 놓으세요. 행과 열은 선택 사항입니다."
+            "Add a field to Values. Rows and Columns are optional.",
+            "값에 필드를 추가하세요. 행과 열은 선택 사항입니다."
         )
 
         for view in [tableScroll, chartView, emptyPreviewLabel] {
@@ -355,6 +472,112 @@ final class PivotBuilderWindowController: NSWindowController {
         guard let title = sender.selectedItem?.title,
               let function = AggregationFunction(rawValue: title) else { return }
         setAggregation(function)
+    }
+
+    @objc private func fieldDoubleClicked(_ sender: NSTableView) {
+        addSelectedFieldToDefaultZone()
+    }
+
+    @objc private func addSelectedFieldFromButton(_ sender: NSButton) {
+        guard let zone = Self.zone(for: sender.tag) else { return }
+        addSelectedField(to: zone)
+    }
+
+    @objc private func addSelectedFieldToRows(_ sender: Any?) {
+        addSelectedField(to: .rows)
+    }
+
+    @objc private func addSelectedFieldToColumns(_ sender: Any?) {
+        addSelectedField(to: .columns)
+    }
+
+    @objc private func addSelectedFieldToValues(_ sender: Any?) {
+        addSelectedField(to: .values)
+    }
+
+    @objc private func addSelectedFieldToFilters(_ sender: Any?) {
+        addSelectedField(to: .filters)
+    }
+
+    private func makeFieldContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(
+            title: L.t("Add to Rows", "행에 추가"),
+            action: #selector(addSelectedFieldToRows(_:)),
+            keyEquivalent: ""
+        ))
+        menu.addItem(NSMenuItem(
+            title: L.t("Add to Columns", "열에 추가"),
+            action: #selector(addSelectedFieldToColumns(_:)),
+            keyEquivalent: ""
+        ))
+        menu.addItem(NSMenuItem(
+            title: L.t("Add to Values", "값에 추가"),
+            action: #selector(addSelectedFieldToValues(_:)),
+            keyEquivalent: ""
+        ))
+        menu.addItem(NSMenuItem(
+            title: L.t("Add to Filters", "필터에 추가"),
+            action: #selector(addSelectedFieldToFilters(_:)),
+            keyEquivalent: ""
+        ))
+        for item in menu.items {
+            item.target = self
+        }
+        return menu
+    }
+
+    private func addSelectedFieldToDefaultZone() {
+        guard let selected = selectedField() else { return }
+        assignField(selected.index, to: selected.isMeasureCandidate ? .values : .rows)
+    }
+
+    private func addSelectedField(to zone: PivotDropZone) {
+        guard let selected = selectedField() else { return }
+        assignField(selected.index, to: zone)
+    }
+
+    private func selectedField() -> PivotField? {
+        fields[safe: fieldTable.selectedRow]
+    }
+
+    private func updateFieldActionButtons() {
+        let hasSelection = selectedField() != nil
+        for button in fieldActionButtons.values {
+            button.isEnabled = hasSelection
+        }
+    }
+
+    private static func tag(for zone: PivotDropZone) -> Int {
+        switch zone {
+        case .rows:
+            return 1
+        case .columns:
+            return 2
+        case .values:
+            return 3
+        case .filters:
+            return 4
+        }
+    }
+
+    private static func zone(for tag: Int) -> PivotDropZone? {
+        switch tag {
+        case 1:
+            return .rows
+        case 2:
+            return .columns
+        case 3:
+            return .values
+        case 4:
+            return .filters
+        default:
+            return nil
+        }
+    }
+
+    private static func isMeasureZone(_ zone: PivotDropZone) -> Bool {
+        zone == .values
     }
 
     private func refreshZones() {
@@ -385,8 +608,8 @@ final class PivotBuilderWindowController: NSWindowController {
             chartView.update(model: nil)
             resultSummaryLabel.stringValue = L.t("No result", "결과 없음")
             emptyPreviewLabel.stringValue = L.t(
-                "Drag a field into Values. Rows and Columns are optional.",
-                "값에 필드를 끌어 놓으세요. 행과 열은 선택 사항입니다."
+                "Add a field to Values. Rows and Columns are optional.",
+                "값에 필드를 추가하세요. 행과 열은 선택 사항입니다."
             )
             updatePreviewVisibility()
             return
@@ -521,7 +744,7 @@ extension PivotBuilderWindowController: NSTableViewDataSource, NSTableViewDelega
     nonisolated func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         MainActor.assumeIsolated {
             if tableView === fieldTable {
-                return makeCell(tableView: tableView, identifier: "fieldCell", text: fields[row].displayName)
+                return makeFieldCell(tableView: tableView, field: fields[row])
             }
 
             let columnIndex = tableView.tableColumns.firstIndex { $0 === tableColumn } ?? 0
@@ -537,6 +760,26 @@ extension PivotBuilderWindowController: NSTableViewDataSource, NSTableViewDelega
             item.setString(String(fields[row].index), forType: .pivotFieldIndex)
             return item
         }
+    }
+
+    nonisolated func tableViewSelectionDidChange(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            guard notification.object as? NSTableView === fieldTable else { return }
+            updateFieldActionButtons()
+        }
+    }
+
+    private func makeFieldCell(tableView: NSTableView, field: PivotField) -> PivotFieldCellView {
+        let viewIdentifier = NSUserInterfaceItemIdentifier("fieldCell")
+        if let reused = tableView.makeView(withIdentifier: viewIdentifier, owner: self) as? PivotFieldCellView {
+            reused.configure(field: field)
+            return reused
+        }
+
+        let view = PivotFieldCellView()
+        view.identifier = viewIdentifier
+        view.configure(field: field)
+        return view
     }
 
     private func makeCell(tableView: NSTableView, identifier: String, text: String) -> NSTableCellView {
@@ -662,13 +905,112 @@ extension PivotBuilderWindowController {
         tablePreview.usesAlternatingRowBackgroundColors
     }
 
+    var fieldListAutohidesScrollersForTesting: Bool {
+        fieldScroll.autohidesScrollers
+    }
+
+    var controlSectionTitlesForTesting: [String] {
+        controlSectionTitles
+    }
+
+    func isMeasureZoneForTesting(_ zone: PivotDropZone) -> Bool {
+        Self.isMeasureZone(zone)
+    }
+
+    func selectFieldForTesting(row: Int) {
+        guard row >= 0, row < fieldTable.numberOfRows else { return }
+        fieldTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        updateFieldActionButtons()
+    }
+
+    func addSelectedFieldToDefaultZoneForTesting() {
+        addSelectedFieldToDefaultZone()
+    }
+
+    func addSelectedFieldForTesting(to zone: PivotDropZone) {
+        addSelectedField(to: zone)
+    }
+
     func fieldListVisibleTextForTesting(row: Int) -> String? {
         guard row >= 0, row < fieldTable.numberOfRows else { return nil }
         let view = fieldTable.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView
         return view?.textField?.stringValue
     }
+
+    func fieldListTypeTextForTesting(row: Int) -> String? {
+        guard row >= 0, row < fieldTable.numberOfRows else { return nil }
+        let view = fieldTable.view(atColumn: 0, row: row, makeIfNecessary: true) as? PivotFieldCellView
+        return view?.typeTextForTesting
+    }
 }
 #endif
+
+@MainActor
+private final class PivotFieldTableView: NSTableView {
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let clickedRow = row(at: point)
+        if clickedRow >= 0 {
+            selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+        }
+        return super.menu(for: event)
+    }
+}
+
+@MainActor
+private final class PivotFieldCellView: NSTableCellView {
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let typeLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var typeTextForTesting: String {
+        typeLabel.stringValue
+    }
+
+    func configure(field: PivotField) {
+        nameLabel.stringValue = field.name
+        typeLabel.stringValue = field.typeHint ?? L.t("Unknown", "알 수 없음")
+        typeLabel.isHidden = field.typeHint == nil
+    }
+
+    private func configure() {
+        textField = nameLabel
+
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        typeLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        typeLabel.textColor = .secondaryLabelColor
+        typeLabel.alignment = .center
+        typeLabel.lineBreakMode = .byTruncatingTail
+        typeLabel.translatesAutoresizingMaskIntoConstraints = false
+        typeLabel.wantsLayer = true
+        typeLabel.layer?.cornerRadius = 5
+        typeLabel.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        typeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        addSubview(nameLabel)
+        addSubview(typeLabel)
+        NSLayoutConstraint.activate([
+            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            typeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: nameLabel.trailingAnchor, constant: 8),
+            typeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            typeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            typeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 68)
+        ])
+    }
+}
 
 @MainActor
 private final class PivotResultPaneView: NSView {
