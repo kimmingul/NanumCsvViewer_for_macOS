@@ -124,6 +124,7 @@ final class PivotBuilderWindowController: NSWindowController {
 
         let root = NSStackView()
         root.orientation = .vertical
+        root.alignment = .width
         root.spacing = 12
         root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         root.translatesAutoresizingMaskIntoConstraints = false
@@ -148,6 +149,7 @@ final class PivotBuilderWindowController: NSWindowController {
     private func makeFieldListSection() -> NSView {
         let section = NSStackView()
         section.orientation = .vertical
+        section.alignment = .width
         section.spacing = 8
         section.translatesAutoresizingMaskIntoConstraints = false
 
@@ -171,6 +173,7 @@ final class PivotBuilderWindowController: NSWindowController {
         fieldScroll.documentView = fieldTable
         fieldScroll.hasVerticalScroller = true
         fieldScroll.translatesAutoresizingMaskIntoConstraints = false
+        fieldScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
         fieldScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
 
         section.addArrangedSubview(title)
@@ -181,6 +184,7 @@ final class PivotBuilderWindowController: NSWindowController {
     private func makeDropZoneSection() -> NSView {
         let section = NSStackView()
         section.orientation = .vertical
+        section.alignment = .width
         section.spacing = 8
         section.translatesAutoresizingMaskIntoConstraints = false
 
@@ -593,6 +597,36 @@ extension PivotBuilderWindowController {
 
     var previewPaneHeightForTesting: CGFloat {
         previewContainer.frame.height
+    }
+
+    var fieldListRowCountForTesting: Int {
+        fieldTable.numberOfRows
+    }
+
+    var fieldListScrollHeightForTesting: CGFloat {
+        fieldScroll.frame.height
+    }
+
+    var fieldListScrollWidthForTesting: CGFloat {
+        fieldScroll.frame.width
+    }
+
+    var fieldListTableHeightForTesting: CGFloat {
+        fieldTable.frame.height
+    }
+
+    var fieldListTableWidthForTesting: CGFloat {
+        fieldTable.frame.width
+    }
+
+    var fieldListVisibleRowsForTesting: NSRange {
+        fieldTable.rows(in: fieldScroll.contentView.bounds)
+    }
+
+    func fieldListVisibleTextForTesting(row: Int) -> String? {
+        guard row >= 0, row < fieldTable.numberOfRows else { return nil }
+        let view = fieldTable.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView
+        return view?.textField?.stringValue
     }
 }
 #endif

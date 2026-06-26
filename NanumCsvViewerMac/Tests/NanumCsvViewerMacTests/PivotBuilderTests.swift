@@ -188,6 +188,32 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(builder.previewPaneHeightForTesting, builder.resultPaneHeightForTesting * 0.82)
     }
 
+    func testBuilderShowsCsvColumnsInFieldList() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.layoutWindowForTesting()
+
+        XCTAssertEqual(builder.fieldListRowCountForTesting, 3)
+        XCTAssertGreaterThanOrEqual(builder.fieldListScrollWidthForTesting, 280)
+        XCTAssertGreaterThanOrEqual(builder.fieldListTableWidthForTesting, 260)
+        XCTAssertGreaterThanOrEqual(builder.fieldListScrollHeightForTesting, 160)
+        XCTAssertGreaterThanOrEqual(builder.fieldListTableHeightForTesting, 84)
+        XCTAssertGreaterThan(builder.fieldListVisibleRowsForTesting.length, 0)
+        XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 0), "site")
+        XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 1), "arm")
+        XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 2), "value")
+    }
+
     func testMainWindowCreatesPivotBuilderForIndexedDocument() throws {
         _ = NSApplication.shared
         let path = try temporaryCsvPath("""
