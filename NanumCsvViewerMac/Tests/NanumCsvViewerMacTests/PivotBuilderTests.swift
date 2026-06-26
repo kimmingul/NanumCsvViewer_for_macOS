@@ -79,6 +79,27 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.chartModelForTesting?.categories, ["A", "B"])
     }
 
+    func testMainWindowCreatesPivotBuilderForIndexedDocument() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+
+        let builder = controller.makePivotBuilderForTesting()
+
+        XCTAssertNotNil(builder)
+    }
+
     private func openIndexed(_ content: String) throws -> (VirtualCsvDocument, String) {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         let path = directory.appendingPathComponent("nanumcsv_pivot_\(UUID().uuidString).csv").path
@@ -86,5 +107,23 @@ final class PivotBuilderTests: XCTestCase {
         let doc = try VirtualCsvDocument.open(path: path)
         try doc.runIndexing(progress: { _ in }, cancellation: CancellationFlag())
         return (doc, path)
+    }
+
+    private func temporaryCsvPath(_ content: String) throws -> String {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let path = directory.appendingPathComponent("nanumcsv_pivot_main_\(UUID().uuidString).csv").path
+        try content.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        return path
+    }
+
+    private func waitUntilIndexed(_ controller: MainWindowController, file: StaticString = #filePath, line: UInt = #line) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            if controller.indexingCompleteForTesting {
+                return
+            }
+        }
+        XCTFail("Timed out waiting for indexing", file: file, line: line)
     }
 }

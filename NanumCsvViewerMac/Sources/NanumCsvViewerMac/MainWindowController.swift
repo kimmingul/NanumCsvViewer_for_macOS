@@ -71,6 +71,7 @@ final class MainWindowController: NSWindowController {
     private var columnStatisticsReport: ColumnStatisticsReport?
     private var hiddenColumnIndexes: Set<Int> = []
     private var currentFilePath: String?
+    private var pivotBuilderWindow: PivotBuilderWindowController?
     var openAdditionalFilesHandler: (([URL], NSWindow?) -> Void)?
     var closeHandler: ((MainWindowController) -> Void)?
 
@@ -1614,24 +1615,15 @@ extension MainWindowController {
     }
 
     @objc func showPivotTable(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy, columnNames.count >= 2 else { return }
-        let rowColumn = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
-        let columnColumn = firstNonNumericColumn(excluding: rowColumn) ?? min(rowColumn + 1, columnNames.count - 1)
-        let valueColumn = firstNumericColumn(excluding: rowColumn) ?? rowColumn
-        do {
-            let pivot = try doc.pivotTable(
-                rowColumns: [rowColumn],
-                columnColumns: [columnColumn],
-                valueColumn: valueColumn,
-                function: .sum,
-                cancellation: CancellationFlag()
-            )
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("Pivot Table", "피벗 테이블")
-            detailTextView.string = formatPivotTable(pivot)
-        } catch {
-            presentError(error)
-        }
+        guard let builder = makePivotBuilder() else { return }
+        pivotBuilderWindow = builder
+        builder.showWindow(sender)
+        builder.window?.makeKeyAndOrderFront(sender)
+    }
+
+    private func makePivotBuilder() -> PivotBuilderWindowController? {
+        guard let doc = csvDocument, doc.indexingComplete, !busy, columnNames.count >= 2 else { return nil }
+        return PivotBuilderWindowController(document: doc, columnNames: columnNames)
     }
 
     @objc func showCorrelation(_ sender: Any?) {
@@ -2715,6 +2707,10 @@ private extension Array {
 extension MainWindowController {
     func openFileForTesting(_ url: URL) {
         openFile(url)
+    }
+
+    func makePivotBuilderForTesting() -> PivotBuilderWindowController? {
+        makePivotBuilder()
     }
 
     var indexingCompleteForTesting: Bool {
