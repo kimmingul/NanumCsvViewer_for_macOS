@@ -30,4 +30,12 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(model.series[1].values, [7, 5])
         XCTAssertNil(model.unsupportedReason)
     }
+
+    func testDropZoneStoresVisibleFieldNames() {
+        let zone = PivotDropZoneView(zone: .rows) { _, _ in }
+
+        zone.setFieldNames(["site", "visit"])
+
+        XCTAssertEqual(zone.fieldNamesForTesting, ["site", "visit"])
+    }
 }
