@@ -13,6 +13,9 @@ final class PivotBuilderWindowController: NSWindowController {
     private var previewGeneration = 0
     private var previewIsComputing = false
 
+    private let rootSplit = NSSplitView()
+    private let controlPane = NSView()
+    private let resultPane = PivotResultPaneView()
     private let fieldTable = NSTableView()
     private let fieldScroll = NSScrollView()
     private let tablePreview = NSTableView()
@@ -22,6 +25,7 @@ final class PivotBuilderWindowController: NSWindowController {
     private let previewTabs = NSSegmentedControl(labels: [], trackingMode: .selectOne, target: nil, action: nil)
     private let previewContainer = NSView()
     private let emptyPreviewLabel = NSTextField(labelWithString: "")
+    private let resultSummaryLabel = NSTextField(labelWithString: "")
     private var zoneViews: [PivotDropZone: PivotDropZoneView] = [:]
 
     init(document: VirtualCsvDocument, columnNames: [String]) {
@@ -30,11 +34,12 @@ final class PivotBuilderWindowController: NSWindowController {
             PivotField(index: index, name: name.isEmpty ? "Column \(index + 1)" : name, typeHint: nil)
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1040, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        window.minSize = NSSize(width: 900, height: 560)
         window.title = L.t("Pivot Builder", "피벗 빌더")
         super.init(window: window)
         buildInterface()
@@ -95,32 +100,59 @@ final class PivotBuilderWindowController: NSWindowController {
     private func buildInterface() {
         guard let contentView = window?.contentView else { return }
 
-        let split = NSSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
-        split.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(split)
+        rootSplit.isVertical = true
+        rootSplit.dividerStyle = .thin
+        rootSplit.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(rootSplit)
 
         NSLayoutConstraint.activate([
-            split.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            split.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            split.topAnchor.constraint(equalTo: contentView.topAnchor),
-            split.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+            rootSplit.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            rootSplit.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            rootSplit.topAnchor.constraint(equalTo: contentView.topAnchor),
+            rootSplit.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         ])
 
-        split.addArrangedSubview(makeFieldListPane())
-        split.addArrangedSubview(makeBuilderPane())
-        split.setPosition(260, ofDividerAt: 0)
+        rootSplit.addArrangedSubview(makeConfigurationPane())
+        rootSplit.addArrangedSubview(makeResultsPane())
+        rootSplit.setPosition(400, ofDividerAt: 0)
     }
 
-    private func makeFieldListPane() -> NSView {
-        let pane = NSView()
-        pane.translatesAutoresizingMaskIntoConstraints = false
-        pane.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+    private func makeConfigurationPane() -> NSView {
+        controlPane.translatesAutoresizingMaskIntoConstraints = false
+        controlPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
+        controlPane.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
+
+        let root = NSStackView()
+        root.orientation = .vertical
+        root.spacing = 12
+        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        controlPane.addSubview(root)
+
+        let aggregationSection = makeAggregationSection()
+        root.addArrangedSubview(makeFieldListSection())
+        root.addArrangedSubview(makeDropZoneSection())
+        root.addArrangedSubview(aggregationSection)
+        root.setVisibilityPriority(.mustHold, for: aggregationSection)
+
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: controlPane.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: controlPane.trailingAnchor),
+            root.topAnchor.constraint(equalTo: controlPane.topAnchor),
+            root.bottomAnchor.constraint(equalTo: controlPane.bottomAnchor)
+        ])
+
+        return controlPane
+    }
+
+    private func makeFieldListSection() -> NSView {
+        let section = NSStackView()
+        section.orientation = .vertical
+        section.spacing = 8
+        section.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(labelWithString: L.t("Fields", "필드"))
         title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.translatesAutoresizingMaskIntoConstraints = false
 
         fieldTable.headerView = nil
         fieldTable.delegate = self
@@ -139,62 +171,45 @@ final class PivotBuilderWindowController: NSWindowController {
         fieldScroll.documentView = fieldTable
         fieldScroll.hasVerticalScroller = true
         fieldScroll.translatesAutoresizingMaskIntoConstraints = false
+        fieldScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
 
-        pane.addSubview(title)
-        pane.addSubview(fieldScroll)
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 12),
-            title.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -12),
-            title.topAnchor.constraint(equalTo: pane.topAnchor, constant: 12),
-            fieldScroll.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 12),
-            fieldScroll.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -12),
-            fieldScroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
-            fieldScroll.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -12)
-        ])
-        return pane
+        section.addArrangedSubview(title)
+        section.addArrangedSubview(fieldScroll)
+        return section
     }
 
-    private func makeBuilderPane() -> NSView {
-        let pane = NSView()
-        pane.translatesAutoresizingMaskIntoConstraints = false
+    private func makeDropZoneSection() -> NSView {
+        let section = NSStackView()
+        section.orientation = .vertical
+        section.spacing = 8
+        section.translatesAutoresizingMaskIntoConstraints = false
 
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.spacing = 10
-        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        root.translatesAutoresizingMaskIntoConstraints = false
-        pane.addSubview(root)
+        let title = NSTextField(labelWithString: L.t("Layout", "레이아웃"))
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
 
-        root.addArrangedSubview(makeDropZoneGrid())
-        root.addArrangedSubview(makePreviewHeader())
-        root.addArrangedSubview(previewContainer)
-        root.setVisibilityPriority(.mustHold, for: previewContainer)
+        let firstRow = NSStackView()
+        firstRow.orientation = .horizontal
+        firstRow.spacing = 8
+        firstRow.distribution = .fillEqually
 
-        configurePreviewContainer()
-
-        NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            root.topAnchor.constraint(equalTo: pane.topAnchor),
-            root.bottomAnchor.constraint(equalTo: pane.bottomAnchor)
-        ])
-        return pane
-    }
-
-    private func makeDropZoneGrid() -> NSView {
-        let grid = NSGridView()
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.rowSpacing = 10
-        grid.columnSpacing = 10
+        let secondRow = NSStackView()
+        secondRow.orientation = .horizontal
+        secondRow.spacing = 8
+        secondRow.distribution = .fillEqually
 
         let rows = makeDropZone(.rows)
         let columns = makeDropZone(.columns)
         let values = makeDropZone(.values)
         let filters = makeDropZone(.filters)
-        grid.addRow(with: [rows, columns])
-        grid.addRow(with: [values, filters])
-        grid.widthAnchor.constraint(greaterThanOrEqualToConstant: 560).isActive = true
-        return grid
+        firstRow.addArrangedSubview(rows)
+        firstRow.addArrangedSubview(columns)
+        secondRow.addArrangedSubview(values)
+        secondRow.addArrangedSubview(filters)
+
+        section.addArrangedSubview(title)
+        section.addArrangedSubview(firstRow)
+        section.addArrangedSubview(secondRow)
+        return section
     }
 
     private func makeDropZone(_ zone: PivotDropZone) -> PivotDropZoneView {
@@ -207,18 +222,11 @@ final class PivotBuilderWindowController: NSWindowController {
         return view
     }
 
-    private func makePreviewHeader() -> NSView {
+    private func makeAggregationSection() -> NSView {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 8
-
-        previewTabs.segmentCount = 2
-        previewTabs.setLabel(L.t("Table", "테이블"), forSegment: 0)
-        previewTabs.setLabel(L.t("Chart", "차트"), forSegment: 1)
-        previewTabs.selectedSegment = 0
-        previewTabs.target = self
-        previewTabs.action = #selector(previewTabChanged(_:))
 
         aggregationPopup.removeAllItems()
         aggregationPopup.addItems(withTitles: AggregationFunction.allCases.map(\.rawValue))
@@ -226,19 +234,61 @@ final class PivotBuilderWindowController: NSWindowController {
         aggregationPopup.target = self
         aggregationPopup.action = #selector(aggregationChanged(_:))
 
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        stack.addArrangedSubview(previewTabs)
-        stack.addArrangedSubview(spacer)
-        stack.addArrangedSubview(NSTextField(labelWithString: L.t("Aggregation", "집계")))
+        let label = NSTextField(labelWithString: L.t("Aggregation", "집계"))
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        stack.addArrangedSubview(label)
         stack.addArrangedSubview(aggregationPopup)
         return stack
     }
 
+    private func makeResultsPane() -> NSView {
+        resultPane.translatesAutoresizingMaskIntoConstraints = false
+        resultPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 520).isActive = true
+
+        let header = makeResultHeader()
+        header.translatesAutoresizingMaskIntoConstraints = true
+        resultPane.addSubview(header)
+        resultPane.addSubview(previewContainer)
+        configurePreviewContainer()
+        previewContainer.translatesAutoresizingMaskIntoConstraints = true
+        resultPane.setContent(header: header, preview: previewContainer)
+        return resultPane
+    }
+
+    private func makeResultHeader() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 8
+
+        let title = NSTextField(labelWithString: L.t("Pivot Result", "피벗 결과"))
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        previewTabs.segmentCount = 2
+        previewTabs.setLabel(L.t("Pivot Table", "피벗 테이블"), forSegment: 0)
+        previewTabs.setLabel(L.t("Pivot Chart", "피벗 차트"), forSegment: 1)
+        previewTabs.selectedSegment = 0
+        previewTabs.target = self
+        previewTabs.action = #selector(previewTabChanged(_:))
+
+        resultSummaryLabel.font = .systemFont(ofSize: 12)
+        resultSummaryLabel.textColor = .secondaryLabelColor
+        resultSummaryLabel.lineBreakMode = .byTruncatingTail
+        resultSummaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        stack.addArrangedSubview(title)
+        stack.addArrangedSubview(resultSummaryLabel)
+        stack.addArrangedSubview(spacer)
+        stack.addArrangedSubview(previewTabs)
+        return stack
+    }
+
     private func configurePreviewContainer() {
-        previewContainer.translatesAutoresizingMaskIntoConstraints = false
-        previewContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
+        previewContainer.setContentHuggingPriority(.defaultLow, for: .vertical)
+        previewContainer.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
 
         tablePreview.delegate = self
         tablePreview.dataSource = self
@@ -305,6 +355,7 @@ final class PivotBuilderWindowController: NSWindowController {
             previewRows = []
             rebuildPreviewColumns()
             chartView.update(model: nil)
+            resultSummaryLabel.stringValue = L.t("No result", "결과 없음")
             emptyPreviewLabel.stringValue = L.t(
                 "Drag a field into Values. Rows and Columns are optional.",
                 "값에 필드를 끌어 놓으세요. 행과 열은 선택 사항입니다."
@@ -316,6 +367,7 @@ final class PivotBuilderWindowController: NSWindowController {
         let cancellation = CancellationFlag()
         previewCancellation = cancellation
         previewIsComputing = true
+        resultSummaryLabel.stringValue = L.t("Calculating...", "계산 중...")
         emptyPreviewLabel.stringValue = L.t("Calculating pivot...", "피벗 계산 중...")
         updatePreviewVisibility()
 
@@ -352,6 +404,7 @@ final class PivotBuilderWindowController: NSWindowController {
                     self.previewRows = []
                     self.rebuildPreviewColumns()
                     self.chartView.update(model: nil)
+                    self.resultSummaryLabel.stringValue = L.t("Error", "오류")
                     self.emptyPreviewLabel.stringValue = error.localizedDescription
                     self.updatePreviewVisibility()
                 }
@@ -384,6 +437,10 @@ final class PivotBuilderWindowController: NSWindowController {
 
         rebuildPreviewColumns()
         chartView.update(model: PivotChartModel.make(from: result))
+        resultSummaryLabel.stringValue = L.t(
+            "\(previewRows.count.formatted()) rows x \(previewHeaders.count.formatted()) columns",
+            "\(previewRows.count.formatted())행 x \(previewHeaders.count.formatted())열"
+        )
         updatePreviewVisibility()
     }
 
@@ -413,7 +470,7 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func updatePreviewVisibility() {
         let hasPreview = !previewHeaders.isEmpty
-        emptyPreviewLabel.isHidden = hasPreview && !previewIsComputing
+        emptyPreviewLabel.isHidden = hasPreview
         tableScroll.isHidden = !hasPreview || previewTabs.selectedSegment != 0
         chartView.isHidden = !hasPreview || previewTabs.selectedSegment != 1
     }
@@ -506,8 +563,74 @@ extension PivotBuilderWindowController {
     var chartModelForTesting: PivotChartModel? {
         chartView.modelForTesting
     }
+
+    func layoutWindowForTesting() {
+        for _ in 0..<3 {
+            window?.layoutIfNeeded()
+            window?.contentView?.layoutSubtreeIfNeeded()
+            rootSplit.layoutSubtreeIfNeeded()
+            resultPane.layoutSubtreeIfNeeded()
+            previewContainer.layoutSubtreeIfNeeded()
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    var windowContentWidthForTesting: CGFloat {
+        window?.contentView?.bounds.width ?? 0
+    }
+
+    var controlPaneWidthForTesting: CGFloat {
+        controlPane.frame.width
+    }
+
+    var resultPaneWidthForTesting: CGFloat {
+        resultPane.frame.width
+    }
+
+    var resultPaneHeightForTesting: CGFloat {
+        resultPane.frame.height
+    }
+
+    var previewPaneHeightForTesting: CGFloat {
+        previewContainer.frame.height
+    }
 }
 #endif
+
+@MainActor
+private final class PivotResultPaneView: NSView {
+    private weak var headerView: NSView?
+    private weak var previewView: NSView?
+
+    func setContent(header: NSView, preview: NSView) {
+        headerView = header
+        previewView = preview
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+
+        let margin: CGFloat = 12
+        let spacing: CGFloat = 10
+        let headerHeight = max(28, headerView?.fittingSize.height ?? 28)
+        let usableWidth = max(0, bounds.width - margin * 2)
+        let previewHeight = max(0, bounds.height - margin * 2 - spacing - headerHeight)
+
+        headerView?.frame = NSRect(
+            x: margin,
+            y: bounds.height - margin - headerHeight,
+            width: usableWidth,
+            height: headerHeight
+        )
+        previewView?.frame = NSRect(
+            x: margin,
+            y: margin,
+            width: usableWidth,
+            height: previewHeight
+        )
+    }
+}
 
 private extension Array {
     subscript(safe index: Int) -> Element? {

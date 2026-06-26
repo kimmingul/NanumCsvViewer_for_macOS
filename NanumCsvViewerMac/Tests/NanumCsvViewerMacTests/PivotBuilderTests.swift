@@ -168,6 +168,26 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.chartModelForTesting?.categories, ["Control", "Treatment"])
     }
 
+    func testBuilderReservesMajorityOfWindowForPivotResults() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.layoutWindowForTesting()
+
+        XCTAssertGreaterThanOrEqual(builder.resultPaneWidthForTesting, builder.windowContentWidthForTesting * 0.56)
+        XCTAssertLessThan(builder.controlPaneWidthForTesting, builder.resultPaneWidthForTesting)
+        XCTAssertGreaterThanOrEqual(builder.previewPaneHeightForTesting, builder.resultPaneHeightForTesting * 0.82)
+    }
+
     func testMainWindowCreatesPivotBuilderForIndexedDocument() throws {
         _ = NSApplication.shared
         let path = try temporaryCsvPath("""

@@ -7,6 +7,7 @@
 - Replaced the text-only Pivot Table analysis action with a separate drag-and-drop Pivot Builder window, including table and chart previews.
 - Pivot Builder now runs with only a Values field, with Rows+Values, with Columns+Values, or with the full Rows+Columns+Values layout.
 - Pivot preview calculation now runs off the main thread and cancels stale aggregation work when the layout changes.
+- Reworked the Pivot Builder layout so fields, drop zones, and aggregation controls stay on the left while the table/chart result panel takes the majority of the window.
 
 ## v1.6.1 - 2026-06-26
 
