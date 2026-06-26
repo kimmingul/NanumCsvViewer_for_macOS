@@ -24,7 +24,7 @@ This audit checks whether the GitHub v1 roadmap, including the v1.6 issue list, 
 | Multi-file workflow | Implemented | Native macOS tabs and multi-open workflows exist. |
 | Saved views/bookmarks | Partial | One per-file saved view exists. Multiple named bookmarks, a picker, auto-restore, and stronger UI tests remain pending. |
 | Advanced search | Implemented | Plain text, regex, slash-regex, fuzzy, and column-scoped search exist. Regex matching now compiles the pattern once per search. |
-| Analytics and statistics | Partial | Text-summary tools exist for distribution, date histogram, duplicates, group-by, pivot, and statistical tests. Graphical chart views are pending. Statistical p-values and confidence intervals were corrected after the audit. |
+| Analytics and statistics | Partial | Text-summary tools exist for distribution, date histogram, duplicates, group-by, and statistical tests. Pivot now has an interactive builder with table and chart previews. Broader graphical chart views are pending. Statistical p-values and confidence intervals were corrected after the audit. |
 | Performance dashboard | Partial | Row count, file size, storage, indexing time, and throughput are shown. Memory metrics and repeatable benchmark UI remain pending. |
 | UI customization | Partial | System light/dark appearance works. Custom themes, font controls, and row density controls remain pending. |
 | Clipboard and drag/drop import | Implemented | Clipboard CSV/path/URL import and drag/drop import exist. Temp-file lifecycle cleanup can be improved. |
@@ -41,7 +41,7 @@ This audit checks whether the GitHub v1 roadmap, including the v1.6 issue list, 
 
 ## Follow-Up Work
 
-1. Add Swift Charts views for numeric distributions, date histograms, group-by outputs, and pivot tables.
+1. Add richer chart views for numeric distributions, date histograms, group-by outputs, and advanced pivot layouts.
 2. Finish column management with frozen columns, a visible column checklist workflow, persisted reorder, and export order alignment.
 3. Expand saved views into multiple named bookmarks with a picker, auto-restore behavior, and integration tests.
 4. Upgrade the performance dashboard with memory metrics and repeatable benchmark runs.

@@ -1,5 +1,11 @@
 # Release Notes
 
+## Unreleased
+
+### Features
+
+- Replaced the text-only Pivot Table analysis action with a separate drag-and-drop Pivot Builder window, including table and chart previews.
+
 ## v1.6.1 - 2026-06-26
 
 This patch release applies the post-release v1 roadmap audit fixes and documents the remaining v1/v1.6 gaps. It does not close the full roadmap; graphical analytics, frozen columns, multiple named bookmarks, performance benchmark UI, and UI customization controls remain follow-up work.

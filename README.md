@@ -26,7 +26,8 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Expandable selected value bar for multiline cells
 - Performance dashboard with row, file, storage, indexing, and throughput metrics; memory and repeatable benchmark UI remain roadmap follow-ups
 - Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
-- Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, pivot tables, and basic statistical tests
+- Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests
+- Drag-and-drop Pivot Builder with table and chart previews
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
 
@@ -83,12 +84,13 @@ swift run NanumCsvViewerMac
   - `fuzzy:term` for ordered-character fuzzy matching
 - Use `View > Save Current View` and `View > Restore Saved View` to keep a per-file view state.
 - Use `View > Performance Dashboard` to inspect row counts, storage mode, indexing time, and throughput.
+- Use `Analysis > Pivot Table` to open the Pivot Builder, then drag fields into Rows, Columns, Values, and Filters.
 - Use `File > Export as Markdown...`, `Export as JSON...`, or `Export as HTML...` to share the current filtered/sorted view with only visible columns.
 - Expand the selected value bar with the chevron button when a selected cell contains multiline content.
 
 ## Roadmap Audit Status
 
-The v1.6 release ships useful workflow coverage, but a post-release multi-review audit found that several GitHub v1 roadmap items are still partial rather than complete. The current analytics tools are inspector/text summaries, not graphical Swift Charts views; column management does not yet include frozen columns; saved views are one per file rather than multiple named bookmarks; and UI customization controls for theme, font, and row density remain follow-up work.
+The v1.6 release ships useful workflow coverage, but a post-release multi-review audit found that several GitHub v1 roadmap items are still partial rather than complete. Most analytics tools are still inspector/text summaries, while Pivot Table now opens an interactive builder with table and chart previews; column management does not yet include frozen columns; saved views are one per file rather than multiple named bookmarks; and UI customization controls for theme, font, and row density remain follow-up work.
 
 See `ROADMAP_STATUS.md` for the detailed issue-by-issue audit and follow-up list.
 
