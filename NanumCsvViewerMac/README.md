@@ -27,6 +27,23 @@ Scripts/build-app.sh
 open "dist/Nanum CSV Viewer.app"
 ```
 
+## Mac App Store Package
+
+Mac App Store 제출용 빌드는 Developer ID 배포용 DMG와 별도로 생성합니다.
+
+```bash
+Scripts/build-appstore-app.sh
+Scripts/package-appstore.sh
+```
+
+기본 bundle id는 `com.nanumspace.mgkim.nanumcsvviewer`이고, App Sandbox entitlement를 포함합니다. 업로드에는 App Store Connect API key 또는 Apple ID app-specific password가 필요합니다.
+
+```bash
+ASC_KEY_ID="XXXXXXXXXX" \
+ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+Scripts/upload-appstore.sh
+```
+
 ## v1.7.3 Highlights
 
 - 피벗 차트가 SwiftUI Charts 기반 네이티브 차트로 표시됩니다.

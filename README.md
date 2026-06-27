@@ -202,6 +202,59 @@ SIGN_IDENTITY="-" SKIP_NOTARIZE=1 Scripts/release-app.sh
 
 Ad-hoc signed builds are not notarized and are not a substitute for Developer ID distribution.
 
+## Mac App Store Build
+
+Mac App Store distribution uses a separate bundle identifier, sandbox entitlement, signing identity, and package format from Developer ID distribution.
+
+Default App Store bundle identifier:
+
+```text
+com.nanumspace.mgkim.nanumcsvviewer
+```
+
+Build and sign a sandboxed App Store app bundle:
+
+```bash
+cd NanumCsvViewerMac
+Scripts/build-appstore-app.sh
+```
+
+Create a Mac App Store product archive:
+
+```bash
+Scripts/package-appstore.sh
+```
+
+The App Store build uses:
+
+- `Config/AppStore.entitlements`
+- `Apple Distribution: MINGUL KIM (XB673TQF3A)` for the app bundle
+- `3rd Party Mac Developer Installer: MINGUL KIM (XB673TQF3A)` for the `.pkg`
+- `productbuild --component ... /Applications`, which is the supported product archive mode for Mac App Store submission
+
+Upload requires App Store Connect authentication. `altool` does not use the Xcode GUI login automatically, so provide either an App Store Connect API key:
+
+```bash
+ASC_KEY_ID="XXXXXXXXXX" \
+ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+Scripts/upload-appstore.sh
+```
+
+or Apple ID upload credentials:
+
+```bash
+APPLE_ID="you@example.com" \
+APPLE_APP_PASSWORD="app-specific-password" \
+APPLE_PROVIDER_PUBLIC_ID="provider-id" \
+Scripts/upload-appstore.sh
+```
+
+The private key file for API-key upload should be available where `altool` can find it, such as:
+
+```text
+~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8
+```
+
 ## Benchmark
 
 The 1 GiB benchmark CSV is not committed to the repository. Generate it when needed:
