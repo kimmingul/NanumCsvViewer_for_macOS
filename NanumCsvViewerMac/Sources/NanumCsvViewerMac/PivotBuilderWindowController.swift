@@ -1,6 +1,21 @@
 import AppKit
 @preconcurrency import CsvCore
 
+private struct PivotPreviewSection: Equatable {
+    let title: String
+    let measure: PivotMeasure
+    let pivot: PivotTableResult
+    let headers: [String]
+    let rows: [[String]]
+    let chartModel: PivotChartModel
+}
+
+private final class PivotPreviewDocumentStackView: NSStackView {
+    override var isFlipped: Bool {
+        true
+    }
+}
+
 @MainActor
 final class PivotBuilderWindowController: NSWindowController {
     enum InitialResultTab {
@@ -12,6 +27,7 @@ final class PivotBuilderWindowController: NSWindowController {
     private var fields: [PivotField]
     private var layout = PivotBuilderLayout()
     private var pivot: PivotTableResult?
+    private var previewSections: [PivotPreviewSection] = []
     private var previewRows: [[String]] = []
     private var previewHeaders: [String] = []
     private var previewCancellation: CancellationFlag?
@@ -20,6 +36,7 @@ final class PivotBuilderWindowController: NSWindowController {
     private var previewIsComputing = false
     private var controlSectionTitles: [String] = []
     private var filteredFieldIndexes: [Int] = []
+    private var nextMeasureID = 1
 
     private let rootSplit = NSSplitView()
     private let controlPane = NSView()
@@ -29,7 +46,10 @@ final class PivotBuilderWindowController: NSWindowController {
     private let fieldScroll = NSScrollView()
     private let tablePreview = NSTableView()
     private let tableScroll = NSScrollView()
+    private let tableResultsStack = PivotPreviewDocumentStackView()
     private let chartView = PivotChartView()
+    private let chartScroll = NSScrollView()
+    private let chartResultsStack = PivotPreviewDocumentStackView()
     private let aggregationPopup = NSPopUpButton()
     private let previewTabs = NSSegmentedControl(labels: [], trackingMode: .selectOne, target: nil, action: nil)
     private let previewContainer = NSView()
@@ -39,9 +59,12 @@ final class PivotBuilderWindowController: NSWindowController {
     private let filterControlsStack = NSStackView()
     private var zoneViews: [PivotDropZone: PivotDropZoneView] = [:]
     private var fieldActionButtons: [PivotDropZone: NSButton] = [:]
+    private var fieldActionButtonOrder: [NSButton] = []
     private var dateDimensionGroupPopups: [Int: NSPopUpButton] = [:]
     private var filterValuePopups: [Int: NSPopUpButton] = [:]
     private var filterDateGroupPopups: [Int: NSPopUpButton] = [:]
+    private var measureAggregationPopups: [Int: NSPopUpButton] = [:]
+    private var measureMoveButtons: [Int: [NSButton]] = [:]
 
     init(
         document: VirtualCsvDocument,
@@ -123,6 +146,7 @@ final class PivotBuilderWindowController: NSWindowController {
             PivotField(index: field.index, name: field.name, valueType: typesByIndex[field.index])
         }
         let didAddDateGrouping = ensureDateGroupingDefaultsForAssignedFields()
+        normalizeMeasureAggregations()
         typeAnalysisCancellation = nil
         applyFieldSearch()
         refreshZones()
@@ -140,15 +164,24 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func assignField(_ index: Int, to zone: PivotDropZone, targetPosition: Int?) {
         guard fields.indices.contains(index) else { return }
+
         switch zone {
         case .rows:
+            let cleanupCandidates = removeFieldFromAllZones(index)
             insertUnique(index, into: &layout.rows, at: targetPosition)
+            cleanupCandidates.forEach(cleanupLayoutStateIfUnassigned)
         case .columns:
+            let cleanupCandidates = removeFieldFromAllZones(index)
             insertUnique(index, into: &layout.columns, at: targetPosition)
+            cleanupCandidates.forEach(cleanupLayoutStateIfUnassigned)
         case .values:
-            layout.value = index
+            let cleanupCandidates = removeFieldFromDimensionZones(index)
+            insertMeasure(makeMeasure(fieldIndex: index), at: targetPosition)
+            cleanupCandidates.forEach(cleanupLayoutStateIfUnassigned)
         case .filters:
+            let cleanupCandidates = removeFieldFromAllZones(index)
             insertUnique(index, into: &layout.filters, at: targetPosition)
+            cleanupCandidates.forEach(cleanupLayoutStateIfUnassigned)
         }
         ensureDateGroupingDefaultIfNeeded(for: index)
         refreshZones()
@@ -158,10 +191,9 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     func setAggregation(_ function: AggregationFunction) {
-        layout.function = function
-        aggregationPopup.selectItem(withTitle: function.rawValue)
-        refreshZones()
-        refreshPreview()
+        guard let measure = layout.measures.first else { return }
+        setMeasureAggregation(measureID: measure.id, function: function)
+        aggregationPopup.selectItem(withTitle: layout.function.rawValue)
     }
 
     func selectResultTab(_ tab: InitialResultTab) {
@@ -189,8 +221,10 @@ final class PivotBuilderWindowController: NSWindowController {
         case .columns:
             layout.columns.removeAll { $0 == index }
         case .values:
-            if layout.value == index {
-                layout.value = nil
+            if layout.measures.contains(where: { $0.id == index }) {
+                layout.measures.removeAll { $0.id == index }
+            } else {
+                layout.measures.removeAll { $0.fieldIndex == index }
             }
         case .filters:
             layout.filters.removeAll { $0 == index }
@@ -205,6 +239,21 @@ final class PivotBuilderWindowController: NSWindowController {
         target.insert(index, at: insertionIndex)
     }
 
+    private func makeMeasure(fieldIndex: Int) -> PivotMeasure {
+        let measure = PivotMeasure(
+            id: nextMeasureID,
+            fieldIndex: fieldIndex,
+            function: defaultAggregationFunction(for: fieldIndex)
+        )
+        nextMeasureID += 1
+        return measure
+    }
+
+    private func insertMeasure(_ measure: PivotMeasure, at position: Int?) {
+        let insertionIndex = min(max(0, position ?? layout.measures.count), layout.measures.count)
+        layout.measures.insert(sanitizedMeasure(measure), at: insertionIndex)
+    }
+
     private func moveAssignedField(
         _ index: Int,
         from sourceZone: PivotDropZone,
@@ -212,6 +261,11 @@ final class PivotBuilderWindowController: NSWindowController {
         targetPosition: Int
     ) {
         guard fields.indices.contains(index) else { return }
+        if sourceZone == .values, targetZone == .values,
+           let sourcePosition = positionOfField(index, in: sourceZone) {
+            moveMeasure(from: sourcePosition, to: targetPosition)
+            return
+        }
         let sourcePosition = positionOfField(index, in: sourceZone)
         var insertionPosition = targetPosition
         if sourceZone == targetZone,
@@ -220,16 +274,41 @@ final class PivotBuilderWindowController: NSWindowController {
             insertionPosition -= 1
         }
 
-        removeFieldFromLayout(index, from: sourceZone)
         assignField(index, to: targetZone, targetPosition: insertionPosition)
     }
 
     private func handleDroppedField(_ payload: PivotFieldDragPayload, to targetZone: PivotDropZone, targetPosition: Int) {
-        if let sourceZone = payload.sourceZone {
+        if payload.sourceZone == .values,
+           targetZone == .values,
+           let sourcePosition = payload.sourcePosition {
+            moveMeasure(from: sourcePosition, to: targetPosition)
+        } else if let sourceZone = payload.sourceZone {
             moveAssignedField(payload.fieldIndex, from: sourceZone, to: targetZone, targetPosition: targetPosition)
         } else {
             assignField(payload.fieldIndex, to: targetZone, targetPosition: targetPosition)
         }
+    }
+
+    private func moveMeasure(from sourcePosition: Int, to targetPosition: Int) {
+        guard layout.measures.indices.contains(sourcePosition) else { return }
+        var insertionPosition = min(max(0, targetPosition), layout.measures.count)
+        let measure = layout.measures.remove(at: sourcePosition)
+        if sourcePosition < insertionPosition {
+            insertionPosition -= 1
+        }
+        layout.measures.insert(measure, at: min(max(0, insertionPosition), layout.measures.count))
+        refreshZones()
+        refreshPreview()
+    }
+
+    private func moveMeasure(id: Int, offset: Int) {
+        guard let sourcePosition = layout.measures.firstIndex(where: { $0.id == id }) else { return }
+        let targetPosition = min(max(0, sourcePosition + offset), layout.measures.count - 1)
+        guard targetPosition != sourcePosition else { return }
+        let measure = layout.measures.remove(at: sourcePosition)
+        layout.measures.insert(measure, at: targetPosition)
+        refreshZones()
+        refreshPreview()
     }
 
     private func positionOfField(_ index: Int, in zone: PivotDropZone) -> Int? {
@@ -239,7 +318,7 @@ final class PivotBuilderWindowController: NSWindowController {
         case .columns:
             return layout.columns.firstIndex(of: index)
         case .values:
-            return layout.value == index ? 0 : nil
+            return layout.measures.firstIndex { $0.fieldIndex == index }
         case .filters:
             return layout.filters.firstIndex(of: index)
         }
@@ -270,6 +349,57 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func isDateField(_ index: Int) -> Bool {
         fields[safe: index]?.valueType == .date
+    }
+
+    @discardableResult
+    private func removeFieldFromAllZones(_ index: Int) -> Set<Int> {
+        var removed: Set<Int> = []
+        if layout.rows.contains(index) {
+            layout.rows.removeAll { $0 == index }
+            removed.insert(index)
+        }
+        if layout.columns.contains(index) {
+            layout.columns.removeAll { $0 == index }
+            removed.insert(index)
+        }
+        if layout.measures.contains(where: { $0.fieldIndex == index }) {
+            layout.measures.removeAll { $0.fieldIndex == index }
+            removed.insert(index)
+        }
+        if layout.filters.contains(index) {
+            layout.filters.removeAll { $0 == index }
+            layout.filterSelections.removeValue(forKey: index)
+            removed.insert(index)
+        }
+        return removed
+    }
+
+    @discardableResult
+    private func removeFieldFromDimensionZones(_ index: Int) -> Set<Int> {
+        var removed: Set<Int> = []
+        if layout.rows.contains(index) {
+            layout.rows.removeAll { $0 == index }
+            removed.insert(index)
+        }
+        if layout.columns.contains(index) {
+            layout.columns.removeAll { $0 == index }
+            removed.insert(index)
+        }
+        if layout.filters.contains(index) {
+            layout.filters.removeAll { $0 == index }
+            layout.filterSelections.removeValue(forKey: index)
+            removed.insert(index)
+        }
+        return removed
+    }
+
+    private func cleanupLayoutStateIfUnassigned(_ index: Int) {
+        guard !layout.rows.contains(index),
+              !layout.columns.contains(index),
+              !layout.measures.contains(where: { $0.fieldIndex == index }),
+              !layout.filters.contains(index) else { return }
+        layout.dateGroupings.removeValue(forKey: index)
+        layout.filterSelections.removeValue(forKey: index)
     }
 
     private func buildInterface() {
@@ -398,7 +528,8 @@ final class PivotBuilderWindowController: NSWindowController {
         stack.spacing = 6
         stack.distribution = .fillEqually
 
-        for zone in [PivotDropZone.rows, .columns, .values, .filters] {
+        fieldActionButtonOrder = []
+        for zone in [PivotDropZone.rows, .columns, .filters, .values] {
             let button = NSButton(title: zone.title, target: self, action: #selector(addSelectedFieldFromButton(_:)))
             button.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: zone.title)
             button.imagePosition = .imageLeading
@@ -407,6 +538,7 @@ final class PivotBuilderWindowController: NSWindowController {
             button.tag = Self.tag(for: zone)
             button.toolTip = L.t("Add selected field to \(zone.title)", "선택한 필드를 \(zone.title)에 추가")
             fieldActionButtons[zone] = button
+            fieldActionButtonOrder.append(button)
             stack.addArrangedSubview(button)
         }
         return stack
@@ -414,7 +546,7 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func makeDimensionSection() -> NSView {
         let section = NSView()
-        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
+        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 230).isActive = true
 
         let title = NSTextField(labelWithString: L.t("Dimensions", "차원"))
         title.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -434,9 +566,6 @@ final class PivotBuilderWindowController: NSWindowController {
         dateGroupControlsStack.orientation = .vertical
         dateGroupControlsStack.spacing = 6
         dateGroupControlsStack.translatesAutoresizingMaskIntoConstraints = false
-        filterControlsStack.orientation = .vertical
-        filterControlsStack.spacing = 6
-        filterControlsStack.translatesAutoresizingMaskIntoConstraints = false
         firstRow.addArrangedSubview(rows)
         firstRow.addArrangedSubview(columns)
 
@@ -444,7 +573,6 @@ final class PivotBuilderWindowController: NSWindowController {
         section.addSubview(firstRow)
         section.addSubview(dateGroupControlsStack)
         section.addSubview(filters)
-        section.addSubview(filterControlsStack)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             title.trailingAnchor.constraint(equalTo: section.trailingAnchor),
@@ -459,20 +587,16 @@ final class PivotBuilderWindowController: NSWindowController {
             filters.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             filters.trailingAnchor.constraint(equalTo: section.trailingAnchor),
             filters.topAnchor.constraint(equalTo: dateGroupControlsStack.bottomAnchor, constant: 8),
-            filters.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
-            filterControlsStack.leadingAnchor.constraint(equalTo: section.leadingAnchor),
-            filterControlsStack.trailingAnchor.constraint(equalTo: section.trailingAnchor),
-            filterControlsStack.topAnchor.constraint(equalTo: filters.bottomAnchor, constant: 8),
-            filterControlsStack.bottomAnchor.constraint(equalTo: section.bottomAnchor)
+            filters.heightAnchor.constraint(equalTo: rows.heightAnchor),
+            filters.bottomAnchor.constraint(equalTo: section.bottomAnchor)
         ])
         refreshDateGroupControls()
-        refreshFilterControls()
         return section
     }
 
     private func makeMeasureSection() -> NSView {
         let section = NSView()
-        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 138).isActive = true
+        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 190).isActive = true
 
         let header = NSStackView()
         header.orientation = .horizontal
@@ -492,14 +616,8 @@ final class PivotBuilderWindowController: NSWindowController {
         aggregationPopup.target = self
         aggregationPopup.action = #selector(aggregationChanged(_:))
 
-        let aggregationLabel = NSTextField(labelWithString: L.t("Aggregation", "집계"))
-        aggregationLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        aggregationLabel.textColor = .secondaryLabelColor
-
         header.addArrangedSubview(title)
         header.addArrangedSubview(spacer)
-        header.addArrangedSubview(aggregationLabel)
-        header.addArrangedSubview(aggregationPopup)
 
         let values = makeDropZone(.values)
         values.translatesAutoresizingMaskIntoConstraints = false
@@ -513,7 +631,7 @@ final class PivotBuilderWindowController: NSWindowController {
             values.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             values.trailingAnchor.constraint(equalTo: section.trailingAnchor),
             values.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
-            values.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
+            values.heightAnchor.constraint(greaterThanOrEqualToConstant: 148),
             values.bottomAnchor.constraint(equalTo: section.bottomAnchor)
         ])
         return section
@@ -536,10 +654,15 @@ final class PivotBuilderWindowController: NSWindowController {
         let header = makeResultHeader()
         header.translatesAutoresizingMaskIntoConstraints = true
         resultPane.addSubview(header)
+        filterControlsStack.orientation = .vertical
+        filterControlsStack.spacing = 6
+        filterControlsStack.translatesAutoresizingMaskIntoConstraints = true
+        resultPane.addSubview(filterControlsStack)
         resultPane.addSubview(previewContainer)
         configurePreviewContainer()
         previewContainer.translatesAutoresizingMaskIntoConstraints = true
-        resultPane.setContent(header: header, preview: previewContainer)
+        resultPane.setContent(header: header, filters: filterControlsStack, preview: previewContainer)
+        refreshFilterControls()
         return resultPane
     }
 
@@ -583,9 +706,22 @@ final class PivotBuilderWindowController: NSWindowController {
         tablePreview.usesAlternatingRowBackgroundColors = false
         tablePreview.gridStyleMask = .solidHorizontalGridLineMask
         tablePreview.rowHeight = 24
-        tableScroll.documentView = tablePreview
+        tableResultsStack.orientation = .vertical
+        tableResultsStack.alignment = .centerX
+        tableResultsStack.distribution = .fill
+        tableResultsStack.spacing = 42
+        tableResultsStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        tableScroll.documentView = tableResultsStack
         tableScroll.hasVerticalScroller = true
         tableScroll.hasHorizontalScroller = true
+
+        chartResultsStack.orientation = .vertical
+        chartResultsStack.alignment = .centerX
+        chartResultsStack.distribution = .fill
+        chartResultsStack.spacing = 42
+        chartScroll.documentView = chartResultsStack
+        chartScroll.hasVerticalScroller = true
+        chartScroll.hasHorizontalScroller = false
 
         emptyPreviewLabel.font = .systemFont(ofSize: 13)
         emptyPreviewLabel.textColor = .secondaryLabelColor
@@ -595,7 +731,7 @@ final class PivotBuilderWindowController: NSWindowController {
             "값에 필드를 추가하세요. 행과 열은 선택 사항입니다."
         )
 
-        for view in [tableScroll, chartView, emptyPreviewLabel] {
+        for view in [tableScroll, chartScroll, emptyPreviewLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             previewContainer.addSubview(view)
             NSLayoutConstraint.activate([
@@ -616,6 +752,20 @@ final class PivotBuilderWindowController: NSWindowController {
         guard let title = sender.selectedItem?.title,
               let function = AggregationFunction(rawValue: title) else { return }
         setAggregation(function)
+    }
+
+    @objc private func measureAggregationChanged(_ sender: NSPopUpButton) {
+        guard let title = sender.selectedItem?.title,
+              let function = AggregationFunction(rawValue: title) else { return }
+        setMeasureAggregation(measureID: sender.tag, function: function)
+    }
+
+    @objc private func moveMeasureUp(_ sender: NSButton) {
+        moveMeasure(id: sender.tag, offset: -1)
+    }
+
+    @objc private func moveMeasureDown(_ sender: NSButton) {
+        moveMeasure(id: sender.tag, offset: 1)
     }
 
     @objc private func filterValueChanged(_ sender: NSPopUpButton) {
@@ -671,13 +821,13 @@ final class PivotBuilderWindowController: NSWindowController {
             keyEquivalent: ""
         ))
         menu.addItem(NSMenuItem(
-            title: L.t("Add to Values", "값에 추가"),
-            action: #selector(addSelectedFieldToValues(_:)),
+            title: L.t("Add to Filters", "필터에 추가"),
+            action: #selector(addSelectedFieldToFilters(_:)),
             keyEquivalent: ""
         ))
         menu.addItem(NSMenuItem(
-            title: L.t("Add to Filters", "필터에 추가"),
-            action: #selector(addSelectedFieldToFilters(_:)),
+            title: L.t("Add to Values", "값에 추가"),
+            action: #selector(addSelectedFieldToValues(_:)),
             keyEquivalent: ""
         ))
         for item in menu.items {
@@ -694,6 +844,50 @@ final class PivotBuilderWindowController: NSWindowController {
     private func addSelectedField(to zone: PivotDropZone) {
         guard let selected = selectedField() else { return }
         assignField(selected.index, to: zone)
+    }
+
+    private func setMeasureAggregation(column: Int, function: AggregationFunction) {
+        guard let measure = layout.measures.first(where: { $0.fieldIndex == column }) else { return }
+        setMeasureAggregation(measureID: measure.id, function: function)
+    }
+
+    private func setMeasureAggregation(measureID: Int, function: AggregationFunction) {
+        guard let index = layout.measures.firstIndex(where: { $0.id == measureID }) else { return }
+        let fieldIndex = layout.measures[index].fieldIndex
+        guard allowedAggregationFunctions(for: fieldIndex).contains(function) else { return }
+        layout.measures[index].function = function
+        refreshZones()
+        refreshPreview()
+    }
+
+    private func allowedAggregationFunctions(for fieldIndex: Int) -> [AggregationFunction] {
+        switch fields[safe: fieldIndex]?.valueType {
+        case .integer, .float:
+            return [.count, .sum, .mean, .median, .min, .max, .standardDeviation, .uniqueCount]
+        case .categorical, .string, .date, .boolean, .empty:
+            return [.count, .uniqueCount]
+        case nil:
+            return [.count, .sum, .mean, .median, .min, .max, .standardDeviation, .uniqueCount]
+        }
+    }
+
+    private func defaultAggregationFunction(for fieldIndex: Int) -> AggregationFunction {
+        allowedAggregationFunctions(for: fieldIndex).first ?? .count
+    }
+
+    private func sanitizedMeasure(_ measure: PivotMeasure) -> PivotMeasure {
+        guard allowedAggregationFunctions(for: measure.fieldIndex).contains(measure.function) else {
+            return PivotMeasure(
+                id: measure.id,
+                fieldIndex: measure.fieldIndex,
+                function: defaultAggregationFunction(for: measure.fieldIndex)
+            )
+        }
+        return measure
+    }
+
+    private func normalizeMeasureAggregations() {
+        layout.measures = layout.measures.map(sanitizedMeasure)
     }
 
     private func setFilterSelection(column: Int, value: String?) {
@@ -788,14 +982,81 @@ final class PivotBuilderWindowController: NSWindowController {
     private func refreshZones() {
         zoneViews[.rows]?.setFieldItems(layout.rows.compactMap { fieldItem(for: $0, zone: .rows) })
         zoneViews[.columns]?.setFieldItems(layout.columns.compactMap { fieldItem(for: $0, zone: .columns) })
-        if let value = layout.value {
-            zoneViews[.values]?.setFieldItems([
-                (index: value, name: "\(layout.function.rawValue) of \(fields[value].name)", removable: true)
-            ])
-        } else {
-            zoneViews[.values]?.setFieldItems([])
-        }
+        measureAggregationPopups = [:]
+        measureMoveButtons = [:]
+        zoneViews[.values]?.setFieldItems(layout.measures.enumerated().compactMap { position, measure in
+            guard fields.indices.contains(measure.fieldIndex) else { return nil }
+            return (
+                index: measure.fieldIndex,
+                name: fields[measure.fieldIndex].name,
+                removable: true,
+                accessory: makeMeasureAccessory(for: measure, position: position),
+                removeID: measure.id
+            )
+        })
         zoneViews[.filters]?.setFieldItems(layout.filters.compactMap { fieldItem(for: $0, zone: .filters) })
+    }
+
+    private func makeMeasureAccessory(for measure: PivotMeasure, position: Int) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 4
+        stack.addArrangedSubview(makeMeasureAggregationPopup(for: measure))
+        let up = makeMeasureMoveButton(
+            symbolName: "chevron.up",
+            tooltip: L.t("Move measure up", "측정값 위로 이동"),
+            action: #selector(moveMeasureUp(_:)),
+            measure: measure,
+            isEnabled: position > 0
+        )
+        let down = makeMeasureMoveButton(
+            symbolName: "chevron.down",
+            tooltip: L.t("Move measure down", "측정값 아래로 이동"),
+            action: #selector(moveMeasureDown(_:)),
+            measure: measure,
+            isEnabled: position < layout.measures.count - 1
+        )
+        stack.addArrangedSubview(up)
+        stack.addArrangedSubview(down)
+        measureMoveButtons[measure.id] = [up, down]
+        return stack
+    }
+
+    private func makeMeasureAggregationPopup(for measure: PivotMeasure) -> NSPopUpButton {
+        let popup = NSPopUpButton()
+        popup.controlSize = .small
+        popup.tag = measure.id
+        popup.target = self
+        popup.action = #selector(measureAggregationChanged(_:))
+        popup.addItems(withTitles: allowedAggregationFunctions(for: measure.fieldIndex).map(\.rawValue))
+        popup.selectItem(withTitle: measure.function.rawValue)
+        popup.widthAnchor.constraint(equalToConstant: 132).isActive = true
+        measureAggregationPopups[measure.id] = popup
+        return popup
+    }
+
+    private func makeMeasureMoveButton(
+        symbolName: String,
+        tooltip: String,
+        action: Selector,
+        measure: PivotMeasure,
+        isEnabled: Bool
+    ) -> NSButton {
+        let button = NSButton()
+        button.title = ""
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: tooltip)
+        button.imageScaling = .scaleProportionallyDown
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.tag = measure.id
+        button.target = self
+        button.action = action
+        button.toolTip = tooltip
+        button.isEnabled = isEnabled
+        button.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        return button
     }
 
     private func refreshDateGroupControls() {
@@ -862,6 +1123,7 @@ final class PivotBuilderWindowController: NSWindowController {
             guard fields.indices.contains(index) else { continue }
             filterControlsStack.addArrangedSubview(makeFilterControlRow(for: index))
         }
+        resultPane.needsLayout = true
     }
 
     private func makeFilterControlRow(for index: Int) -> NSView {
@@ -951,13 +1213,14 @@ final class PivotBuilderWindowController: NSWindowController {
         previewGeneration += 1
         let generation = previewGeneration
 
-        guard layout.isRunnable, let value = layout.value else {
+        guard layout.isRunnable else {
             previewIsComputing = false
             previewCancellation = nil
             pivot = nil
+            previewSections = []
             previewHeaders = []
             previewRows = []
-            rebuildPreviewColumns()
+            rebuildPreviewSections()
             chartView.update(model: nil)
             resultSummaryLabel.stringValue = L.t("No result", "결과 없음")
             emptyPreviewLabel.stringValue = L.t(
@@ -980,24 +1243,27 @@ final class PivotBuilderWindowController: NSWindowController {
         let columns = layout.columns
         let filters = layout.filterSelections.map { PivotFilter(column: $0.key, selectedValue: $0.value) }
         let dateGroupings = layout.dateGroupings
-        let function = layout.function
+        let measures = layout.measures
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                let result = try document.pivotTable(
-                    rowColumns: rows,
-                    columnColumns: columns,
-                    valueColumn: value,
-                    function: function,
-                    filters: filters,
-                    dateGroupings: dateGroupings,
-                    cancellation: cancellation
-                )
+                let results = try measures.map { measure in
+                    let result = try document.pivotTable(
+                        rowColumns: rows,
+                        columnColumns: columns,
+                        valueColumn: measure.fieldIndex,
+                        function: measure.function,
+                        filters: filters,
+                        dateGroupings: dateGroupings,
+                        cancellation: cancellation
+                    )
+                    return (measure: measure, result: result)
+                }
                 DispatchQueue.main.async { [weak self] in
                     guard let self,
                           self.previewGeneration == generation,
                           self.previewCancellation === cancellation else { return }
                     self.previewIsComputing = false
-                    self.applyPreview(result, valueColumn: value)
+                    self.applyPreview(results)
                 }
             } catch CsvError.cancelled {
                 return
@@ -1008,9 +1274,10 @@ final class PivotBuilderWindowController: NSWindowController {
                           self.previewCancellation === cancellation else { return }
                     self.previewIsComputing = false
                     self.pivot = nil
+                    self.previewSections = []
                     self.previewHeaders = []
                     self.previewRows = []
-                    self.rebuildPreviewColumns()
+                    self.rebuildPreviewSections()
                     self.chartView.update(model: nil)
                     self.resultSummaryLabel.stringValue = L.t("Error", "오류")
                     self.emptyPreviewLabel.stringValue = error.localizedDescription
@@ -1020,36 +1287,73 @@ final class PivotBuilderWindowController: NSWindowController {
         }
     }
 
-    private func applyPreview(_ result: PivotTableResult, valueColumn: Int) {
-        pivot = result
-        let valueName = fields[safe: valueColumn]?.name ?? L.t("Value", "값")
-        let valueHeader = "\(result.function.rawValue) of \(valueName)"
+    private func applyPreview(_ results: [(measure: PivotMeasure, result: PivotTableResult)]) {
+        previewSections = results.map { makePreviewSection(result: $0.result, measure: $0.measure) }
+        pivot = previewSections.first?.pivot
+        previewHeaders = previewSections.first?.headers ?? []
+        previewRows = previewSections.first?.rows ?? []
 
-        if result.rowColumns.isEmpty, result.columnColumns.isEmpty {
-            previewHeaders = [L.t("Metric", "지표"), valueHeader]
-            previewRows = [[L.t("Total", "합계"), Self.formatNumber(result.value(row: [], column: []))]]
-        } else if result.columnColumns.isEmpty {
-            previewHeaders = [rowHeaderTitle(), valueHeader]
-            previewRows = result.rowKeys.map { rowKey in
-                [Self.label(rowKey, fallback: L.t("Total", "합계")), Self.formatNumber(result.value(row: rowKey, column: []))]
-            }
-        } else {
-            let rowHeader = result.rowColumns.isEmpty ? L.t("Total", "합계") : rowHeaderTitle()
-            previewHeaders = [rowHeader] + result.columnKeys.map { Self.label($0, fallback: L.t("Total", "합계")) }
-            let rowKeys = result.rowColumns.isEmpty ? [[]] : result.rowKeys
-            previewRows = rowKeys.map { rowKey in
-                [Self.label(rowKey, fallback: L.t("Total", "합계"))]
-                    + result.columnKeys.map { Self.formatNumber(result.value(row: rowKey, column: $0)) }
-            }
-        }
-
-        rebuildPreviewColumns()
-        chartView.update(model: PivotChartModel.make(from: result))
+        rebuildPreviewSections()
+        chartView.update(model: previewSections.first?.chartModel)
+        let rowCount = previewSections.reduce(0) { $0 + $1.rows.count }
+        let sectionCount = previewSections.count
         resultSummaryLabel.stringValue = L.t(
-            "\(previewRows.count.formatted()) rows x \(previewHeaders.count.formatted()) columns",
-            "\(previewRows.count.formatted())행 x \(previewHeaders.count.formatted())열"
+            "\(sectionCount.formatted()) measures, \(rowCount.formatted()) rows",
+            "\(sectionCount.formatted())개 측정값, \(rowCount.formatted())행"
         )
         updatePreviewVisibility()
+    }
+
+    private func makePreviewSection(result: PivotTableResult, measure: PivotMeasure) -> PivotPreviewSection {
+        let valueHeader = measureTitle(measure)
+        let headers: [String]
+        let rows: [[String]]
+        if result.rowColumns.isEmpty, result.columnColumns.isEmpty {
+            headers = [L.t("Metric", "지표"), valueHeader]
+            rows = [[L.t("Total", "합계"), Self.formatNumber(result.value(row: [], column: []))]]
+        } else if result.columnColumns.isEmpty {
+            headers = [rowHeaderTitle(), valueHeader]
+            var bodyRows = result.rowKeys.map { rowKey in
+                [Self.label(rowKey, fallback: L.t("Total", "합계")), Self.formatNumber(result.value(row: rowKey, column: []))]
+            }
+            bodyRows.append([
+                L.t("Total", "합계"),
+                Self.formatNumber(result.rowKeys.reduce(0) { $0 + result.value(row: $1, column: []) })
+            ])
+            rows = bodyRows
+        } else {
+            let hasRows = !result.rowColumns.isEmpty
+            let rowHeader = hasRows ? rowHeaderTitle() : ""
+            headers = [rowHeader]
+                + result.columnKeys.map { Self.label($0, fallback: L.t("Total", "합계")) }
+                + [L.t("Total", "합계")]
+            let rowKeys = hasRows ? result.rowKeys : [[]]
+            var bodyRows = rowKeys.map { rowKey in
+                let values = result.columnKeys.map { result.value(row: rowKey, column: $0) }
+                return [Self.label(rowKey, fallback: L.t("Total", "합계"))]
+                    + values.map(Self.formatNumber)
+                    + [Self.formatNumber(values.reduce(0, +))]
+            }
+            if hasRows {
+                let columnTotals = result.columnKeys.map { columnKey in
+                    rowKeys.reduce(0) { $0 + result.value(row: $1, column: columnKey) }
+                }
+                bodyRows.append(
+                    [L.t("Total", "합계")]
+                        + columnTotals.map(Self.formatNumber)
+                        + [Self.formatNumber(columnTotals.reduce(0, +))]
+                )
+            }
+            rows = bodyRows
+        }
+        return PivotPreviewSection(
+            title: valueHeader,
+            measure: measure,
+            pivot: result,
+            headers: headers,
+            rows: rows,
+            chartModel: PivotChartModel.make(from: result)
+        )
     }
 
     private func rowHeaderTitle() -> String {
@@ -1057,14 +1361,27 @@ final class PivotBuilderWindowController: NSWindowController {
         return title.isEmpty ? L.t("Total", "합계") : title
     }
 
+    private func measureTitle(_ measure: PivotMeasure) -> String {
+        let valueName = fields[safe: measure.fieldIndex]?.name ?? L.t("Value", "값")
+        return "\(measure.function.rawValue) of \(valueName)"
+    }
+
     private static func label(_ key: [String], fallback: String) -> String {
         let joined = key.joined(separator: " | ")
         return joined.isEmpty ? fallback : joined
     }
 
-    private func rebuildPreviewColumns() {
+    private func rebuildPreviewSections() {
         for column in tablePreview.tableColumns {
             tablePreview.removeTableColumn(column)
+        }
+        tableResultsStack.arrangedSubviews.forEach { view in
+            tableResultsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        chartResultsStack.arrangedSubviews.forEach { view in
+            chartResultsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
         }
 
         for (index, header) in previewHeaders.enumerated() {
@@ -1074,13 +1391,84 @@ final class PivotBuilderWindowController: NSWindowController {
             tablePreview.addTableColumn(column)
         }
         tablePreview.reloadData()
+
+        for (index, section) in previewSections.enumerated() {
+            tableResultsStack.addArrangedSubview(makeTableSectionView(section))
+            chartResultsStack.addArrangedSubview(makeChartSectionView(section, reusePrimaryChart: index == 0))
+        }
+        sizePreviewDocumentViews()
     }
 
     private func updatePreviewVisibility() {
-        let hasPreview = !previewHeaders.isEmpty
+        let hasPreview = !previewSections.isEmpty
         emptyPreviewLabel.isHidden = hasPreview
         tableScroll.isHidden = !hasPreview || previewTabs.selectedSegment != 0
-        chartView.isHidden = !hasPreview || previewTabs.selectedSegment != 1
+        chartScroll.isHidden = !hasPreview || previewTabs.selectedSegment != 1
+        sizePreviewDocumentViews()
+    }
+
+    private func makeTableSectionView(_ section: PivotPreviewSection) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 6
+
+        let title = NSTextField(labelWithString: section.title)
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
+        title.textColor = .labelColor
+        stack.addArrangedSubview(title)
+
+        let allRows = [section.headers] + section.rows
+        let gridRows = allRows.map { row in
+            row.map { value -> NSView in
+                let label = NSTextField(labelWithString: value)
+                label.font = .systemFont(ofSize: 12)
+                label.lineBreakMode = .byTruncatingTail
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                return label
+            }
+        }
+        let grid = NSGridView(views: gridRows)
+        grid.rowSpacing = 5
+        grid.columnSpacing = 14
+        for columnIndex in 0..<(section.headers.count) {
+            grid.column(at: columnIndex).xPlacement = columnIndex == 0 ? .leading : .trailing
+        }
+        for cellIndex in 0..<(section.headers.count) {
+            if let label = grid.cell(atColumnIndex: cellIndex, rowIndex: 0).contentView as? NSTextField {
+                label.font = .systemFont(ofSize: 12, weight: .semibold)
+            }
+        }
+        stack.addArrangedSubview(grid)
+        return stack
+    }
+
+    private func makeChartSectionView(_ section: PivotPreviewSection, reusePrimaryChart: Bool) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 6
+
+        let title = NSTextField(labelWithString: section.title)
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
+        stack.addArrangedSubview(title)
+
+        let chart = reusePrimaryChart ? chartView : PivotChartView()
+        chart.update(model: section.chartModel)
+        chart.translatesAutoresizingMaskIntoConstraints = false
+        chart.heightAnchor.constraint(equalToConstant: 240).isActive = true
+        stack.addArrangedSubview(chart)
+        return stack
+    }
+
+    private func sizePreviewDocumentViews() {
+        let width = max(previewContainer.bounds.width - 2, 320)
+        tableResultsStack.frame = NSRect(
+            origin: .zero,
+            size: NSSize(width: width, height: max(tableResultsStack.fittingSize.height, 1))
+        )
+        chartResultsStack.frame = NSRect(
+            origin: .zero,
+            size: NSSize(width: width, height: max(chartResultsStack.fittingSize.height, 1))
+        )
     }
 
     private static func formatNumber(_ value: Double) -> String {
@@ -1172,6 +1560,15 @@ extension PivotBuilderWindowController {
         setAggregation(function)
     }
 
+    func setMeasureAggregationForTesting(column: Int, function: AggregationFunction) {
+        setMeasureAggregation(column: column, function: function)
+    }
+
+    func setMeasureAggregationForTesting(measureAt index: Int, function: AggregationFunction) {
+        guard let measure = layout.measures[safe: index] else { return }
+        setMeasureAggregation(measureID: measure.id, function: function)
+    }
+
     func removeFieldForTesting(_ index: Int, from zone: PivotDropZone) {
         removeField(index, from: zone)
     }
@@ -1184,8 +1581,55 @@ extension PivotBuilderWindowController {
         previewHeaders
     }
 
+    func previewHeadersForTesting(section: Int) -> [String] {
+        previewSections[safe: section]?.headers ?? []
+    }
+
     func previewRowForTesting(_ row: Int) -> [String] {
         previewRows[safe: row] ?? []
+    }
+
+    func previewRowForTesting(section: Int, row: Int) -> [String] {
+        previewSections[safe: section]?.rows[safe: row] ?? []
+    }
+
+    var previewSectionCountForTesting: Int {
+        previewSections.count
+    }
+
+    var previewSectionTitlesForTesting: [String] {
+        previewSections.map(\.title)
+    }
+
+    var measureAggregationControlCountForTesting: Int {
+        measureAggregationPopups.count
+    }
+
+    func measureAggregationOptionTitlesForTesting(measureAt index: Int) -> [String] {
+        guard let measure = layout.measures[safe: index],
+              let popup = measureAggregationPopups[measure.id] else { return [] }
+        return popup.itemArray.map(\.title)
+    }
+
+    var measureMoveControlCountForTesting: Int {
+        measureMoveButtons.values.reduce(0) { $0 + $1.count }
+    }
+
+    func measureRowControlsAreOrderedForTesting(measureAt index: Int) -> Bool {
+        guard let measure = layout.measures[safe: index],
+              let popup = measureAggregationPopups[measure.id],
+              let buttons = measureMoveButtons[measure.id],
+              buttons.count == 2,
+              let accessory = popup.superview as? NSStackView else { return false }
+        return accessory.arrangedSubviews.count == 3
+            && accessory.arrangedSubviews[0] === popup
+            && accessory.arrangedSubviews[1] === buttons[0]
+            && accessory.arrangedSubviews[2] === buttons[1]
+    }
+
+    func moveMeasureDownForTesting(measureAt index: Int) {
+        guard let measure = layout.measures[safe: index] else { return }
+        moveMeasure(id: measure.id, offset: 1)
     }
 
     var chartModelForTesting: PivotChartModel? {
@@ -1221,6 +1665,33 @@ extension PivotBuilderWindowController {
 
     var previewPaneHeightForTesting: CGFloat {
         previewContainer.frame.height
+    }
+
+    var previewTableDocumentHeightForTesting: CGFloat {
+        tableResultsStack.frame.height
+    }
+
+    var previewTableSectionGapForTesting: CGFloat {
+        let sections = tableResultsStack.arrangedSubviews
+        guard sections.count >= 2 else { return 0 }
+        let first = sections[0].frame
+        let second = sections[1].frame
+        if first.minY >= second.maxY {
+            return first.minY - second.maxY
+        }
+        if second.minY >= first.maxY {
+            return second.minY - first.maxY
+        }
+        return 0
+    }
+
+    var previewTableFirstSectionCenterDeltaForTesting: CGFloat {
+        guard let first = tableResultsStack.arrangedSubviews.first else { return .greatestFiniteMagnitude }
+        return abs(first.frame.midX - tableResultsStack.bounds.midX)
+    }
+
+    func dropZoneHeightForTesting(_ zone: PivotDropZone) -> CGFloat {
+        zoneViews[zone]?.frame.height ?? 0
     }
 
     var fieldListRowCountForTesting: Int {
@@ -1270,6 +1741,10 @@ extension PivotBuilderWindowController {
         controlSectionTitles
     }
 
+    var fieldActionButtonTitlesForTesting: [String] {
+        fieldActionButtonOrder.map(\.title)
+    }
+
     func isMeasureZoneForTesting(_ zone: PivotDropZone) -> Bool {
         Self.isMeasureZone(zone)
     }
@@ -1307,6 +1782,18 @@ extension PivotBuilderWindowController {
 
     var dateDimensionGroupingControlCountForTesting: Int {
         dateDimensionGroupPopups.count
+    }
+
+    var resultFilterControlCountForTesting: Int {
+        filterValuePopups.count
+    }
+
+    var resultPaneContainsFilterControlsForTesting: Bool {
+        filterControlsStack.isDescendant(of: resultPane)
+    }
+
+    var controlPaneContainsFilterControlsForTesting: Bool {
+        filterControlsStack.isDescendant(of: controlPane)
     }
 
     func selectDateGroupingPopupForTesting(column: Int, period: DateBinPeriod) {
@@ -1404,10 +1891,12 @@ private final class PivotFieldCellView: NSTableCellView {
 @MainActor
 private final class PivotResultPaneView: NSView {
     private weak var headerView: NSView?
+    private weak var filtersView: NSView?
     private weak var previewView: NSView?
 
-    func setContent(header: NSView, preview: NSView) {
+    func setContent(header: NSView, filters: NSView, preview: NSView) {
         headerView = header
+        filtersView = filters
         previewView = preview
         needsLayout = true
     }
@@ -1418,15 +1907,29 @@ private final class PivotResultPaneView: NSView {
         let margin: CGFloat = 12
         let spacing: CGFloat = 10
         let headerHeight = max(28, headerView?.fittingSize.height ?? 28)
+        let filtersVisible = !(filtersView?.isHidden ?? true)
+        let filtersHeight = filtersVisible ? max(30, filtersView?.fittingSize.height ?? 30) : 0
+        let filtersSpacing = filtersVisible ? spacing : 0
         let usableWidth = max(0, bounds.width - margin * 2)
-        let previewHeight = max(0, bounds.height - margin * 2 - spacing - headerHeight)
+        let previewHeight = max(0, bounds.height - margin * 2 - spacing - headerHeight - filtersSpacing - filtersHeight)
 
+        let headerY = bounds.height - margin - headerHeight
         headerView?.frame = NSRect(
             x: margin,
-            y: bounds.height - margin - headerHeight,
+            y: headerY,
             width: usableWidth,
             height: headerHeight
         )
+        if filtersVisible {
+            filtersView?.frame = NSRect(
+                x: margin,
+                y: headerY - spacing - filtersHeight,
+                width: usableWidth,
+                height: filtersHeight
+            )
+        } else {
+            filtersView?.frame = NSRect(x: margin, y: headerY - spacing, width: usableWidth, height: 0)
+        }
         previewView?.frame = NSRect(
             x: margin,
             y: margin,

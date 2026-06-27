@@ -52,6 +52,16 @@ final class PivotDropZoneView: NSView {
     }
 
     func setFieldItems(_ items: [(index: Int, name: String, removable: Bool)]) {
+        setFieldItems(items.map { (index: $0.index, name: $0.name, removable: $0.removable, accessory: nil as NSView?) })
+    }
+
+    func setFieldItems(_ items: [(index: Int, name: String, removable: Bool, accessory: NSView?)]) {
+        setFieldItems(items.map {
+            (index: $0.index, name: $0.name, removable: $0.removable, accessory: $0.accessory, removeID: $0.index)
+        })
+    }
+
+    func setFieldItems(_ items: [(index: Int, name: String, removable: Bool, accessory: NSView?, removeID: Int)]) {
         names = items.map(\.name)
         stack.arrangedSubviews.forEach { view in
             stack.removeArrangedSubview(view)
@@ -77,6 +87,14 @@ final class PivotDropZoneView: NSView {
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             row.addArrangedSubview(label)
 
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            row.addArrangedSubview(spacer)
+
+            if let accessory = item.accessory {
+                row.addArrangedSubview(accessory)
+            }
+
             if item.removable {
                 let button = NSButton()
                 button.title = ""
@@ -84,7 +102,7 @@ final class PivotDropZoneView: NSView {
                 button.imageScaling = .scaleProportionallyDown
                 button.bezelStyle = .inline
                 button.isBordered = false
-                button.tag = item.index
+                button.tag = item.removeID
                 button.target = self
                 button.action = #selector(removeField(_:))
                 button.toolTip = L.t("Remove field", "필드 제거")
@@ -109,6 +127,7 @@ final class PivotDropZoneView: NSView {
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
 
         stack.orientation = .vertical
+        stack.alignment = .width
         stack.spacing = 4
 
         let root = NSStackView(views: [titleLabel, stack])

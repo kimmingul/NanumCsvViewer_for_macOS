@@ -4,6 +4,49 @@
 
 No unreleased changes.
 
+## v1.7.1 - 2026-06-27
+
+This patch release refines the Pivot Builder into a more Excel-like workflow for no-AI v1 analysis, especially for multi-measure pivots and clearer field semantics.
+
+### Highlights
+
+- Added multiple Pivot Builder measures, so one pivot can show several value fields or the same field with several aggregations.
+- Added per-measure aggregation controls directly beside each measure field.
+- Added type-aware aggregation choices: numeric fields expose Sum, Mean, Median, Min, Max, Std, Count, and Unique Count; categorical, string, date, boolean, and empty fields focus on Count and Unique Count.
+- Added measure ordering controls and improved measure-row alignment.
+- Reordered field action buttons to Rows, Columns, Filters, Values.
+- Kept dimension fields exclusive to one of Rows, Columns, or Filters while allowing repeat use in Values.
+- Grouped blank dimension values as `null` in pivot rows, columns, and filters.
+- Improved multi-measure result layout with compact top placement, centered result sections, larger spacing between sections, and totals for row/column pivots.
+- Added totals while removing the misleading top-left `Total` header from column-only pivot output.
+- Made the Filter drop zone compact and gave Measures more vertical space.
+
+### Validation
+
+- `swift test`: 147 tests passing.
+- `git diff --check`: passed.
+- App bundle signing verification: passed.
+- App bundle Gatekeeper check: accepted as Notarized Developer ID.
+- DMG signing verification: passed.
+- DMG Gatekeeper check: accepted as Notarized Developer ID.
+- Apple notarization:
+  - App ZIP submission `eeb11d88-39d3-4af4-9cb0-3e6b9ba30222`: Accepted.
+  - DMG submission `99c5a1a1-d59a-4005-a44f-26e3e2aaeb67`: Accepted.
+
+### Distribution
+
+- Bundle version: `1.7.1`
+- Bundle build: `171`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application
+- Notarization: Apple notary service, stapled app and DMG
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.7.1.dmg`
+  - `Nanum-CSV-Viewer-v1.7.1.zip`
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.7.1.dmg`: `49592f06e9baf3d0a0c34b8dd4155e4fc8eccc6be29d9beb8d5c64bbf98b342b`
+  - `Nanum-CSV-Viewer-v1.7.1.zip`: `2e0e8947119f39dc7c78e03ff3cda3b0aeee2c9a490fc18330b2880587e01b8c`
+
 ## v1.7.0 - 2026-06-27
 
 This release upgrades the no-AI v1 analysis workflow with an Excel-style Pivot Builder, visible inferred column types in the main grid, broader CSV date recognition, and a major type-inference performance fix for string-heavy files.

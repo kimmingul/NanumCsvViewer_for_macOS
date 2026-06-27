@@ -19,6 +19,24 @@ struct PivotField: Equatable {
     }
 }
 
+struct PivotMeasure {
+    let id: Int
+    let fieldIndex: Int
+    var function: AggregationFunction
+
+    init(id: Int = 0, fieldIndex: Int, function: AggregationFunction) {
+        self.id = id
+        self.fieldIndex = fieldIndex
+        self.function = function
+    }
+}
+
+extension PivotMeasure: Equatable {
+    static func == (lhs: PivotMeasure, rhs: PivotMeasure) -> Bool {
+        lhs.fieldIndex == rhs.fieldIndex && lhs.function == rhs.function
+    }
+}
+
 enum PivotDropZone: String, CaseIterable, Codable {
     case rows
     case columns
@@ -42,14 +60,43 @@ enum PivotDropZone: String, CaseIterable, Codable {
 struct PivotBuilderLayout: Equatable {
     var rows: [Int] = []
     var columns: [Int] = []
-    var value: Int?
+    var measures: [PivotMeasure] = []
     var filters: [Int] = []
     var filterSelections: [Int: String] = [:]
     var dateGroupings: [Int: DateBinPeriod] = [:]
-    var function: AggregationFunction = .count
+
+    var value: Int? {
+        get {
+            measures.first?.fieldIndex
+        }
+        set {
+            guard let newValue else {
+                measures.removeAll()
+                return
+            }
+            if measures.isEmpty {
+                measures = [PivotMeasure(fieldIndex: newValue, function: .count)]
+            } else {
+                measures[0] = PivotMeasure(fieldIndex: newValue, function: measures[0].function)
+                if measures.count > 1 {
+                    measures.removeSubrange(1..<measures.count)
+                }
+            }
+        }
+    }
+
+    var function: AggregationFunction {
+        get {
+            measures.first?.function ?? .count
+        }
+        set {
+            guard !measures.isEmpty else { return }
+            measures[0].function = newValue
+        }
+    }
 
     var isRunnable: Bool {
-        value != nil
+        !measures.isEmpty
     }
 }
 

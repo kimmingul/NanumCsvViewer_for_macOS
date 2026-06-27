@@ -267,6 +267,10 @@ enum CsvAnalytics {
 
     static func pivotKeyValue(row: [String], column: Int, dateGroupings: [Int: DateBinPeriod]) -> String {
         let raw = column < row.count ? row[column] : ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isPivotNull(trimmed) {
+            return "null"
+        }
         guard let period = dateGroupings[column],
               let date = CsvDateParser.parse(raw, allowCompactNumeric: true) else {
             return raw
@@ -286,6 +290,10 @@ enum CsvAnalytics {
             }
         }
         return true
+    }
+
+    private static func isPivotNull(_ value: String) -> Bool {
+        ["", "na", "n/a", "null", "nil", "missing"].contains(value.lowercased())
     }
 
     private static func aggregate(_ function: AggregationFunction, rawValues: [String], numbers: [Double]) -> Double {

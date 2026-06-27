@@ -27,7 +27,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Performance dashboard with row, file, storage, indexing, and throughput metrics; memory and repeatable benchmark UI remain roadmap follow-ups
 - Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
 - Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests, with numeric/date defaults guided by inferred column types
-- Excel-style Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
+- Excel-style Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, filter controls, type-aware value aggregations, multiple measures, totals, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
 
@@ -85,13 +85,13 @@ swift run NanumCsvViewerMac
 - Use `View > Save Current View` and `View > Restore Saved View` to keep a per-file view state.
 - Use `View > Performance Dashboard` to inspect row counts, storage mode, indexing time, and throughput.
 - Use the grid header tags to quickly check inferred column types. Analysis actions and Pivot Builder field tags use the same type inference, including common CSV date formats such as dotted, Korean, month-only, and compact `yyyyMMdd` dates. Type tags are calculated early during indexing and avoid slow date parsing for obvious non-date text columns.
-- Use `Analysis > Pivot Table` to open the Pivot Builder, then search and add fields by dragging, using the field buttons, or right-clicking a field. Assigned field chips can be dragged between Rows, Columns, Values, and Filters, and dimension chips can be reordered. Values are measures with aggregation; Rows, Columns, and Filters are dimensions. Rows and Columns are optional, and the Pivot Table and Pivot Chart tabs update in the builder's large result panel.
+- Use `Pivot > Pivot Table` or the toolbar Pivot button to open the Pivot Builder, then search and add fields by dragging, using the field buttons, or right-clicking a field. Assigned field chips can be dragged between Rows, Columns, Filters, and Values, and dimension chips can be reordered. Values are measures with per-field aggregation controls; the same field can be added multiple times as separate measures, for example Mean, Std, Min, and Max for one numeric column. Rows, Columns, and Filters are dimensions, blank dimension values are grouped as `null`, Rows and Columns are optional, and the Pivot Table and Pivot Chart tabs update in the builder's large result panel with per-measure results and totals.
 - Use `File > Export as Markdown...`, `Export as JSON...`, or `Export as HTML...` to share the current filtered/sorted view with only visible columns.
 - Expand the selected value bar with the chevron button when a selected cell contains multiline content.
 
 ## Roadmap Audit Status
 
-The v1.7 release improves the v1 no-AI analysis workflow with an interactive Pivot Builder, chart/table previews, and visible inferred column types. Some GitHub v1 roadmap items are still partial rather than complete: broader analytics tools are still inspector/text summaries, column management does not yet include frozen columns, saved views are one per file rather than multiple named bookmarks, and UI customization controls for theme, font, and row density remain follow-up work.
+The v1.7 release line improves the v1 no-AI analysis workflow with an interactive Pivot Builder, chart/table previews, visible inferred column types, and type-aware pivot measures. Some GitHub v1 roadmap items are still partial rather than complete: broader analytics tools are still inspector/text summaries, column management does not yet include frozen columns, saved views are one per file rather than multiple named bookmarks, and UI customization controls for theme, font, and row density remain follow-up work.
 
 See `ROADMAP_STATUS.md` for the detailed issue-by-issue audit and follow-up list.
 
