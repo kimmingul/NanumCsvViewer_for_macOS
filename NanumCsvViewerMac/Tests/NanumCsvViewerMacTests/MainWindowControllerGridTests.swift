@@ -343,6 +343,47 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertNotNil(pivotItem.image)
     }
 
+    func testAnalysisParameterSheetsHaveRoomForFieldsAndButtons() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        group,visit_date,amount,score
+        A,2026.01.02,10,1
+        B,2026.02.03,12,2
+        A,2026.03.04,14,3
+        B,2026.04.05,16,4
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilColumnTypesReady(controller, column: 1)
+
+        let expectedRows: [AnalysisKind: Int] = [
+            .numericDistribution: 2,
+            .dateHistogram: 3,
+            .duplicateRows: 2,
+            .groupBy: 3,
+            .correlation: 2,
+            .independentTTest: 4,
+            .chiSquare: 2
+        ]
+
+        for kind in expectedRows.keys {
+            let metrics = try XCTUnwrap(controller.analysisPromptLayoutMetricsForTesting(kind))
+            XCTAssertGreaterThanOrEqual(metrics.windowSize.width, 560, "\(kind)")
+            XCTAssertGreaterThanOrEqual(metrics.windowSize.height, 280, "\(kind)")
+            XCTAssertEqual(metrics.rowCount, expectedRows[kind], "\(kind)")
+            XCTAssertGreaterThanOrEqual(metrics.minimumPopupWidth, 320, "\(kind)")
+            XCTAssertGreaterThanOrEqual(metrics.runButtonSize.width, 88, "\(kind)")
+            XCTAssertGreaterThanOrEqual(metrics.cancelButtonSize.width, 88, "\(kind)")
+        }
+    }
+
     func testDateHistogramUsesInferredDateColumnWhenSelectionIsNotDate() throws {
         _ = NSApplication.shared
         let path = try temporaryCsvPath()

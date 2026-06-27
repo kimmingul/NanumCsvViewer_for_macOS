@@ -17,11 +17,135 @@ private final class PivotPreviewDocumentStackView: NSStackView {
 }
 
 @MainActor
+private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let scrollView = NSScrollView()
+    private let tableView = NSTableView()
+    private var section: PivotPreviewSection?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(section: PivotPreviewSection) {
+        self.section = section
+        titleLabel.stringValue = section.title
+        rebuildColumns(headers: section.headers)
+        tableView.reloadData()
+    }
+
+    private func configure() {
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.usesAlternatingRowBackgroundColors = false
+        tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
+        tableView.rowHeight = 24
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
+        tableView.allowsColumnReordering = false
+        tableView.allowsColumnResizing = true
+
+        scrollView.documentView = tableView
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(titleLabel)
+        addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    private func rebuildColumns(headers: [String]) {
+        for column in tableView.tableColumns {
+            tableView.removeTableColumn(column)
+        }
+        for (index, header) in headers.enumerated() {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("preview_\(index)"))
+            column.title = header
+            column.width = index == 0 ? 160 : 110
+            column.minWidth = index == 0 ? 120 : 80
+            tableView.addTableColumn(column)
+        }
+    }
+
+    nonisolated func numberOfRows(in tableView: NSTableView) -> Int {
+        MainActor.assumeIsolated {
+            section?.rows.count ?? 0
+        }
+    }
+
+    nonisolated func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        MainActor.assumeIsolated {
+            let columnIndex = tableView.tableColumns.firstIndex { $0 === tableColumn } ?? 0
+            let text = section?.rows[safe: row]?[safe: columnIndex] ?? ""
+            return makeCell(text: text)
+        }
+    }
+
+    private func makeCell(text: String) -> NSTableCellView {
+        let viewIdentifier = NSUserInterfaceItemIdentifier("previewCell")
+        if let reused = tableView.makeView(withIdentifier: viewIdentifier, owner: self) as? NSTableCellView {
+            reused.textField?.stringValue = text
+            return reused
+        }
+
+        let view = NSTableCellView()
+        view.identifier = viewIdentifier
+        let label = NSTextField(labelWithString: text)
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+        view.textField = label
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+        return view
+    }
+}
+
+@MainActor
 final class PivotBuilderWindowController: NSWindowController {
+    private typealias ZoneFieldItem = (
+        index: Int,
+        name: String,
+        removable: Bool,
+        accessory: NSView?,
+        removeID: Int
+    )
+
     enum InitialResultTab {
         case table
         case chart
     }
+
+    private static let previewTableRowHeight: CGFloat = 24
+    private static let previewTableHeaderHeight: CGFloat = 26
+    private static let previewTableTitleHeight: CGFloat = 18
+    private static let previewTableTitleSpacing: CGFloat = 6
+    private static let previewTableMinimumScrollHeight: CGFloat = 96
+    private static let previewTableMaximumVisibleRows = 14
+    private static let previewChartSectionHeight: CGFloat = 332
+    private static let previewChartHeight: CGFloat = 300
 
     private let csvDocument: VirtualCsvDocument
     private var fields: [PivotField]
@@ -713,7 +837,8 @@ final class PivotBuilderWindowController: NSWindowController {
         tableResultsStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         tableScroll.documentView = tableResultsStack
         tableScroll.hasVerticalScroller = true
-        tableScroll.hasHorizontalScroller = true
+        tableScroll.hasHorizontalScroller = false
+        tableScroll.autohidesScrollers = true
 
         chartResultsStack.orientation = .vertical
         chartResultsStack.alignment = .centerX
@@ -722,6 +847,7 @@ final class PivotBuilderWindowController: NSWindowController {
         chartScroll.documentView = chartResultsStack
         chartScroll.hasVerticalScroller = true
         chartScroll.hasHorizontalScroller = false
+        chartScroll.autohidesScrollers = true
 
         emptyPreviewLabel.font = .systemFont(ofSize: 13)
         emptyPreviewLabel.textColor = .secondaryLabelColor
@@ -980,8 +1106,9 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func refreshZones() {
-        zoneViews[.rows]?.setFieldItems(layout.rows.compactMap { fieldItem(for: $0, zone: .rows) })
-        zoneViews[.columns]?.setFieldItems(layout.columns.compactMap { fieldItem(for: $0, zone: .columns) })
+        dateDimensionGroupPopups = [:]
+        zoneViews[.rows]?.setFieldItems(layout.rows.compactMap { dimensionFieldItem(for: $0, zone: .rows) })
+        zoneViews[.columns]?.setFieldItems(layout.columns.compactMap { dimensionFieldItem(for: $0, zone: .columns) })
         measureAggregationPopups = [:]
         measureMoveButtons = [:]
         zoneViews[.values]?.setFieldItems(layout.measures.enumerated().compactMap { position, measure in
@@ -994,7 +1121,7 @@ final class PivotBuilderWindowController: NSWindowController {
                 removeID: measure.id
             )
         })
-        zoneViews[.filters]?.setFieldItems(layout.filters.compactMap { fieldItem(for: $0, zone: .filters) })
+        zoneViews[.filters]?.setFieldItems(layout.filters.compactMap { dimensionFieldItem(for: $0, zone: .filters) })
     }
 
     private func makeMeasureAccessory(for measure: PivotMeasure, position: Int) -> NSView {
@@ -1064,44 +1191,31 @@ final class PivotBuilderWindowController: NSWindowController {
             dateGroupControlsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        dateDimensionGroupPopups = [:]
-
-        let indexes = orderedUnique(layout.rows + layout.columns).filter(isDateField)
-        dateGroupControlsStack.isHidden = indexes.isEmpty
-        for index in indexes {
-            dateGroupControlsStack.addArrangedSubview(makeDateDimensionControlRow(for: index))
-        }
+        dateGroupControlsStack.isHidden = true
     }
 
-    private func makeDateDimensionControlRow(for index: Int) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 6
+    private func dimensionFieldItem(for index: Int, zone: PivotDropZone) -> ZoneFieldItem? {
+        guard fields.indices.contains(index) else { return nil }
+        return (
+            index: index,
+            name: assignedFieldTitle(index, zone: zone),
+            removable: true,
+            accessory: isDateField(index) ? makeDateGroupingAccessory(for: index) : nil,
+            removeID: index
+        )
+    }
 
-        let label = NSTextField(labelWithString: L.t("Group \(fields[index].name) by", "\(fields[index].name) 그룹"))
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
+    private func makeDateGroupingAccessory(for index: Int) -> NSView {
         let popup = makeDateGroupingPopup(for: index)
         dateDimensionGroupPopups[index] = popup
-
-        row.addArrangedSubview(label)
-        row.addArrangedSubview(popup)
-        return row
-    }
-
-    private func fieldItem(for index: Int, zone: PivotDropZone) -> (index: Int, name: String, removable: Bool)? {
-        guard fields.indices.contains(index) else { return nil }
-        return (index: index, name: assignedFieldTitle(index, zone: zone), removable: true)
+        return popup
     }
 
     private func assignedFieldTitle(_ index: Int, zone: PivotDropZone) -> String {
         guard let field = fields[safe: index] else { return L.t("Field", "필드") }
         var title = field.name
         if isDateField(index), let period = layout.dateGroupings[index] {
-            title += " (\(period.rawValue))"
+            title += " (\(Self.dateGroupingTitle(period)))"
         }
         if zone == .filters {
             let selected = layout.filterSelections[index] ?? L.t("All", "전체")
@@ -1173,12 +1287,27 @@ final class PivotBuilderWindowController: NSWindowController {
         popup.tag = index
         popup.target = self
         popup.action = #selector(dateGroupingChanged(_:))
+        popup.toolTip = L.t("Group date field by year, month, or day", "날짜 필드를 연, 월, 일 단위로 그룹화")
         for period in [DateBinPeriod.year, .month, .day] {
-            popup.addItem(withTitle: period.rawValue)
+            popup.addItem(withTitle: Self.dateGroupingTitle(period))
             popup.lastItem?.representedObject = period.rawValue
         }
-        popup.selectItem(withTitle: (layout.dateGroupings[index] ?? .month).rawValue)
+        popup.selectItem(withTitle: Self.dateGroupingTitle(layout.dateGroupings[index] ?? .month))
+        popup.widthAnchor.constraint(equalToConstant: 92).isActive = true
         return popup
+    }
+
+    private static func dateGroupingTitle(_ period: DateBinPeriod) -> String {
+        switch period {
+        case .year:
+            return L.t("Year", "연")
+        case .month:
+            return L.t("Month", "월")
+        case .day:
+            return L.t("Day", "일")
+        case .week:
+            return L.t("Week", "주")
+        }
     }
 
     private func filterOptions(for index: Int) -> [String] {
@@ -1306,13 +1435,14 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func makePreviewSection(result: PivotTableResult, measure: PivotMeasure) -> PivotPreviewSection {
         let valueHeader = measureTitle(measure)
+        let valueTypeHeader = measure.function.rawValue
         let headers: [String]
         let rows: [[String]]
         if result.rowColumns.isEmpty, result.columnColumns.isEmpty {
             headers = [L.t("Metric", "지표"), valueHeader]
             rows = [[L.t("Total", "합계"), Self.formatNumber(result.value(row: [], column: []))]]
         } else if result.columnColumns.isEmpty {
-            headers = [rowHeaderTitle(), valueHeader]
+            headers = [rowHeaderTitle(), valueTypeHeader]
             var bodyRows = result.rowKeys.map { rowKey in
                 [Self.label(rowKey, fallback: L.t("Total", "합계")), Self.formatNumber(result.value(row: rowKey, column: []))]
             }
@@ -1330,7 +1460,7 @@ final class PivotBuilderWindowController: NSWindowController {
             let rowKeys = hasRows ? result.rowKeys : [[]]
             var bodyRows = rowKeys.map { rowKey in
                 let values = result.columnKeys.map { result.value(row: rowKey, column: $0) }
-                return [Self.label(rowKey, fallback: L.t("Total", "합계"))]
+                return [Self.label(rowKey, fallback: hasRows ? L.t("Total", "합계") : valueTypeHeader)]
                     + values.map(Self.formatNumber)
                     + [Self.formatNumber(values.reduce(0, +))]
             }
@@ -1393,8 +1523,18 @@ final class PivotBuilderWindowController: NSWindowController {
         tablePreview.reloadData()
 
         for (index, section) in previewSections.enumerated() {
-            tableResultsStack.addArrangedSubview(makeTableSectionView(section))
-            chartResultsStack.addArrangedSubview(makeChartSectionView(section, reusePrimaryChart: index == 0))
+            let sectionView = makeTableSectionView(section)
+            tableResultsStack.addArrangedSubview(sectionView)
+            NSLayoutConstraint.activate([
+                sectionView.widthAnchor.constraint(equalTo: tableResultsStack.widthAnchor),
+                sectionView.heightAnchor.constraint(equalToConstant: tableSectionHeight(for: section))
+            ])
+            let chartSectionView = makeChartSectionView(section, reusePrimaryChart: index == 0)
+            chartResultsStack.addArrangedSubview(chartSectionView)
+            NSLayoutConstraint.activate([
+                chartSectionView.widthAnchor.constraint(equalTo: chartResultsStack.widthAnchor),
+                chartSectionView.heightAnchor.constraint(equalToConstant: Self.previewChartSectionHeight)
+            ])
         }
         sizePreviewDocumentViews()
     }
@@ -1408,42 +1548,15 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func makeTableSectionView(_ section: PivotPreviewSection) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 6
-
-        let title = NSTextField(labelWithString: section.title)
-        title.font = .systemFont(ofSize: 12, weight: .semibold)
-        title.textColor = .labelColor
-        stack.addArrangedSubview(title)
-
-        let allRows = [section.headers] + section.rows
-        let gridRows = allRows.map { row in
-            row.map { value -> NSView in
-                let label = NSTextField(labelWithString: value)
-                label.font = .systemFont(ofSize: 12)
-                label.lineBreakMode = .byTruncatingTail
-                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-                return label
-            }
-        }
-        let grid = NSGridView(views: gridRows)
-        grid.rowSpacing = 5
-        grid.columnSpacing = 14
-        for columnIndex in 0..<(section.headers.count) {
-            grid.column(at: columnIndex).xPlacement = columnIndex == 0 ? .leading : .trailing
-        }
-        for cellIndex in 0..<(section.headers.count) {
-            if let label = grid.cell(atColumnIndex: cellIndex, rowIndex: 0).contentView as? NSTextField {
-                label.font = .systemFont(ofSize: 12, weight: .semibold)
-            }
-        }
-        stack.addArrangedSubview(grid)
-        return stack
+        let sectionView = PivotPreviewTableSectionView()
+        sectionView.translatesAutoresizingMaskIntoConstraints = false
+        sectionView.configure(section: section)
+        return sectionView
     }
 
     private func makeChartSectionView(_ section: PivotPreviewSection, reusePrimaryChart: Bool) -> NSView {
         let stack = NSStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.spacing = 6
 
@@ -1454,7 +1567,7 @@ final class PivotBuilderWindowController: NSWindowController {
         let chart = reusePrimaryChart ? chartView : PivotChartView()
         chart.update(model: section.chartModel)
         chart.translatesAutoresizingMaskIntoConstraints = false
-        chart.heightAnchor.constraint(equalToConstant: 240).isActive = true
+        chart.heightAnchor.constraint(equalToConstant: Self.previewChartHeight).isActive = true
         stack.addArrangedSubview(chart)
         return stack
     }
@@ -1463,12 +1576,30 @@ final class PivotBuilderWindowController: NSWindowController {
         let width = max(previewContainer.bounds.width - 2, 320)
         tableResultsStack.frame = NSRect(
             origin: .zero,
-            size: NSSize(width: width, height: max(tableResultsStack.fittingSize.height, 1))
+            size: NSSize(width: width, height: previewTableDocumentHeight())
         )
         chartResultsStack.frame = NSRect(
             origin: .zero,
             size: NSSize(width: width, height: max(chartResultsStack.fittingSize.height, 1))
         )
+    }
+
+    private func previewTableDocumentHeight() -> CGFloat {
+        guard !previewSections.isEmpty else { return 1 }
+        let sectionsHeight = previewSections.reduce(CGFloat(0)) { total, section in
+            total + tableSectionHeight(for: section)
+        }
+        let gaps = CGFloat(max(0, previewSections.count - 1)) * tableResultsStack.spacing
+        return max(1, sectionsHeight + gaps)
+    }
+
+    private func tableSectionHeight(for section: PivotPreviewSection) -> CGFloat {
+        let visibleRows = max(1, min(section.rows.count, Self.previewTableMaximumVisibleRows))
+        let scrollHeight = max(
+            Self.previewTableMinimumScrollHeight,
+            Self.previewTableHeaderHeight + CGFloat(visibleRows) * Self.previewTableRowHeight
+        )
+        return Self.previewTableTitleHeight + Self.previewTableTitleSpacing + scrollHeight
     }
 
     private static func formatNumber(_ value: Double) -> String {
@@ -1690,6 +1821,14 @@ extension PivotBuilderWindowController {
         return abs(first.frame.midX - tableResultsStack.bounds.midX)
     }
 
+    var previewChartFirstSectionWidthForTesting: CGFloat {
+        chartResultsStack.arrangedSubviews.first?.frame.width ?? 0
+    }
+
+    var previewChartFirstSectionHeightForTesting: CGFloat {
+        chartResultsStack.arrangedSubviews.first?.frame.height ?? 0
+    }
+
     func dropZoneHeightForTesting(_ zone: PivotDropZone) -> CGFloat {
         zoneViews[zone]?.frame.height ?? 0
     }
@@ -1798,7 +1937,9 @@ extension PivotBuilderWindowController {
 
     func selectDateGroupingPopupForTesting(column: Int, period: DateBinPeriod) {
         guard let popup = dateDimensionGroupPopups[column] ?? filterDateGroupPopups[column] else { return }
-        popup.selectItem(withTitle: period.rawValue)
+        if let item = popup.itemArray.first(where: { $0.representedObject as? String == period.rawValue }) {
+            popup.select(item)
+        }
         dateGroupingChanged(popup)
     }
 

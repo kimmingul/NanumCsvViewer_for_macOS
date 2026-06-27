@@ -133,10 +133,65 @@ struct PivotChartSeries: Equatable {
     let values: [Double]
 }
 
+enum PivotChartKind: String, CaseIterable, Hashable {
+    case bar
+    case groupedBar
+    case stackedBar
+    case line
+
+    var title: String {
+        switch self {
+        case .bar:
+            return L.t("Bar", "막대")
+        case .groupedBar:
+            return L.t("Grouped", "묶은 막대")
+        case .stackedBar:
+            return L.t("Stacked", "누적 막대")
+        case .line:
+            return L.t("Line", "꺾은선")
+        }
+    }
+}
+
+struct PivotChartPoint: Equatable, Identifiable {
+    let category: String
+    let series: String
+    let value: Double
+
+    var id: String {
+        "\(category)\u{1F}\(series)"
+    }
+}
+
 struct PivotChartModel: Equatable {
     let categories: [String]
     let series: [PivotChartSeries]
     let unsupportedReason: String?
+    let points: [PivotChartPoint]
+    let recommendedKind: PivotChartKind
+    let xAxisTitle: String
+    let seriesTitle: String
+    let valueTitle: String
+
+    init(
+        categories: [String],
+        series: [PivotChartSeries],
+        unsupportedReason: String?,
+        points: [PivotChartPoint]? = nil,
+        recommendedKind: PivotChartKind = .bar,
+        xAxisTitle: String = "",
+        seriesTitle: String = "",
+        valueTitle: String = ""
+    ) {
+        self.categories = categories
+        self.series = series
+        self.unsupportedReason = unsupportedReason
+        self.points = points ?? Self.makePoints(categories: categories, series: series)
+        self.recommendedKind = recommendedKind
+        self.xAxisTitle = xAxisTitle
+        self.seriesTitle = seriesTitle
+        self.valueTitle = valueTitle.isEmpty ? series.first?.name ?? "" : valueTitle
+    }
 
     static func make(from pivot: PivotTableResult) -> PivotChartModel {
         if pivot.rowColumns.isEmpty {
@@ -146,21 +201,15 @@ struct PivotChartModel: Equatable {
             let values = pivot.columnColumns.isEmpty
                 ? [pivot.value(row: [], column: [])]
                 : pivot.columnKeys.map { pivot.value(row: [], column: $0) }
+            let series = [PivotChartSeries(name: pivot.function.rawValue, values: values)]
             return PivotChartModel(
                 categories: categories,
-                series: [PivotChartSeries(name: pivot.function.rawValue, values: values)],
-                unsupportedReason: nil
-            )
-        }
-
-        guard pivot.rowColumns.count == 1 else {
-            return PivotChartModel(
-                categories: [],
-                series: [],
-                unsupportedReason: L.t(
-                    "Charts currently support one row field.",
-                    "차트는 현재 하나의 행 필드만 지원합니다."
-                )
+                series: series,
+                unsupportedReason: nil,
+                recommendedKind: recommendedKind(categories: categories, seriesCount: series.count),
+                xAxisTitle: pivot.columnColumns.isEmpty ? L.t("Metric", "지표") : L.t("Columns", "열"),
+                seriesTitle: L.t("Measure", "측정값"),
+                valueTitle: pivot.function.rawValue
             )
         }
 
@@ -174,16 +223,67 @@ struct PivotChartModel: Equatable {
                 }
             )
         }
-        return PivotChartModel(categories: categories, series: series, unsupportedReason: nil)
+        return PivotChartModel(
+            categories: categories,
+            series: series,
+            unsupportedReason: nil,
+            recommendedKind: recommendedKind(categories: categories, seriesCount: series.count),
+            xAxisTitle: rowAxisTitle(for: pivot),
+            seriesTitle: pivot.columnColumns.isEmpty ? L.t("Measure", "측정값") : L.t("Columns", "열"),
+            valueTitle: pivot.function.rawValue
+        )
     }
 
     private static func label(_ key: [String], fallback: String) -> String {
         let joined = key.joined(separator: " | ")
         return joined.isEmpty ? fallback : joined
     }
+
+    private static func rowAxisTitle(for pivot: PivotTableResult) -> String {
+        if !pivot.rowColumnNames.isEmpty {
+            return pivot.rowColumnNames.joined(separator: " | ")
+        }
+        return pivot.rowColumns.map { "Column \($0 + 1)" }.joined(separator: " | ")
+    }
+
+    private static func makePoints(categories: [String], series: [PivotChartSeries]) -> [PivotChartPoint] {
+        categories.enumerated().flatMap { index, category in
+            series.map { item in
+                PivotChartPoint(
+                    category: category,
+                    series: item.name,
+                    value: item.values[safe: index] ?? 0
+                )
+            }
+        }
+    }
+
+    private static func recommendedKind(categories: [String], seriesCount: Int) -> PivotChartKind {
+        if looksTemporal(categories) {
+            return .line
+        }
+        return seriesCount > 1 ? .groupedBar : .bar
+    }
+
+    private static func looksTemporal(_ categories: [String]) -> Bool {
+        let nonNullCategories = categories.filter { !$0.isEmpty && $0 != "null" }
+        guard nonNullCategories.count >= 2 else { return false }
+        return nonNullCategories.allSatisfy { category in
+            category.range(
+                of: #"^\d{4}(-\d{2}){0,2}$|^\d{4}-W\d{2}$"#,
+                options: .regularExpression
+            ) != nil
+        }
+    }
 }
 
 extension NSPasteboard.PasteboardType {
     static let pivotFieldIndex = NSPasteboard.PasteboardType("com.nanum.csvviewer.pivot-field-index")
     static let pivotFieldPayload = NSPasteboard.PasteboardType("com.nanum.csvviewer.pivot-field-payload")
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
 }

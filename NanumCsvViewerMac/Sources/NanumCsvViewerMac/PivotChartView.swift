@@ -1,13 +1,25 @@
 import AppKit
+import Charts
+import SwiftUI
 
 @MainActor
 final class PivotChartView: NSView {
     private var model: PivotChartModel?
+    private let hostingView: NSHostingView<PivotChartContentView>
 
     override init(frame frameRect: NSRect) {
+        hostingView = NSHostingView(rootView: PivotChartContentView(model: nil))
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
     }
 
     @available(*, unavailable)
@@ -19,76 +31,171 @@ final class PivotChartView: NSView {
         model
     }
 
+    var usesSwiftChartsSurfaceForTesting: Bool {
+        subviews.contains(hostingView)
+    }
+
     func update(model: PivotChartModel?) {
         self.model = model
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard let model else {
-            drawCentered(L.t(
-                "Drag a field into Values to preview a chart.",
-                "값에 필드를 끌어 놓으면 차트를 미리 볼 수 있습니다."
-            ))
-            return
-        }
-        if let reason = model.unsupportedReason {
-            drawCentered(reason)
-            return
-        }
-        guard !model.categories.isEmpty, !model.series.isEmpty else {
-            drawCentered(L.t("No pivot data to chart.", "차트로 표시할 피벗 데이터가 없습니다."))
-            return
-        }
-        drawBars(model)
-    }
-
-    private func drawCentered(_ text: String) {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13),
-            .foregroundColor: NSColor.secondaryLabelColor
-        ]
-        let size = text.size(withAttributes: attributes)
-        text.draw(
-            at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
-            withAttributes: attributes
-        )
-    }
-
-    private func drawBars(_ model: PivotChartModel) {
-        let plot = bounds.insetBy(dx: 42, dy: 34)
-        guard plot.width > 20, plot.height > 20 else { return }
-
-        NSColor.separatorColor.setStroke()
-        NSBezierPath(rect: plot).stroke()
-
-        let maxValue = max(1, model.series.flatMap(\.values).max() ?? 1)
-        let categoryWidth = plot.width / CGFloat(max(1, model.categories.count))
-        let seriesCount = max(1, model.series.count)
-        let palette: [NSColor] = [.systemBlue, .systemGreen, .systemOrange, .systemPurple, .systemRed]
-
-        for categoryIndex in model.categories.indices {
-            let groupX = plot.minX + CGFloat(categoryIndex) * categoryWidth
-            let barWidth = max(2, (categoryWidth - 10) / CGFloat(seriesCount))
-            for seriesIndex in model.series.indices {
-                let value = model.series[seriesIndex].values[safe: categoryIndex] ?? 0
-                let height = plot.height * CGFloat(value / maxValue)
-                let rect = NSRect(
-                    x: groupX + 5 + CGFloat(seriesIndex) * barWidth,
-                    y: plot.minY,
-                    width: max(1, barWidth - 2),
-                    height: height
-                )
-                palette[seriesIndex % palette.count].setFill()
-                rect.fill()
-            }
-        }
+        hostingView.rootView = PivotChartContentView(model: model)
     }
 }
 
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
+private struct PivotChartContentView: View {
+    let model: PivotChartModel?
+    @State private var selectedKind: PivotChartKind?
+    @State private var selectedCategory: String?
+
+    var body: some View {
+        Group {
+            if let model {
+                if let reason = model.unsupportedReason {
+                    emptyState(reason)
+                } else if model.points.isEmpty {
+                    emptyState(L.t("No pivot data to chart.", "차트로 표시할 피벗 데이터가 없습니다."))
+                } else {
+                    chartContent(model)
+                }
+            } else {
+                emptyState(L.t(
+                    "Drag a field into Values to preview a chart.",
+                    "값에 필드를 끌어 놓으면 차트를 미리 볼 수 있습니다."
+                ))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func chartContent(_ model: PivotChartModel) -> some View {
+        let kind = selectedKind ?? model.recommendedKind
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Picker("", selection: chartKindBinding(defaultKind: model.recommendedKind)) {
+                    ForEach(PivotChartKind.allCases, id: \.self) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 320)
+
+                Spacer(minLength: 12)
+            }
+
+            ZStack(alignment: .topTrailing) {
+                chart(model, kind: kind)
+                if let selectedCategory {
+                    let selectedPoints = model.points.filter { $0.category == selectedCategory }
+                    if !selectedPoints.isEmpty {
+                        PivotChartTooltip(category: selectedCategory, points: selectedPoints)
+                            .padding(8)
+                    }
+                }
+            }
+        }
+        .padding(10)
+    }
+
+    private func chart(_ model: PivotChartModel, kind: PivotChartKind) -> some View {
+        Chart(model.points) { point in
+            switch kind {
+            case .bar:
+                BarMark(
+                    x: .value(model.xAxisTitle, point.category),
+                    y: .value(model.valueTitle, point.value)
+                )
+                .foregroundStyle(by: .value(model.seriesTitle, point.series))
+            case .groupedBar:
+                BarMark(
+                    x: .value(model.xAxisTitle, point.category),
+                    y: .value(model.valueTitle, point.value)
+                )
+                .foregroundStyle(by: .value(model.seriesTitle, point.series))
+                .position(by: .value(model.seriesTitle, point.series))
+            case .stackedBar:
+                BarMark(
+                    x: .value(model.xAxisTitle, point.category),
+                    y: .value(model.valueTitle, point.value)
+                )
+                .foregroundStyle(by: .value(model.seriesTitle, point.series))
+            case .line:
+                LineMark(
+                    x: .value(model.xAxisTitle, point.category),
+                    y: .value(model.valueTitle, point.value)
+                )
+                .foregroundStyle(by: .value(model.seriesTitle, point.series))
+                .interpolationMethod(.catmullRom)
+                PointMark(
+                    x: .value(model.xAxisTitle, point.category),
+                    y: .value(model.valueTitle, point.value)
+                )
+                .foregroundStyle(by: .value(model.seriesTitle, point.series))
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 6)) {
+                AxisGridLine()
+                AxisTick()
+                AxisValueLabel()
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .chartLegend(model.series.count > 1 ? .visible : .hidden)
+        .chartXSelection(value: $selectedCategory)
+        .frame(minHeight: 190)
+    }
+
+    private func chartKindBinding(defaultKind: PivotChartKind) -> Binding<PivotChartKind> {
+        Binding(
+            get: { selectedKind ?? defaultKind },
+            set: { selectedKind = $0 }
+        )
+    }
+
+    private func emptyState(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding()
+    }
+}
+
+private struct PivotChartTooltip: View {
+    let category: String
+    let points: [PivotChartPoint]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(category)
+                .font(.caption.weight(.semibold))
+            ForEach(points) { point in
+                HStack(spacing: 6) {
+                    Text(point.series)
+                    Spacer(minLength: 8)
+                    Text(format(point.value))
+                        .monospacedDigit()
+                }
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.primary)
+        .padding(8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+        .frame(minWidth: 140)
+    }
+
+    private func format(_ value: Double) -> String {
+        if value.rounded(.towardZero) == value {
+            return String(format: "%.0f", value)
+        }
+        return String(format: "%.3f", value)
     }
 }

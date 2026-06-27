@@ -2,6 +2,49 @@ import AppKit
 import UniformTypeIdentifiers
 @preconcurrency import CsvCore
 
+private extension NSUserInterfaceItemIdentifier {
+    static let analysisPromptRow = NSUserInterfaceItemIdentifier("analysisPromptRow")
+    static let analysisPromptRunButton = NSUserInterfaceItemIdentifier("analysisPromptRunButton")
+    static let analysisPromptCancelButton = NSUserInterfaceItemIdentifier("analysisPromptCancelButton")
+}
+
+@MainActor
+private final class AnalysisPromptPanel: NSPanel {
+    var runHandler: (() -> Void)?
+
+    @objc func run(_ sender: Any?) {
+        runHandler?()
+    }
+
+    @objc func cancel(_ sender: Any?) {
+        sheetParent?.endSheet(self, returnCode: .cancel)
+        orderOut(nil)
+    }
+}
+
+private struct AnalysisPromptSheet {
+    let panel: AnalysisPromptPanel
+    let buildRequest: () -> AnalysisRequest?
+}
+
+#if DEBUG
+struct AnalysisPromptLayoutMetrics {
+    let windowSize: NSSize
+    let rowCount: Int
+    let minimumPopupWidth: CGFloat
+    let runButtonSize: NSSize
+    let cancelButtonSize: NSSize
+}
+#endif
+
+#if DEBUG
+private extension NSView {
+    var allDescendantsForTesting: [NSView] {
+        subviews + subviews.flatMap(\.allDescendantsForTesting)
+    }
+}
+#endif
+
 @MainActor
 final class MainWindowController: NSWindowController {
     private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
@@ -10,6 +53,11 @@ final class MainWindowController: NSWindowController {
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
     private static let tableCellPreviewLimit = 512
     private static let earlyColumnStatisticsRowThreshold = 200
+    private static let analysisPromptPanelWidth: CGFloat = 600
+    private static let analysisPromptContentWidth: CGFloat = 540
+    private static let analysisPromptLabelWidth: CGFloat = 150
+    private static let analysisPromptPopupWidth: CGFloat = 340
+    private static let analysisPromptButtonWidth: CGFloat = 96
 
     private let tableView = CsvTableView()
     private let scrollView = NSScrollView()
@@ -1827,25 +1875,32 @@ extension MainWindowController {
     }
 
     private func promptAnalysisRequest(kind: AnalysisKind, defaultRequest: AnalysisRequest) {
-        let alert = NSAlert()
-        alert.messageText = kind.title
-        alert.informativeText = L.t("Choose analysis parameters, then run.", "분석 조건을 선택한 뒤 실행하세요.")
-        alert.addButton(withTitle: L.t("Run", "실행"))
-        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        let sheet = makeAnalysisPromptSheet(kind: kind, defaultRequest: defaultRequest)
+        sheet.panel.runHandler = { [weak self, weak panel = sheet.panel] in
+            guard let self,
+                  let panel,
+                  let request = sheet.buildRequest() else { return }
+            panel.sheetParent?.endSheet(panel, returnCode: .OK)
+            panel.orderOut(nil)
+            self.performAnalysis(request)
+        }
+        window?.beginSheet(sheet.panel)
+    }
 
+    private func makeAnalysisPromptSheet(kind: AnalysisKind, defaultRequest: AnalysisRequest) -> AnalysisPromptSheet {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Self.analysisPromptContentWidth).isActive = true
 
         var buildRequest: (() -> AnalysisRequest?)?
         switch defaultRequest {
         case .numericDistribution(let column, let binCount):
             let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
             let binsField = NSTextField(string: "\(binCount)")
-            binsField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            binsField.widthAnchor.constraint(equalToConstant: 120).isActive = true
             addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
             addAnalysisPromptRow(to: stack, label: L.t("Bins", "구간"), control: binsField)
             buildRequest = {
@@ -1855,6 +1910,7 @@ extension MainWindowController {
             let datePopup = makeColumnPopup(preferredTypes: [.date], selected: dateColumn)
             let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn ?? -1, includeNone: true)
             let periodPopup = NSPopUpButton()
+            periodPopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
             for item in DateBinPeriod.allCases {
                 periodPopup.addItem(withTitle: item.rawValue)
                 periodPopup.lastItem?.representedObject = item.rawValue
@@ -1882,6 +1938,7 @@ extension MainWindowController {
             let groupPopup = makeColumnPopup(selected: groupColumns.first ?? clampedCurrentDataColumn())
             let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
             let functionPopup = NSPopUpButton()
+            functionPopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
             [L.t("All summary metrics", "모든 요약 지표"), "Count", "Sum", "Mean"].forEach { functionPopup.addItem(withTitle: $0) }
             addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
             addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
@@ -1907,6 +1964,8 @@ extension MainWindowController {
             let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
             let groupAField = NSTextField(string: groupA)
             let groupBField = NSTextField(string: groupB)
+            groupAField.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
+            groupBField.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
             addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
             addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
             addAnalysisPromptRow(to: stack, label: "A", control: groupAField)
@@ -1924,21 +1983,108 @@ extension MainWindowController {
             buildRequest = { .documentSummary }
         }
 
-        alert.accessoryView = stack
-        alert.beginSheetModal(for: window!) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let request = buildRequest?() else { return }
-            self?.performAnalysis(request)
-        }
+        return makeAnalysisPromptSheet(
+            title: kind.title,
+            informativeText: L.t("Choose analysis parameters, then run.", "분석 조건을 선택한 뒤 실행하세요."),
+            form: stack,
+            buildRequest: buildRequest ?? { nil }
+        )
+    }
+
+    private func makeAnalysisPromptSheet(
+        title: String,
+        informativeText: String,
+        form: NSStackView,
+        buildRequest: @escaping () -> AnalysisRequest?
+    ) -> AnalysisPromptSheet {
+        let rowCount = form.arrangedSubviews.count
+        let contentHeight = max(CGFloat(280), CGFloat(176 + rowCount * 42))
+        let panel = AnalysisPromptPanel(
+            contentRect: NSRect(x: 0, y: 0, width: Self.analysisPromptPanelWidth, height: contentHeight),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = title
+        panel.isReleasedWhenClosed = false
+
+        let contentView = NSView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        panel.contentView = contentView
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let descriptionLabel = NSTextField(labelWithString: informativeText)
+        descriptionLabel.font = .systemFont(ofSize: 12)
+        descriptionLabel.textColor = .secondaryLabelColor
+        descriptionLabel.lineBreakMode = .byWordWrapping
+        descriptionLabel.maximumNumberOfLines = 2
+        descriptionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let buttonRow = NSStackView()
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.spacing = 8
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let cancelButton = NSButton(title: L.t("Cancel", "취소"), target: panel, action: #selector(AnalysisPromptPanel.cancel(_:)))
+        cancelButton.identifier = .analysisPromptCancelButton
+        cancelButton.bezelStyle = .rounded
+        cancelButton.widthAnchor.constraint(equalToConstant: Self.analysisPromptButtonWidth).isActive = true
+
+        let runButton = NSButton(title: L.t("Run", "실행"), target: panel, action: #selector(AnalysisPromptPanel.run(_:)))
+        runButton.identifier = .analysisPromptRunButton
+        runButton.bezelStyle = .rounded
+        runButton.keyEquivalent = "\r"
+        runButton.widthAnchor.constraint(equalToConstant: Self.analysisPromptButtonWidth).isActive = true
+
+        buttonRow.addArrangedSubview(spacer)
+        buttonRow.addArrangedSubview(cancelButton)
+        buttonRow.addArrangedSubview(runButton)
+
+        contentView.addSubview(titleLabel)
+        contentView.addSubview(descriptionLabel)
+        contentView.addSubview(form)
+        contentView.addSubview(buttonRow)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 28),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -28),
+            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            descriptionLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            descriptionLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            descriptionLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            form.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            form.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
+            form.topAnchor.constraint(equalTo: descriptionLabel.bottomAnchor, constant: 18),
+            buttonRow.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            buttonRow.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            buttonRow.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22),
+            form.bottomAnchor.constraint(lessThanOrEqualTo: buttonRow.topAnchor, constant: -18)
+        ])
+
+        return AnalysisPromptSheet(panel: panel, buildRequest: buildRequest)
     }
 
     private func addAnalysisPromptRow(to stack: NSStackView, label: String, control: NSView) {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 8
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.identifier = .analysisPromptRow
+        row.widthAnchor.constraint(equalToConstant: Self.analysisPromptContentWidth).isActive = true
         let text = NSTextField(labelWithString: label)
-        text.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        text.lineBreakMode = .byTruncatingTail
+        text.widthAnchor.constraint(equalToConstant: Self.analysisPromptLabelWidth).isActive = true
         control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        control.setContentCompressionResistancePriority(.required, for: .horizontal)
         row.addArrangedSubview(text)
         row.addArrangedSubview(control)
         stack.addArrangedSubview(row)
@@ -1946,7 +2092,7 @@ extension MainWindowController {
 
     private func makeColumnPopup(preferredTypes: Set<ColumnValueType> = [], selected: Int, includeNone: Bool = false) -> NSPopUpButton {
         let popup = NSPopUpButton()
-        popup.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        popup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
         if includeNone {
             popup.addItem(withTitle: L.t("None", "없음"))
             popup.lastItem?.representedObject = -1
@@ -3256,6 +3402,24 @@ extension MainWindowController {
 
     func performAnalysisForTesting(_ request: AnalysisRequest) {
         performAnalysis(request)
+    }
+
+    func analysisPromptLayoutMetricsForTesting(_ kind: AnalysisKind) -> AnalysisPromptLayoutMetrics? {
+        guard let request = defaultAnalysisRequest(for: kind) else { return nil }
+        let sheet = makeAnalysisPromptSheet(kind: kind, defaultRequest: request)
+        sheet.panel.contentView?.layoutSubtreeIfNeeded()
+        let views = sheet.panel.contentView?.allDescendantsForTesting ?? []
+        let rows = views.filter { $0.identifier == .analysisPromptRow }
+        let popups = views.compactMap { $0 as? NSPopUpButton }
+        let runButton = views.first { $0.identifier == .analysisPromptRunButton }
+        let cancelButton = views.first { $0.identifier == .analysisPromptCancelButton }
+        return AnalysisPromptLayoutMetrics(
+            windowSize: sheet.panel.frame.size,
+            rowCount: rows.count,
+            minimumPopupWidth: popups.map(\.frame.width).min() ?? 0,
+            runButtonSize: runButton?.frame.size ?? .zero,
+            cancelButtonSize: cancelButton?.frame.size ?? .zero
+        )
     }
 
     var analysisReportTextForTesting: String {
