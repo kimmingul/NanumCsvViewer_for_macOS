@@ -16,32 +16,41 @@ final class SortHeaderCell: NSTableHeaderCell {
     }
 
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-        var titleFrame = cellFrame.insetBy(dx: 6, dy: 0)
+        let titleFont = font ?? NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let titleAttributes = Self.titleAttributes(font: titleFont)
+        let titleSize = stringValue.size(withAttributes: titleAttributes)
         let typeWidth = typeText.map { Self.badgeSize(text: $0, font: Self.typeFont).width } ?? 0
         let sortWidth = ascending.map { _ in Self.badgeSize(text: sortMarkerText, font: Self.sortFont).width } ?? 0
-        let badgeSpacing: CGFloat = typeWidth > 0 && sortWidth > 0 ? 4 : 0
-        let reservedWidth = typeWidth + sortWidth + badgeSpacing
-        if reservedWidth > 0 {
-            titleFrame.size.width = max(0, titleFrame.width - reservedWidth - 8)
-        }
-        super.drawInterior(withFrame: titleFrame, in: controlView)
+        let contentFrame = cellFrame.insetBy(dx: 6, dy: 0)
+        let sortReservedWidth = sortWidth > 0 ? sortWidth + 6 : 0
+        let maxContentX = cellFrame.maxX - 6 - sortReservedWidth
+        let typeSpacing: CGFloat = typeWidth > 0 ? 6 : 0
+        let availableTitleWidth = max(0, maxContentX - contentFrame.minX - typeWidth - typeSpacing)
+        let drawnTitleWidth = min(titleSize.width, availableTitleWidth)
 
-        var trailingX = cellFrame.maxX - 6
-        if let typeText {
-            let frame = Self.badgeFrame(text: typeText, font: Self.typeFont, trailingX: trailingX, cellFrame: cellFrame)
+        let titleFrame = NSRect(
+            x: contentFrame.minX,
+            y: cellFrame.midY - titleSize.height / 2,
+            width: availableTitleWidth,
+            height: titleSize.height
+        )
+        stringValue.draw(in: titleFrame, withAttributes: titleAttributes)
+
+        if let typeText, typeWidth > 0 {
+            let typeX = min(contentFrame.minX + drawnTitleWidth + typeSpacing, maxContentX - typeWidth)
+            let frame = Self.badgeFrame(text: typeText, font: Self.typeFont, leadingX: typeX, cellFrame: cellFrame)
             drawBadge(
                 text: typeText,
                 frame: frame,
                 font: Self.typeFont,
-                foreground: .secondaryLabelColor,
-                background: NSColor.controlBackgroundColor.withAlphaComponent(0.9)
+                foreground: .controlAccentColor,
+                background: NSColor.controlAccentColor.withAlphaComponent(0.16)
             )
-            trailingX = frame.minX - 4
         }
 
         guard ascending != nil else { return }
         let marker = sortMarkerText
-        let frame = Self.badgeFrame(text: marker, font: Self.sortFont, trailingX: trailingX, cellFrame: cellFrame)
+        let frame = Self.badgeFrame(text: marker, font: Self.sortFont, trailingX: cellFrame.maxX - 6, cellFrame: cellFrame)
         drawBadge(
             text: marker,
             frame: frame,
@@ -64,12 +73,32 @@ final class SortHeaderCell: NSTableHeaderCell {
         NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
     }
 
+    private static func titleAttributes(font: NSFont) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        return [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph
+        ]
+    }
+
     private static func badgeSize(text: String, font: NSFont) -> NSSize {
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font
         ]
         let size = text.size(withAttributes: attributes)
         return NSSize(width: size.width + 8, height: size.height + 3)
+    }
+
+    private static func badgeFrame(text: String, font: NSFont, leadingX: CGFloat, cellFrame: NSRect) -> NSRect {
+        let padded = badgeSize(text: text, font: font)
+        return NSRect(
+            x: leadingX,
+            y: cellFrame.midY - padded.height / 2,
+            width: padded.width,
+            height: padded.height
+        )
     }
 
     private static func badgeFrame(text: String, font: NSFont, trailingX: CGFloat, cellFrame: NSRect) -> NSRect {

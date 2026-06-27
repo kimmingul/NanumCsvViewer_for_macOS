@@ -12,6 +12,7 @@
 - Added Pivot Builder field search plus drag-to-move assigned fields between Rows, Columns, Values, and Filters, including dimension field reordering.
 - Expanded CSV date inference for dotted, Korean, month-only, and compact `yyyyMMdd` date formats so Pivot Builder field tags and date analytics recognize more real-world date columns.
 - Added inferred type tags to grid headers, with header tooltips that include type and sort state.
+- Moved grid header type tags next to the column title so inferred types are visible during normal table scanning.
 - Numeric distribution and date histogram actions now use inferred column types to choose numeric/date defaults when the selected column is not suitable.
 
 ## v1.6.1 - 2026-06-26
