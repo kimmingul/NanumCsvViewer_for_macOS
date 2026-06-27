@@ -82,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let clipboard = NSMenuItem(title: L.t("Open from Clipboard", "클립보드에서 열기"), action: #selector(MainWindowController.openFromClipboard(_:)), keyEquivalent: "v")
         clipboard.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(clipboard)
+        let close = NSMenuItem(title: L.t("Close", "닫기"), action: #selector(MainWindowController.closeCurrentDocument(_:)), keyEquivalent: "w")
+        fileMenu.addItem(close)
         fileMenu.addItem(.separator())
         let export = NSMenuItem(title: L.t("Export Current View...", "현재 보기 내보내기..."), action: #selector(MainWindowController.exportCurrentView(_:)), keyEquivalent: "e")
         fileMenu.addItem(export)
@@ -175,8 +177,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         analysisMenu.addItem(duplicates)
         let groupBy = NSMenuItem(title: L.t("Group By", "그룹화"), action: #selector(MainWindowController.showGroupBy(_:)), keyEquivalent: "")
         analysisMenu.addItem(groupBy)
-        let pivot = NSMenuItem(title: L.t("Pivot Table", "피벗 테이블"), action: #selector(MainWindowController.showPivotTable(_:)), keyEquivalent: "")
-        analysisMenu.addItem(pivot)
         analysisMenu.addItem(.separator())
         let correlation = NSMenuItem(title: L.t("Correlation", "상관분석"), action: #selector(MainWindowController.showCorrelation(_:)), keyEquivalent: "")
         analysisMenu.addItem(correlation)
@@ -186,6 +186,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         analysisMenu.addItem(chiSquare)
         let quickStats = NSMenuItem(title: L.t("Quick Stats", "빠른 통계"), action: #selector(MainWindowController.showQuickStats(_:)), keyEquivalent: "")
         analysisMenu.addItem(quickStats)
+        analysisMenu.addItem(.separator())
+        let copyAnalysis = NSMenuItem(title: L.t("Copy Analysis Result", "분석 결과 복사"), action: #selector(MainWindowController.copyAnalysisResult(_:)), keyEquivalent: "C")
+        copyAnalysis.keyEquivalentModifierMask = [.command, .option]
+        analysisMenu.addItem(copyAnalysis)
+        let exportAnalysis = NSMenuItem(title: L.t("Export Analysis Result...", "분석 결과 내보내기..."), action: #selector(MainWindowController.exportAnalysisResult(_:)), keyEquivalent: "")
+        analysisMenu.addItem(exportAnalysis)
+        let cancelAnalysis = NSMenuItem(title: L.t("Cancel Analysis", "분석 취소"), action: #selector(MainWindowController.cancelAnalysis(_:)), keyEquivalent: ".")
+        cancelAnalysis.keyEquivalentModifierMask = [.command]
+        analysisMenu.addItem(cancelAnalysis)
+
+        let pivotItem = NSMenuItem(title: L.t("Pivot", "피벗"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(pivotItem)
+        let pivotMenu = NSMenu(title: pivotItem.title)
+        pivotItem.submenu = pivotMenu
+        let pivotTable = NSMenuItem(title: L.t("Pivot Table", "피벗 테이블"), action: #selector(MainWindowController.showPivotTable(_:)), keyEquivalent: "")
+        pivotMenu.addItem(pivotTable)
+        let pivotChart = NSMenuItem(title: L.t("Pivot Chart", "피벗 차트"), action: #selector(MainWindowController.showPivotChart(_:)), keyEquivalent: "")
+        pivotMenu.addItem(pivotChart)
 
         let helpItem = NSMenuItem(title: L.t("Help", "도움말"), action: nil, keyEquivalent: "")
         mainMenu.addItem(helpItem)
@@ -193,5 +211,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpItem.submenu = helpMenu
         let usage = NSMenuItem(title: L.t("How to Use", "사용법"), action: #selector(MainWindowController.showUsage(_:)), keyEquivalent: "?")
         helpMenu.addItem(usage)
+
+        decorateMenuIcons(mainMenu)
+    }
+
+    private func decorateMenuIcons(_ menu: NSMenu) {
+        for item in menu.items {
+            if !item.isSeparatorItem, !item.title.isEmpty, item.image == nil {
+                item.image = menuIcon(symbol: menuIconSymbol(for: item), title: item.title)
+            }
+            if let submenu = item.submenu {
+                decorateMenuIcons(submenu)
+            }
+        }
+    }
+
+    private func menuIcon(symbol: String, title: String) -> NSImage? {
+        NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            ?? NSImage(systemSymbolName: "circle", accessibilityDescription: title)
+    }
+
+    private func menuIconSymbol(for item: NSMenuItem) -> String {
+        switch item.action {
+        case #selector(NSApplication.orderFrontStandardAboutPanel(_:)):
+            return "info.circle"
+        case #selector(NSApplication.terminate(_:)):
+            return "power"
+        case #selector(MainWindowController.openDocument(_:)):
+            return "folder"
+        case #selector(MainWindowController.openFromClipboard(_:)):
+            return "clipboard"
+        case #selector(MainWindowController.closeCurrentDocument(_:)):
+            return "xmark.circle"
+        case #selector(MainWindowController.exportCurrentView(_:)):
+            return "square.and.arrow.up"
+        case #selector(MainWindowController.exportCurrentViewAsMarkdown(_:)):
+            return "doc.plaintext"
+        case #selector(MainWindowController.exportCurrentViewAsJson(_:)):
+            return "curlybraces"
+        case #selector(MainWindowController.exportCurrentViewAsHtml(_:)):
+            return "chevron.left.forwardslash.chevron.right"
+        case #selector(MainWindowController.focusFindField(_:)):
+            return "magnifyingglass"
+        case #selector(MainWindowController.findNext(_:)):
+            return "arrow.down.circle"
+        case #selector(MainWindowController.goToRow(_:)):
+            return "number"
+        case #selector(MainWindowController.copySelectedCellToPasteboard(_:)),
+             #selector(MainWindowController.copySelectedCellAsCsv(_:)),
+             #selector(MainWindowController.copySelectedCellAsJson(_:)):
+            return "doc.on.doc"
+        case #selector(MainWindowController.applyTextFilter(_:)):
+            return "checkmark.circle"
+        case #selector(MainWindowController.filterBySelectedCell(_:)):
+            return "line.3.horizontal.decrease.circle"
+        case #selector(MainWindowController.clearFilter(_:)):
+            return "xmark.circle"
+        case #selector(MainWindowController.sortAscending(_:)):
+            return "arrow.up"
+        case #selector(MainWindowController.sortDescending(_:)):
+            return "arrow.down"
+        case #selector(MainWindowController.clearSort(_:)):
+            return "arrow.up.arrow.down.circle"
+        case #selector(MainWindowController.toggleFilterBar(_:)):
+            return "line.3.horizontal.decrease"
+        case #selector(MainWindowController.toggleDetailPanel(_:)):
+            return "sidebar.right"
+        case #selector(MainWindowController.showColumnStatistics(_:)):
+            return "chart.bar.doc.horizontal"
+        case #selector(MainWindowController.showPerformanceDashboard(_:)):
+            return "speedometer"
+        case #selector(MainWindowController.showAllColumns(_:)):
+            return "tablecells"
+        case #selector(MainWindowController.saveCurrentView(_:)):
+            return "bookmark"
+        case #selector(MainWindowController.restoreSavedView(_:)):
+            return "bookmark.fill"
+        case #selector(MainWindowController.togglePersistentIndex(_:)):
+            return "internaldrive"
+        case #selector(MainWindowController.changeEncodingFromMenu(_:)):
+            return "textformat"
+        case #selector(MainWindowController.showNumericDistribution(_:)):
+            return "chart.bar"
+        case #selector(MainWindowController.showDateHistogram(_:)):
+            return "calendar"
+        case #selector(MainWindowController.showDuplicateRows(_:)):
+            return "square.on.square"
+        case #selector(MainWindowController.showGroupBy(_:)):
+            return "rectangle.3.group"
+        case #selector(MainWindowController.showCorrelation(_:)):
+            return "point.3.connected.trianglepath.dotted"
+        case #selector(MainWindowController.showTTest(_:)):
+            return "function"
+        case #selector(MainWindowController.showChiSquare(_:)):
+            return "x.squareroot"
+        case #selector(MainWindowController.showQuickStats(_:)):
+            return "sum"
+        case #selector(MainWindowController.copyAnalysisResult(_:)):
+            return "doc.on.doc"
+        case #selector(MainWindowController.exportAnalysisResult(_:)):
+            return "square.and.arrow.up"
+        case #selector(MainWindowController.cancelAnalysis(_:)):
+            return "xmark.circle"
+        case #selector(MainWindowController.showPivotTable(_:)):
+            return "tablecells"
+        case #selector(MainWindowController.showPivotChart(_:)):
+            return "chart.bar.xaxis"
+        case #selector(MainWindowController.showUsage(_:)):
+            return "book"
+        default:
+            return submenuIconSymbol(for: item)
+        }
+    }
+
+    private func submenuIconSymbol(for item: NSMenuItem) -> String {
+        switch item.title {
+        case L.t("File", "파일"):
+            return "doc"
+        case L.t("Edit", "편집"):
+            return "pencil"
+        case L.t("View", "보기"):
+            return "eye"
+        case L.t("Encoding", "인코딩"):
+            return "textformat"
+        case L.t("Analysis", "분석"):
+            return "chart.xyaxis.line"
+        case L.t("Pivot", "피벗"):
+            return "tablecells"
+        case L.t("Help", "도움말"):
+            return "questionmark.circle"
+        default:
+            return "circle"
+        }
     }
 }

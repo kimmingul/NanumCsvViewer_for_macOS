@@ -199,6 +199,29 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertEqual(controller.headerTooltipForTesting(column: 0), "visit_date\n\(L.t("Type: Date", "타입: Date"))")
     }
 
+    func testGridHeaderViewStaysVisibleAfterOpeningFile() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        id,name,value
+        1,Alice,10
+        2,Bob,20
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+        controller.layoutWindowForTesting()
+
+        XCTAssertGreaterThan(controller.tableHeaderHeightForTesting, 0)
+        XCTAssertEqual(controller.headerDisplayTitleForTesting(column: 0), "id")
+    }
+
     func testGridHeaderTypesClearWhenOpeningAnotherFile() throws {
         _ = NSApplication.shared
         let firstPath = try temporaryCsvPath()
@@ -225,6 +248,66 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertNil(controller.headerTooltipForTesting(column: 0))
     }
 
+    func testCloseCurrentDocumentClearsGridAndDisablesDocumentActions() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        id,name
+        1,Alice
+        2,Bob
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+        XCTAssertEqual(controller.renderedRowCountForTesting, 2)
+
+        let selector = NSSelectorFromString("closeCurrentDocument:")
+        guard controller.responds(to: selector) else {
+            XCTFail("MainWindowController should expose closeCurrentDocument:")
+            return
+        }
+        controller.perform(selector, with: nil)
+
+        XCTAssertFalse(controller.indexingCompleteForTesting)
+        XCTAssertEqual(controller.renderedRowCountForTesting, 0)
+        XCTAssertNil(controller.headerDisplayTitleForTesting(column: 0))
+        XCTAssertNil(controller.makePivotBuilderForTesting())
+
+        let exportItem = NSMenuItem(title: "", action: #selector(MainWindowController.exportCurrentView(_:)), keyEquivalent: "")
+        let pivotItem = NSMenuItem(title: "", action: #selector(MainWindowController.showPivotTable(_:)), keyEquivalent: "")
+        XCTAssertFalse(controller.validateMenuItem(exportItem))
+        XCTAssertFalse(controller.validateMenuItem(pivotItem))
+    }
+
+    func testToolbarContainsCloseAndPivotCommands() throws {
+        _ = NSApplication.shared
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        let toolbar = try XCTUnwrap(controller.window?.toolbar)
+        let identifiers = controller.toolbarDefaultItemIdentifiers(toolbar)
+        let closeIdentifier = NSToolbarItem.Identifier("closeDocument")
+        let pivotIdentifier = NSToolbarItem.Identifier("pivot")
+
+        XCTAssertTrue(identifiers.contains(closeIdentifier))
+        XCTAssertTrue(identifiers.contains(pivotIdentifier))
+
+        let closeItem = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: closeIdentifier, willBeInsertedIntoToolbar: true))
+        XCTAssertEqual(closeItem.action, NSSelectorFromString("closeCurrentDocument:"))
+        XCTAssertNotNil(closeItem.image)
+
+        let pivotItem = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: pivotIdentifier, willBeInsertedIntoToolbar: true))
+        XCTAssertEqual(pivotItem.action, #selector(MainWindowController.showPivotTable(_:)))
+        XCTAssertNotNil(pivotItem.image)
+    }
+
     func testDateHistogramUsesInferredDateColumnWhenSelectionIsNotDate() throws {
         _ = NSApplication.shared
         let path = try temporaryCsvPath()
@@ -245,11 +328,111 @@ final class MainWindowControllerGridTests: XCTestCase {
 
         controller.selectCellForTesting(row: 0, column: 0)
         controller.showDateHistogram(nil)
+        try waitUntilAnalysisReady(controller)
 
         XCTAssertEqual(controller.detailHeaderTextForTesting, L.t("Date Histogram", "날짜 히스토그램"))
         XCTAssertTrue(controller.detailTextForTesting.contains("visit_date"))
         XCTAssertTrue(controller.detailTextForTesting.contains("2026-01"))
         XCTAssertTrue(controller.detailTextForTesting.contains("2026-02"))
+    }
+
+    func testAnalysisReportIncludesProvenanceAndCanBeCopied() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        site,amount
+        A,10
+        B,20
+        C,30
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+
+        controller.performAnalysisForTesting(.numericDistribution(column: 1, binCount: 2))
+        try waitUntilAnalysisReady(controller)
+
+        XCTAssertEqual(controller.detailHeaderTextForTesting, L.t("Numeric Distribution", "숫자 분포"))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Rows: 3 / 3", "행: 3 / 3")))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Columns: amount", "컬럼: amount")))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Column: amount", "컬럼: amount")))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Histogram", "히스토그램")))
+
+        NSPasteboard.general.clearContents()
+        controller.copyAnalysisResult(nil)
+        let copied = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+        XCTAssertTrue(copied.contains(L.t("Numeric Distribution", "숫자 분포")))
+        XCTAssertTrue(copied.contains("amount"))
+    }
+
+    func testQuickStatsAnalysisShowsDocumentSummaryInsteadOfSelectedColumnStats() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        site,visit_date,amount
+        A,2026.01.02,10
+        B,2026.02.03,12
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilColumnTypesReady(controller, column: 1)
+
+        controller.performAnalysisForTesting(.documentSummary)
+        try waitUntilAnalysisReady(controller)
+
+        XCTAssertEqual(controller.detailHeaderTextForTesting, L.t("Quick Stats", "빠른 통계"))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Rows: 2 / 2", "행: 2 / 2")))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Columns: All columns (3)", "컬럼: 전체 컬럼 (3)")))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Columns: 3", "컬럼: 3")))
+        XCTAssertTrue(controller.analysisReportTextForTesting.contains("visit_date"))
+        XCTAssertFalse(controller.analysisReportTextForTesting.hasPrefix("site\n\n"))
+    }
+
+    func testAnalysisReportCsvTsvJsonAndMarkdownExportsUseDistinctFormats() throws {
+        let provenance = AnalysisProvenance(
+            visibleRows: 2,
+            totalRows: 2,
+            isFiltered: false,
+            filters: [],
+            sortDescription: nil,
+            columnNames: ["amount"],
+            parameterLines: [L.t("Column: amount", "컬럼: amount")],
+            generatedAt: Date(timeIntervalSince1970: 0),
+            elapsedMilliseconds: 4
+        )
+        let report = AnalysisReport(
+            title: "Export Test",
+            summary: "Values",
+            provenance: provenance,
+            sections: [
+                .table(AnalysisTable(
+                    title: "Rows",
+                    headers: ["name", "value"],
+                    rows: [["A,B", "10"], ["Quote \"Q\"", "20"]],
+                    truncated: false
+                ))
+            ]
+        )
+
+        XCTAssertTrue(report.markdown.contains("| name | value |"))
+        XCTAssertTrue(report.tsv.contains("A,B\t10"))
+        XCTAssertTrue(report.csv.contains("\"A,B\",10"))
+        XCTAssertTrue(report.csv.contains("\"Quote \"\"Q\"\"\",20"))
+
+        let json = try JSONSerialization.jsonObject(with: report.jsonData()) as? [String: Any]
+        XCTAssertEqual(json?["title"] as? String, "Export Test")
     }
 
     func testEarlyColumnStatisticsStartsAfterRowsArriveBeforeIndexingCompletes() {
@@ -305,6 +488,17 @@ final class MainWindowControllerGridTests: XCTestCase {
             }
         }
         XCTFail("Timed out waiting for column types", file: file, line: line)
+    }
+
+    private func waitUntilAnalysisReady(_ controller: MainWindowController, file: StaticString = #filePath, line: UInt = #line) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            if controller.analysisReportTextForTesting.isEmpty == false {
+                return
+            }
+        }
+        XCTFail("Timed out waiting for analysis result", file: file, line: line)
     }
 
     private func temporaryCsvPath() throws -> String {

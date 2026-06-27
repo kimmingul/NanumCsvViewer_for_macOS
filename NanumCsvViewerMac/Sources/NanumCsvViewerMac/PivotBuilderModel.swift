@@ -44,7 +44,7 @@ struct PivotBuilderLayout: Equatable {
     var columns: [Int] = []
     var value: Int?
     var filters: [Int] = []
-    var function: AggregationFunction = .sum
+    var function: AggregationFunction = .count
 
     var isRunnable: Bool {
         value != nil

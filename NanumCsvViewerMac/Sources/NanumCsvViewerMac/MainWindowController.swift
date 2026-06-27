@@ -19,6 +19,10 @@ final class MainWindowController: NSWindowController {
     private let selectedValueScrollView = NSScrollView()
     private let detailHeaderLabel = NSTextField(labelWithString: L.t("Inspector", "인스펙터"))
     private let detailTextView = NSTextView()
+    private let analysisActionBar = NSStackView()
+    private let analysisCopyButton = NSButton()
+    private let analysisExportButton = NSButton()
+    private let analysisCancelButton = NSButton()
     private let statusLabel = NSTextField(labelWithString: L.t("Open a CSV or text file.", "CSV 또는 텍스트 파일을 여세요."))
     private let documentInfoLabel = NSTextField(labelWithString: L.t("No file", "파일 없음"))
     private let storageModeLabel = NSTextField(labelWithString: "")
@@ -37,6 +41,8 @@ final class MainWindowController: NSWindowController {
     private let applyFilterButton = NSButton()
     private let clearFilterButton = NSButton()
     private let findNextButton = NSButton()
+    private var closeToolbarItem: NSToolbarItem?
+    private var pivotToolbarItem: NSToolbarItem?
     private let mainSplit = NSSplitView()
     private let contentContainer = CsvDropView()
     private let filterBarView = FilterBarView()
@@ -71,6 +77,8 @@ final class MainWindowController: NSWindowController {
     private var detailUpdateWorkItem: DispatchWorkItem?
     private var columnStatisticsReport: ColumnStatisticsReport?
     private var columnStatisticsCancellation: CancellationFlag?
+    private var analysisCancellation: CancellationFlag?
+    private var currentAnalysisReport: AnalysisReport?
     private var earlyColumnStatisticsRequested = false
     private var acceptedColumnStatisticsPriority = 0
     private var hiddenColumnIndexes: Set<Int> = []
@@ -504,7 +512,7 @@ final class MainWindowController: NSWindowController {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = false
-        tableView.headerView = CsvTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 0))
+        tableView.headerView = CsvTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 28))
         tableView.delegate = self
         tableView.dataSource = self
         tableView.usesAlternatingRowBackgroundColors = true
@@ -587,16 +595,44 @@ final class MainWindowController: NSWindowController {
         detailHeaderLabel.heightAnchor.constraint(equalToConstant: 34).isActive = true
         stack.addArrangedSubview(detailHeaderLabel)
 
+        analysisActionBar.orientation = .horizontal
+        analysisActionBar.alignment = .centerY
+        analysisActionBar.spacing = 8
+        analysisActionBar.edgeInsets = NSEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        analysisActionBar.isHidden = true
+        configureAnalysisActionButton(analysisCopyButton, title: L.t("Copy", "복사"), symbol: "doc.on.doc", action: #selector(copyAnalysisResult(_:)))
+        configureAnalysisActionButton(analysisExportButton, title: L.t("Export...", "내보내기..."), symbol: "square.and.arrow.up", action: #selector(exportAnalysisResult(_:)))
+        configureAnalysisActionButton(analysisCancelButton, title: L.t("Cancel", "취소"), symbol: "xmark.circle", action: #selector(cancelAnalysis(_:)))
+        analysisActionBar.addArrangedSubview(analysisCopyButton)
+        analysisActionBar.addArrangedSubview(analysisExportButton)
+        let actionSpacer = NSView()
+        actionSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        analysisActionBar.addArrangedSubview(actionSpacer)
+        analysisActionBar.addArrangedSubview(analysisCancelButton)
+        stack.addArrangedSubview(analysisActionBar)
+
         detailTextView.isEditable = false
         detailTextView.isSelectable = true
         detailTextView.textContainerInset = NSSize(width: 14, height: 12)
-        detailTextView.font = .systemFont(ofSize: 13)
+        detailTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         detailTextView.backgroundColor = .windowBackgroundColor
         let detailScroll = NSScrollView()
         detailScroll.documentView = detailTextView
         detailScroll.hasVerticalScroller = true
         detailScroll.drawsBackground = false
         stack.addArrangedSubview(detailScroll)
+    }
+
+    private func configureAnalysisActionButton(_ button: NSButton, title: String, symbol: String, action: Selector) {
+        button.title = title
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        button.imagePosition = .imageLeading
+        button.imageScaling = .scaleProportionallyDown
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: 12)
+        button.target = self
+        button.action = action
     }
 
     private func configureEmptyState() {
@@ -661,7 +697,9 @@ final class MainWindowController: NSWindowController {
 
 private extension NSToolbarItem.Identifier {
     static let openFile = NSToolbarItem.Identifier("openFile")
+    static let closeDocument = NSToolbarItem.Identifier("closeDocument")
     static let sortGroup = NSToolbarItem.Identifier("sortGroup")
+    static let pivot = NSToolbarItem.Identifier("pivot")
     static let findGroup = NSToolbarItem.Identifier("findGroup")
     static let filterToggle = NSToolbarItem.Identifier("filterToggle")
     static let detail = NSToolbarItem.Identifier("detail")
@@ -669,11 +707,11 @@ private extension NSToolbarItem.Identifier {
 
 extension MainWindowController: NSToolbarDelegate {
     nonisolated func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.openFile, .sortGroup, .findGroup, .filterToggle, .detail, .flexibleSpace, .space]
+        [.openFile, .closeDocument, .sortGroup, .pivot, .findGroup, .filterToggle, .detail, .flexibleSpace, .space]
     }
 
     nonisolated func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.openFile, .sortGroup, .findGroup, .filterToggle, .flexibleSpace, .detail]
+        [.openFile, .closeDocument, .sortGroup, .pivot, .findGroup, .filterToggle, .flexibleSpace, .detail]
     }
 
     nonisolated func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -689,9 +727,33 @@ extension MainWindowController: NSToolbarDelegate {
                 item.action = #selector(openDocument(_:))
                 return item
 
+            case .closeDocument:
+                let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+                item.label = L.t("Close", "닫기")
+                item.paletteLabel = item.label
+                item.toolTip = L.t("Close current file", "현재 파일 닫기")
+                item.image = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: item.label)
+                item.target = self
+                item.action = #selector(closeCurrentDocument(_:))
+                item.isEnabled = csvDocument != nil
+                closeToolbarItem = item
+                return item
+
             case .sortGroup:
                 configureSortControl()
                 return viewToolbarItem(identifier: itemIdentifier, label: L.t("Sort", "정렬"), view: sortControl, minWidth: 104, maxWidth: 104)
+
+            case .pivot:
+                let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+                item.label = L.t("Pivot", "피벗")
+                item.paletteLabel = item.label
+                item.toolTip = L.t("Open pivot builder", "피벗 빌더 열기")
+                item.image = NSImage(systemSymbolName: "tablecells", accessibilityDescription: item.label)
+                item.target = self
+                item.action = #selector(showPivotTable(_:))
+                item.isEnabled = csvDocument?.indexingComplete == true && !busy && columnNames.count >= 2
+                pivotToolbarItem = item
+                return item
 
             case .findGroup:
                 configureFindControls()
@@ -860,6 +922,12 @@ extension MainWindowController: NSMenuItemValidation {
             switch menuItem.action {
             case #selector(openDocument(_:)), #selector(openFromClipboard(_:)), #selector(showUsage(_:)):
                 return true
+            case #selector(closeCurrentDocument(_:)):
+                return hasDocument
+            case #selector(copyAnalysisResult(_:)), #selector(exportAnalysisResult(_:)):
+                return currentAnalysisReport != nil && analysisCancellation == nil
+            case #selector(cancelAnalysis(_:)):
+                return analysisCancellation != nil
             case #selector(exportCurrentView(_:)), #selector(exportCurrentViewAsMarkdown(_:)), #selector(exportCurrentViewAsJson(_:)), #selector(exportCurrentViewAsHtml(_:)):
                 return ready
             case #selector(focusFindField(_:)), #selector(findNext(_:)):
@@ -893,7 +961,7 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(togglePersistentIndex(_:)):
                 menuItem.state = VirtualCsvDocument.persistentIndexEnabled ? .on : .off
                 return true
-            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)):
+            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showPivotChart(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)):
                 return ready
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
@@ -935,6 +1003,51 @@ extension MainWindowController {
         } catch {
             presentError(error)
         }
+    }
+
+    @objc func closeCurrentDocument(_ sender: Any?) {
+        guard csvDocument != nil else { return }
+
+        cancelAll()
+        indexCancellation = nil
+        operationCancellation = nil
+        findCancellation = nil
+        prefetchCancellation = nil
+        columnStatisticsCancellation = nil
+        analysisCancellation = nil
+        rowTimer = nil
+        detailUpdateWorkItem = nil
+
+        pivotBuilderWindow?.close()
+        pivotBuilderWindow = nil
+
+        csvDocument = nil
+        currentFilePath = nil
+        indexingElapsed = nil
+        lastKnownRowCount = 0
+        columnStatisticsReport = nil
+        currentAnalysisReport = nil
+        earlyColumnStatisticsRequested = false
+        acceptedColumnStatisticsPriority = 0
+
+        while tableView.tableColumns.count > 0 {
+            tableView.removeTableColumn(tableView.tableColumns[0])
+        }
+        columnNames.removeAll()
+        filterColumnPopup.removeAllItems()
+        filterColumnPopup.addItem(withTitle: L.t("All Columns", "전체 열"))
+        filterColumnPopup.selectItem(at: 0)
+        tableView.deselectAll(nil)
+
+        resetViewState()
+        tableView.reloadData()
+        setProgressVisible(false)
+        updateProgress(0)
+        statusLabel.stringValue = L.t("Open a CSV or text file.", "CSV 또는 텍스트 파일을 여세요.")
+        window?.title = "Nanum CSV Viewer"
+        updateAnalysisActionBar(running: false)
+        updateEmptyState()
+        updateFeatureState()
     }
 
     @objc func exportCurrentView(_ sender: Any?) {
@@ -1043,6 +1156,9 @@ extension MainWindowController {
             currentFilePath = url.path
             indexingElapsed = nil
             columnStatisticsReport = nil
+            currentAnalysisReport = nil
+            analysisCancellation?.cancel()
+            analysisCancellation = nil
             columnStatisticsCancellation?.cancel()
             columnStatisticsCancellation = nil
             earlyColumnStatisticsRequested = false
@@ -1053,6 +1169,7 @@ extension MainWindowController {
             syncEncodingPopup()
             tableView.reloadData()
             lastKnownRowCount = 0
+            updateAnalysisActionBar(running: false)
             updateEmptyState()
             startIndexing(csvDocument: doc)
             updateFeatureState()
@@ -1592,136 +1709,414 @@ extension MainWindowController {
     }
 
     @objc func showNumericDistribution(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let selectedColumn = clampedCurrentDataColumn()
-        let column = isNumericColumn(selectedColumn) ? selectedColumn : (firstNumericColumn(excluding: -1) ?? selectedColumn)
-        do {
-            let distribution = try doc.numericDistribution(column: column, binCount: 10, cancellation: CancellationFlag())
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("Numeric Distribution", "숫자 분포")
-            detailTextView.string = formatNumericDistribution(distribution)
-        } catch {
-            presentError(error)
-        }
+        beginAnalysis(.numericDistribution, sender: sender)
     }
 
     @objc func showDateHistogram(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let selectedColumn = clampedCurrentDataColumn()
-        let dateColumn = isDateColumn(selectedColumn) ? selectedColumn : (firstDateColumn(excluding: -1) ?? selectedColumn)
-        let valueColumn = firstNumericColumn(excluding: dateColumn)
-        do {
-            let histogram = try doc.dateHistogram(dateColumn: dateColumn, valueColumn: valueColumn, period: .month, cancellation: CancellationFlag())
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("Date Histogram", "날짜 히스토그램")
-            detailTextView.string = formatDateHistogram(histogram)
-        } catch {
-            presentError(error)
-        }
+        beginAnalysis(.dateHistogram, sender: sender)
     }
 
     @objc func showDuplicateRows(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let first = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
-        let second = min(first + 1, max(0, columnNames.count - 1))
-        let columns = first == second ? [first] : [first, second]
-        do {
-            let duplicates = try doc.findDuplicates(columns: columns, cancellation: CancellationFlag())
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("Duplicate Rows", "중복 행")
-            detailTextView.string = formatDuplicates(duplicates, columns: columns)
-        } catch {
-            presentError(error)
-        }
+        beginAnalysis(.duplicateRows, sender: sender)
     }
 
     @objc func showGroupBy(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let groupColumn = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
-        let valueColumn = firstNumericColumn(excluding: groupColumn) ?? groupColumn
-        do {
-            let result = try doc.groupBy(
-                groupColumns: [groupColumn],
-                valueColumn: valueColumn,
-                functions: [.count, .sum, .mean, .median, .min, .max, .uniqueCount, .standardDeviation],
-                cancellation: CancellationFlag()
-            )
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("Group By", "그룹화")
-            detailTextView.string = formatGroupBy(result)
-        } catch {
-            presentError(error)
-        }
+        beginAnalysis(.groupBy, sender: sender)
     }
 
     @objc func showPivotTable(_ sender: Any?) {
-        guard let builder = makePivotBuilder() else { return }
+        guard let builder = makePivotBuilder(initialResultTab: .table) else { return }
         pivotBuilderWindow = builder
         builder.showWindow(sender)
         builder.window?.makeKeyAndOrderFront(sender)
     }
 
-    private func makePivotBuilder() -> PivotBuilderWindowController? {
+    @objc func showPivotChart(_ sender: Any?) {
+        guard let builder = makePivotBuilder(initialResultTab: .chart) else { return }
+        pivotBuilderWindow = builder
+        builder.showWindow(sender)
+        builder.window?.makeKeyAndOrderFront(sender)
+    }
+
+    private func makePivotBuilder(initialResultTab: PivotBuilderWindowController.InitialResultTab = .table) -> PivotBuilderWindowController? {
         guard let doc = csvDocument, doc.indexingComplete, !busy, columnNames.count >= 2 else { return nil }
         return PivotBuilderWindowController(
             document: doc,
             columnNames: columnNames,
-            columnStatisticsReport: columnStatisticsReport
+            columnStatisticsReport: columnStatisticsReport,
+            initialResultTab: initialResultTab
         )
     }
 
     @objc func showCorrelation(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let x = firstNumericColumn(excluding: -1) ?? currentDataColumn
-        let y = firstNumericColumn(excluding: x) ?? currentDataColumn
-        do {
-            let pearson = try doc.correlation(xColumn: x, yColumn: y, method: .pearson, cancellation: CancellationFlag())
-            let spearman = try doc.correlation(xColumn: x, yColumn: y, method: .spearman, cancellation: CancellationFlag())
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("Correlation", "상관분석")
-            detailTextView.string = formatCorrelation(pearson, spearman: spearman, xColumn: x, yColumn: y)
-        } catch {
-            presentError(error)
-        }
+        beginAnalysis(.correlation, sender: sender)
     }
 
     @objc func showTTest(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let groupColumn = firstNonNumericColumn(excluding: -1) ?? currentDataColumn
-        let valueColumn = firstNumericColumn(excluding: groupColumn) ?? currentDataColumn
-        guard let groups = topGroups(column: groupColumn, limit: 2), groups.count == 2 else {
-            statusLabel.stringValue = L.t("Need at least two groups.", "두 개 이상의 그룹이 필요합니다.")
-            return
-        }
-        do {
-            let result = try doc.independentTTest(groupColumn: groupColumn, valueColumn: valueColumn, groupA: groups[0], groupB: groups[1], cancellation: CancellationFlag())
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("t-test", "t-검정")
-            detailTextView.string = formatIndependentTTest(result, groupColumn: groupColumn, valueColumn: valueColumn)
-        } catch {
-            presentError(error)
-        }
+        beginAnalysis(.independentTTest, sender: sender)
     }
 
     @objc func showChiSquare(_ sender: Any?) {
-        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let rowColumn = firstNonNumericColumn(excluding: -1) ?? currentDataColumn
-        let columnColumn = firstNonNumericColumn(excluding: rowColumn) ?? min(rowColumn + 1, max(0, columnNames.count - 1))
-        do {
-            let result = try doc.chiSquareTest(rowColumn: rowColumn, columnColumn: columnColumn, cancellation: CancellationFlag())
-            setInspectorVisible(true, animated: true)
-            detailHeaderLabel.stringValue = L.t("Chi-square Test", "카이제곱 검정")
-            detailTextView.string = formatChiSquare(result, rowColumn: rowColumn, columnColumn: columnColumn)
-        } catch {
-            presentError(error)
-        }
+        beginAnalysis(.chiSquare, sender: sender)
     }
 
     @objc func showQuickStats(_ sender: Any?) {
-        guard csvDocument != nil else { return }
-        let column = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        beginAnalysis(.documentSummary, sender: nil)
+    }
+
+    private func beginAnalysis(_ kind: AnalysisKind, sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy || kind == .documentSummary else { return }
+        guard let defaultRequest = defaultAnalysisRequest(for: kind) else {
+            statusLabel.stringValue = L.t("No valid columns for this analysis.", "이 분석에 사용할 수 있는 컬럼이 없습니다.")
+            return
+        }
+        if sender is NSMenuItem, kind != .documentSummary {
+            promptAnalysisRequest(kind: kind, defaultRequest: defaultRequest)
+        } else {
+            performAnalysis(defaultRequest)
+        }
+    }
+
+    private func defaultAnalysisRequest(for kind: AnalysisKind) -> AnalysisRequest? {
+        guard csvDocument != nil else { return nil }
+        let selected = clampedCurrentDataColumn()
+        switch kind {
+        case .numericDistribution:
+            let column = isNumericColumn(selected) ? selected : (firstNumericColumn(excluding: -1) ?? selected)
+            return .numericDistribution(column: column, binCount: 10)
+        case .dateHistogram:
+            let dateColumn = isDateColumn(selected) ? selected : (firstDateColumn(excluding: -1) ?? selected)
+            return .dateHistogram(dateColumn: dateColumn, valueColumn: firstNumericColumn(excluding: dateColumn), period: .month)
+        case .duplicateRows:
+            let second = min(selected + 1, max(0, columnNames.count - 1))
+            return .duplicateRows(columns: selected == second ? [selected] : [selected, second])
+        case .groupBy:
+            return .groupBy(
+                groupColumns: [selected],
+                valueColumn: firstNumericColumn(excluding: selected) ?? selected,
+                functions: [.count, .sum, .mean, .median, .min, .max, .uniqueCount, .standardDeviation]
+            )
+        case .correlation:
+            let x = firstNumericColumn(excluding: -1) ?? selected
+            let y = firstNumericColumn(excluding: x) ?? selected
+            guard x != y || columnNames.count == 1 else { return nil }
+            return .correlation(xColumn: x, yColumn: y)
+        case .independentTTest:
+            let groupColumn = firstNonNumericColumn(excluding: -1) ?? selected
+            let valueColumn = firstNumericColumn(excluding: groupColumn) ?? selected
+            guard let groups = topGroups(column: groupColumn, limit: 2), groups.count == 2 else { return nil }
+            return .independentTTest(groupColumn: groupColumn, valueColumn: valueColumn, groupA: groups[0], groupB: groups[1])
+        case .chiSquare:
+            let rowColumn = firstNonNumericColumn(excluding: -1) ?? selected
+            let columnColumn = firstNonNumericColumn(excluding: rowColumn) ?? min(rowColumn + 1, max(0, columnNames.count - 1))
+            return .chiSquare(rowColumn: rowColumn, columnColumn: columnColumn)
+        case .documentSummary:
+            return .documentSummary
+        }
+    }
+
+    private func promptAnalysisRequest(kind: AnalysisKind, defaultRequest: AnalysisRequest) {
+        let alert = NSAlert()
+        alert.messageText = kind.title
+        alert.informativeText = L.t("Choose analysis parameters, then run.", "분석 조건을 선택한 뒤 실행하세요.")
+        alert.addButton(withTitle: L.t("Run", "실행"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: 360).isActive = true
+
+        var buildRequest: (() -> AnalysisRequest?)?
+        switch defaultRequest {
+        case .numericDistribution(let column, let binCount):
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
+            let binsField = NSTextField(string: "\(binCount)")
+            binsField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Bins", "구간"), control: binsField)
+            buildRequest = {
+                .numericDistribution(column: self.selectedColumn(in: columnPopup) ?? column, binCount: max(1, Int(binsField.stringValue) ?? binCount))
+            }
+        case .dateHistogram(let dateColumn, let valueColumn, let period):
+            let datePopup = makeColumnPopup(preferredTypes: [.date], selected: dateColumn)
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn ?? -1, includeNone: true)
+            let periodPopup = NSPopUpButton()
+            for item in DateBinPeriod.allCases {
+                periodPopup.addItem(withTitle: item.rawValue)
+                periodPopup.lastItem?.representedObject = item.rawValue
+            }
+            periodPopup.selectItem(withTitle: period.rawValue)
+            addAnalysisPromptRow(to: stack, label: L.t("Date column", "날짜 컬럼"), control: datePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Period", "단위"), control: periodPopup)
+            buildRequest = {
+                let period = DateBinPeriod(rawValue: periodPopup.titleOfSelectedItem ?? DateBinPeriod.month.rawValue) ?? .month
+                return .dateHistogram(dateColumn: self.selectedColumn(in: datePopup) ?? dateColumn, valueColumn: self.selectedColumn(in: valuePopup), period: period)
+            }
+        case .duplicateRows(let columns):
+            let first = columns.first ?? clampedCurrentDataColumn()
+            let second = columns.dropFirst().first ?? -1
+            let firstPopup = makeColumnPopup(selected: first)
+            let secondPopup = makeColumnPopup(selected: second, includeNone: true)
+            addAnalysisPromptRow(to: stack, label: L.t("Primary column", "기준 컬럼"), control: firstPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Second column", "두 번째 컬럼"), control: secondPopup)
+            buildRequest = {
+                let values = [self.selectedColumn(in: firstPopup), self.selectedColumn(in: secondPopup)].compactMap { $0 }
+                return .duplicateRows(columns: Array(Set(values)).sorted())
+            }
+        case .groupBy(let groupColumns, let valueColumn, let functions):
+            let groupPopup = makeColumnPopup(selected: groupColumns.first ?? clampedCurrentDataColumn())
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
+            let functionPopup = NSPopUpButton()
+            [L.t("All summary metrics", "모든 요약 지표"), "Count", "Sum", "Mean"].forEach { functionPopup.addItem(withTitle: $0) }
+            addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Metrics", "지표"), control: functionPopup)
+            buildRequest = {
+                let selectedFunctions: [AggregationFunction]
+                switch functionPopup.indexOfSelectedItem {
+                case 1: selectedFunctions = [.count]
+                case 2: selectedFunctions = [.sum]
+                case 3: selectedFunctions = [.mean]
+                default: selectedFunctions = functions
+                }
+                return .groupBy(groupColumns: [self.selectedColumn(in: groupPopup) ?? 0], valueColumn: self.selectedColumn(in: valuePopup) ?? valueColumn, functions: selectedFunctions)
+            }
+        case .correlation(let xColumn, let yColumn):
+            let xPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: xColumn)
+            let yPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: yColumn)
+            addAnalysisPromptRow(to: stack, label: "X", control: xPopup)
+            addAnalysisPromptRow(to: stack, label: "Y", control: yPopup)
+            buildRequest = { .correlation(xColumn: self.selectedColumn(in: xPopup) ?? xColumn, yColumn: self.selectedColumn(in: yPopup) ?? yColumn) }
+        case .independentTTest(let groupColumn, let valueColumn, let groupA, let groupB):
+            let groupPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: groupColumn)
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
+            let groupAField = NSTextField(string: groupA)
+            let groupBField = NSTextField(string: groupB)
+            addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            addAnalysisPromptRow(to: stack, label: "A", control: groupAField)
+            addAnalysisPromptRow(to: stack, label: "B", control: groupBField)
+            buildRequest = {
+                .independentTTest(groupColumn: self.selectedColumn(in: groupPopup) ?? groupColumn, valueColumn: self.selectedColumn(in: valuePopup) ?? valueColumn, groupA: groupAField.stringValue, groupB: groupBField.stringValue)
+            }
+        case .chiSquare(let rowColumn, let columnColumn):
+            let rowPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: rowColumn)
+            let columnPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: columnColumn)
+            addAnalysisPromptRow(to: stack, label: L.t("Rows", "행"), control: rowPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Columns", "열"), control: columnPopup)
+            buildRequest = { .chiSquare(rowColumn: self.selectedColumn(in: rowPopup) ?? rowColumn, columnColumn: self.selectedColumn(in: columnPopup) ?? columnColumn) }
+        case .documentSummary:
+            buildRequest = { .documentSummary }
+        }
+
+        alert.accessoryView = stack
+        alert.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let request = buildRequest?() else { return }
+            self?.performAnalysis(request)
+        }
+    }
+
+    private func addAnalysisPromptRow(to stack: NSStackView, label: String, control: NSView) {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        let text = NSTextField(labelWithString: label)
+        text.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        row.addArrangedSubview(text)
+        row.addArrangedSubview(control)
+        stack.addArrangedSubview(row)
+    }
+
+    private func makeColumnPopup(preferredTypes: Set<ColumnValueType> = [], selected: Int, includeNone: Bool = false) -> NSPopUpButton {
+        let popup = NSPopUpButton()
+        popup.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        if includeNone {
+            popup.addItem(withTitle: L.t("None", "없음"))
+            popup.lastItem?.representedObject = -1
+        }
+        let candidates = analysisColumnCandidates(preferredTypes: preferredTypes)
+        for candidate in candidates {
+            popup.addItem(withTitle: candidate.title)
+            popup.lastItem?.representedObject = candidate.index
+        }
+        if let item = popup.itemArray.first(where: { ($0.representedObject as? Int) == selected }) {
+            popup.select(item)
+        } else {
+            popup.selectItem(at: includeNone ? min(1, popup.numberOfItems - 1) : 0)
+        }
+        return popup
+    }
+
+    private func selectedColumn(in popup: NSPopUpButton) -> Int? {
+        guard let value = popup.selectedItem?.representedObject as? Int, value >= 0 else { return nil }
+        return value
+    }
+
+    private func analysisColumnCandidates(preferredTypes: Set<ColumnValueType>) -> [(index: Int, title: String)] {
+        let summaries = columnStatisticsReport?.columns ?? []
+        let indexes: [Int]
+        if preferredTypes.isEmpty || summaries.isEmpty {
+            indexes = Array(columnNames.indices)
+        } else {
+            let preferred = summaries.filter { preferredTypes.contains($0.inferredType) }.map(\.index)
+            indexes = preferred.isEmpty ? Array(columnNames.indices) : preferred
+        }
+        return indexes.map { index in
+            let type = columnStatisticsReport?.columns[safe: index]?.inferredType.rawValue
+            let suffix = type.map { " [\($0)]" } ?? ""
+            return (index, "\(columnNames[safe: index] ?? L.t("Column \(index + 1)", "\(index + 1)열"))\(suffix)")
+        }
+    }
+
+    private func performAnalysis(_ request: AnalysisRequest) {
+        guard let doc = csvDocument else { return }
+        analysisCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        analysisCancellation = cancellation
+        let provenance = makeAnalysisProvenance(for: request)
+        let header = request.kind.title
+        let columns = columnNames
+        let report = columnStatisticsReport
+        let start = Date()
+
         setInspectorVisible(true, animated: true)
-        renderColumnStatistics(column: column)
+        detailHeaderLabel.stringValue = header
+        detailTextView.string = L.t("Calculating analysis...", "분석을 계산 중입니다...")
+        currentAnalysisReport = nil
+        updateAnalysisActionBar(running: true)
+        setBusy(true, message: L.t("Analyzing...", "분석 중..."))
+        setProgressVisible(true)
+        updateProgress(0)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let built = try AnalysisReportBuilder.make(
+                    request: request,
+                    document: doc,
+                    columnNames: columns,
+                    columnStatisticsReport: report,
+                    provenance: provenance,
+                    cancellation: cancellation
+                )
+                let elapsed = Date().timeIntervalSince(start)
+                let finalReport = AnalysisReport(
+                    title: built.title,
+                    summary: built.summary,
+                    provenance: built.provenance.withElapsed(elapsed),
+                    sections: built.sections
+                )
+                DispatchQueue.main.async {
+                    guard let self, doc === self.csvDocument, self.analysisCancellation === cancellation, !cancellation.isCancelled else { return }
+                    self.analysisCancellation = nil
+                    self.currentAnalysisReport = finalReport
+                    self.detailHeaderLabel.stringValue = finalReport.title
+                    self.detailTextView.string = finalReport.markdown
+                    self.updateAnalysisActionBar(running: false)
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("Analysis complete.", "분석이 완료되었습니다.")
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.analysisCancellation === cancellation else { return }
+                    self.analysisCancellation = nil
+                    self.updateAnalysisActionBar(running: false)
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("Analysis cancelled.", "분석이 취소되었습니다.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.analysisCancellation === cancellation else { return }
+                    self.analysisCancellation = nil
+                    self.updateAnalysisActionBar(running: false)
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
+    private func makeAnalysisProvenance(for request: AnalysisRequest) -> AnalysisProvenance {
+        let sortDescription = sortKeys.isEmpty ? nil : sortKeys.map { key in
+            "\(columnNames[safe: key.column] ?? L.t("Column \(key.column + 1)", "\(key.column + 1)열")) \(key.ascending ? "▲" : "▼")"
+        }.joined(separator: " → ")
+        return AnalysisProvenance(
+            visibleRows: csvDocument?.displayRowCount ?? 0,
+            totalRows: csvDocument?.dataRowsAvailable ?? 0,
+            isFiltered: csvDocument?.isFiltered == true || hasAnyFilter,
+            filters: filterDescriptions(),
+            sortDescription: sortDescription,
+            columnNames: request == .documentSummary
+                ? [L.t("All columns (\(columnNames.count))", "전체 컬럼 (\(columnNames.count))")]
+                : request.selectedColumns().compactMap { columnNames[safe: $0] },
+            parameterLines: request.parameterLines(columnNames: columnNames),
+            generatedAt: Date(),
+            elapsedMilliseconds: nil
+        )
+    }
+
+    private func updateAnalysisActionBar(running: Bool) {
+        let hasResult = currentAnalysisReport != nil
+        analysisActionBar.isHidden = !running && !hasResult
+        analysisCopyButton.isHidden = running
+        analysisExportButton.isHidden = running
+        analysisCancelButton.isHidden = !running
+        analysisCopyButton.isEnabled = hasResult && !running
+        analysisExportButton.isEnabled = hasResult && !running
+        analysisCancelButton.isEnabled = running
+    }
+
+    @objc func cancelAnalysis(_ sender: Any?) {
+        analysisCancellation?.cancel()
+    }
+
+    @objc func copyAnalysisResult(_ sender: Any?) {
+        guard let report = currentAnalysisReport else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report.markdown, forType: .string)
+        statusLabel.stringValue = L.t("Copied analysis result.", "분석 결과를 복사했습니다.")
+    }
+
+    @objc func exportAnalysisResult(_ sender: Any?) {
+        guard let report = currentAnalysisReport else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "md") ?? .plainText,
+            .commaSeparatedText,
+            UTType(filenameExtension: "tsv") ?? .plainText,
+            .json,
+            .plainText
+        ]
+        panel.nameFieldStringValue = "analysis-result.md"
+        panel.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let data: Data
+                switch url.pathExtension.lowercased() {
+                case "json":
+                    data = try report.jsonData()
+                case "csv":
+                    data = Data(report.csv.utf8)
+                case "tsv":
+                    data = Data(report.tsv.utf8)
+                default:
+                    data = Data(report.markdown.utf8)
+                }
+                try data.write(to: url)
+                self?.statusLabel.stringValue = L.t("Exported analysis result.", "분석 결과를 내보냈습니다.")
+            } catch {
+                self?.presentError(error)
+            }
+        }
     }
 
     @objc func changeEncoding(_ sender: Any?) {
@@ -2640,6 +3035,7 @@ extension MainWindowController {
         findCancellation?.cancel()
         prefetchCancellation?.cancel()
         columnStatisticsCancellation?.cancel()
+        analysisCancellation?.cancel()
         rowTimer?.invalidate()
         detailUpdateWorkItem?.cancel()
         indexing = false
@@ -2666,6 +3062,9 @@ extension MainWindowController {
         applyFilterButton.isEnabled = ready
         clearFilterButton.isEnabled = ready && hasAnyFilter
         encodingPopup.isEnabled = open && !busy
+        closeToolbarItem?.isEnabled = open
+        pivotToolbarItem?.isEnabled = ready && columnNames.count >= 2
+        updateAnalysisActionBar(running: analysisCancellation != nil)
         refreshSignal()
         updateStatusMetrics()
     }
@@ -2817,6 +3216,14 @@ extension MainWindowController {
         makePivotBuilder()
     }
 
+    func performAnalysisForTesting(_ request: AnalysisRequest) {
+        performAnalysis(request)
+    }
+
+    var analysisReportTextForTesting: String {
+        currentAnalysisReport?.markdown ?? ""
+    }
+
     var indexingCompleteForTesting: Bool {
         csvDocument?.indexingComplete == true
     }
@@ -2887,6 +3294,16 @@ extension MainWindowController {
             .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
             .headerCell
             .stringValue
+    }
+
+    var tableHeaderHeightForTesting: CGFloat {
+        tableView.headerView?.frame.height ?? 0
+    }
+
+    func layoutWindowForTesting() {
+        window?.layoutIfNeeded()
+        window?.contentView?.layoutSubtreeIfNeeded()
+        tableView.layoutSubtreeIfNeeded()
     }
 
     func headerTooltipForTesting(column: Int) -> String? {

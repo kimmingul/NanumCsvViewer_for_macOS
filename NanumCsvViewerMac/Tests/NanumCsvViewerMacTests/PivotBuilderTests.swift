@@ -118,9 +118,24 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(2, to: .values)
         try waitForPreview(builder)
 
-        XCTAssertEqual(builder.previewHeadersForTesting, [L.t("Metric", "지표"), "Sum of value"])
-        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "17"])
+        XCTAssertEqual(builder.previewHeadersForTesting, [L.t("Metric", "지표"), "Count of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "4"])
         XCTAssertEqual(builder.chartModelForTesting?.categories, [L.t("Total", "합계")])
+    }
+
+    func testBuilderDefaultsAggregationToCount() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        XCTAssertEqual(builder.layoutForTesting.function, .count)
     }
 
     func testBuilderSupportsRowsAndValuesWithoutColumns() throws {
@@ -140,9 +155,9 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(2, to: .values)
         try waitForPreview(builder)
 
-        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Sum of value"])
-        XCTAssertEqual(builder.previewRowForTesting(0), ["A", "10"])
-        XCTAssertEqual(builder.previewRowForTesting(1), ["B", "7"])
+        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Count of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), ["A", "2"])
+        XCTAssertEqual(builder.previewRowForTesting(1), ["B", "2"])
         XCTAssertEqual(builder.chartModelForTesting?.categories, ["A", "B"])
     }
 
@@ -164,7 +179,7 @@ final class PivotBuilderTests: XCTestCase {
         try waitForPreview(builder)
 
         XCTAssertEqual(builder.previewHeadersForTesting, [L.t("Total", "합계"), "Control", "Treatment"])
-        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "5", "12"])
+        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "2", "2"])
         XCTAssertEqual(builder.chartModelForTesting?.categories, ["Control", "Treatment"])
     }
 

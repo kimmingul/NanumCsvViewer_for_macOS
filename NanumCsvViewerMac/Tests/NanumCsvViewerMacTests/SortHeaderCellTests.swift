@@ -36,6 +36,17 @@ final class SortHeaderCellTests: XCTestCase {
         XCTAssertLessThan(fillerPixels, 20)
     }
 
+    func testHeaderCellStillDrawsTitleBeforeHeaderViewIsSized() throws {
+        let image = renderUnsizedHeaderCell()
+        let titlePixels = countVisiblePixels(
+            in: image,
+            xRange: 6..<72,
+            yRange: 4..<24
+        )
+
+        XCTAssertGreaterThan(titlePixels, 20)
+    }
+
     private func renderHeaderCell(title: String, type: String, width: Int, height: Int) -> NSBitmapImageRep {
         renderBitmap(width: width, height: height) {
             let frame = NSRect(x: 0, y: 0, width: width, height: height)
@@ -79,6 +90,23 @@ final class SortHeaderCellTests: XCTestCase {
             tableView.addTableColumn(column)
 
             headerView.draw(headerView.bounds)
+        }
+    }
+
+    private func renderUnsizedHeaderCell() -> NSBitmapImageRep {
+        renderBitmap(width: 150, height: 28) {
+            let tableView = NSTableView(frame: .zero)
+            let headerView = CsvTableHeaderView(frame: .zero)
+            tableView.headerView = headerView
+
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c0"))
+            column.width = 150
+            let cell = SortHeaderCell(textCell: "주소")
+            cell.titleText = "주소"
+            column.headerCell = cell
+            tableView.addTableColumn(column)
+
+            cell.drawInterior(withFrame: NSRect(x: 0, y: 0, width: 150, height: 28), in: headerView)
         }
     }
 

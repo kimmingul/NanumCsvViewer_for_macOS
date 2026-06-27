@@ -147,6 +147,9 @@ final class SortHeaderCell: NSTableHeaderCell {
             return cellFrame
         }
         let headerFrame = headerView.headerRect(ofColumn: columnIndex)
+        guard !headerFrame.isNull, headerFrame.width > 0, headerFrame.height > 0 else {
+            return cellFrame
+        }
         let columnWidth = tableView.tableColumns[columnIndex].width
         let actualFrame = NSRect(
             x: headerFrame.minX,

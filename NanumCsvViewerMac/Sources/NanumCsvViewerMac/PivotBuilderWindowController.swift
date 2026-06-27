@@ -3,6 +3,11 @@ import AppKit
 
 @MainActor
 final class PivotBuilderWindowController: NSWindowController {
+    enum InitialResultTab {
+        case table
+        case chart
+    }
+
     private let csvDocument: VirtualCsvDocument
     private var fields: [PivotField]
     private var layout = PivotBuilderLayout()
@@ -33,7 +38,12 @@ final class PivotBuilderWindowController: NSWindowController {
     private var zoneViews: [PivotDropZone: PivotDropZoneView] = [:]
     private var fieldActionButtons: [PivotDropZone: NSButton] = [:]
 
-    init(document: VirtualCsvDocument, columnNames: [String], columnStatisticsReport: ColumnStatisticsReport? = nil) {
+    init(
+        document: VirtualCsvDocument,
+        columnNames: [String],
+        columnStatisticsReport: ColumnStatisticsReport? = nil,
+        initialResultTab: InitialResultTab = .table
+    ) {
         csvDocument = document
         fields = Self.makeFields(columnNames: columnNames, columnStatisticsReport: columnStatisticsReport)
         filteredFieldIndexes = Array(fields.indices)
@@ -47,6 +57,7 @@ final class PivotBuilderWindowController: NSWindowController {
         window.title = L.t("Pivot Builder", "피벗 빌더")
         super.init(window: window)
         buildInterface()
+        selectResultTab(initialResultTab)
         refreshZones()
         refreshPreview()
         loadFieldTypesIfNeeded()
@@ -137,6 +148,16 @@ final class PivotBuilderWindowController: NSWindowController {
         aggregationPopup.selectItem(withTitle: function.rawValue)
         refreshZones()
         refreshPreview()
+    }
+
+    func selectResultTab(_ tab: InitialResultTab) {
+        switch tab {
+        case .table:
+            previewTabs.selectedSegment = 0
+        case .chart:
+            previewTabs.selectedSegment = 1
+        }
+        updatePreviewVisibility()
     }
 
     func removeField(_ index: Int, from zone: PivotDropZone) {
