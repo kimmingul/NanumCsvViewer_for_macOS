@@ -58,6 +58,8 @@ cat > "$APP_PATH/Contents/Info.plist" <<PLIST
   <true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key>
   <true/>
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © 2026 MINGUL KIM. All rights reserved.</string>
 </dict>
