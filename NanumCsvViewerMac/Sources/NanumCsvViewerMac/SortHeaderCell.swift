@@ -1,6 +1,7 @@
 import AppKit
 
 final class SortHeaderCell: NSTableHeaderCell {
+    var titleText: String?
     var sortPriority: Int?
     var ascending: Bool?
     var typeText: String?
@@ -18,7 +19,8 @@ final class SortHeaderCell: NSTableHeaderCell {
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
         let titleFont = font ?? NSFont.systemFont(ofSize: 12, weight: .semibold)
         let titleAttributes = Self.titleAttributes(font: titleFont)
-        let titleSize = stringValue.size(withAttributes: titleAttributes)
+        let title = titleText ?? stringValue
+        let titleSize = title.size(withAttributes: titleAttributes)
         let typeWidth = typeText.map { Self.badgeSize(text: $0, font: Self.typeFont).width } ?? 0
         let sortWidth = ascending.map { _ in Self.badgeSize(text: sortMarkerText, font: Self.sortFont).width } ?? 0
         let contentFrame = cellFrame.insetBy(dx: 6, dy: 0)
@@ -34,7 +36,7 @@ final class SortHeaderCell: NSTableHeaderCell {
             width: availableTitleWidth,
             height: titleSize.height
         )
-        stringValue.draw(in: titleFrame, withAttributes: titleAttributes)
+        title.draw(in: titleFrame, withAttributes: titleAttributes)
 
         if let typeText, typeWidth > 0 {
             let typeX = min(contentFrame.minX + drawnTitleWidth + typeSpacing, maxContentX - typeWidth)

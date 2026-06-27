@@ -193,6 +193,9 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Date")
         XCTAssertEqual(controller.headerTypeTextForTesting(column: 1), "Float")
         XCTAssertEqual(controller.headerTypeTextForTesting(column: 2), "Categorical")
+        XCTAssertTrue(controller.headerDisplayTitleForTesting(column: 0)?.contains("Date") == true)
+        XCTAssertTrue(controller.headerDisplayTitleForTesting(column: 1)?.contains("Float") == true)
+        XCTAssertTrue(controller.headerDisplayTitleForTesting(column: 2)?.contains("Categorical") == true)
         XCTAssertEqual(controller.headerTooltipForTesting(column: 0), "visit_date\n\(L.t("Type: Date", "타입: Date"))")
     }
 
@@ -218,6 +221,7 @@ final class MainWindowControllerGridTests: XCTestCase {
         controller.openFileForTesting(URL(fileURLWithPath: secondPath))
 
         XCTAssertNil(controller.headerTypeTextForTesting(column: 0))
+        XCTAssertEqual(controller.headerDisplayTitleForTesting(column: 0), "name")
         XCTAssertNil(controller.headerTooltipForTesting(column: 0))
     }
 

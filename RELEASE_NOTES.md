@@ -13,6 +13,7 @@
 - Expanded CSV date inference for dotted, Korean, month-only, and compact `yyyyMMdd` date formats so Pivot Builder field tags and date analytics recognize more real-world date columns.
 - Added inferred type tags to grid headers, with header tooltips that include type and sort state.
 - Moved grid header type tags next to the column title so inferred types are visible during normal table scanning.
+- Added the inferred type to the grid header fallback title, for example `visit_date [Date]`, so types remain visible even if AppKit does not draw the custom badge.
 - Numeric distribution and date histogram actions now use inferred column types to choose numeric/date defaults when the selected column is not suitable.
 
 ## v1.6.1 - 2026-06-26

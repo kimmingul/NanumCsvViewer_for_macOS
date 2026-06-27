@@ -1465,13 +1465,15 @@ extension MainWindowController {
     private func updateSortHeaders() {
         for (index, name) in columnNames.enumerated() {
             let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))
-            column?.title = name
             let typeText = columnTypeText(index)
+            let displayTitle = headerDisplayTitle(columnName: name, typeText: typeText)
+            column?.title = displayTitle
             if let sortIndex = sortKeys.firstIndex(where: { $0.column == index }) {
                 let key = sortKeys[sortIndex]
                 let priority = sortKeys.count > 1 ? sortIndex + 1 : nil
                 if let header = column?.headerCell as? SortHeaderCell {
-                    header.stringValue = name
+                    header.stringValue = displayTitle
+                    header.titleText = name
                     header.sortPriority = priority
                     header.ascending = key.ascending
                     header.typeText = typeText
@@ -1479,7 +1481,8 @@ extension MainWindowController {
                 column?.headerToolTip = headerTooltip(columnName: name, typeText: typeText, sortKey: key, priority: priority)
             } else {
                 if let header = column?.headerCell as? SortHeaderCell {
-                    header.stringValue = name
+                    header.stringValue = displayTitle
+                    header.titleText = name
                     header.sortPriority = nil
                     header.ascending = nil
                     header.typeText = typeText
@@ -1492,6 +1495,11 @@ extension MainWindowController {
 
     private func columnTypeText(_ index: Int) -> String? {
         columnStatisticsReport?.columns[safe: index]?.inferredType.rawValue
+    }
+
+    private func headerDisplayTitle(columnName: String, typeText: String?) -> String {
+        guard let typeText else { return columnName }
+        return "\(columnName)  [\(typeText)]"
     }
 
     private func headerTooltip(columnName: String, typeText: String?, sortKey: SortKey?, priority: Int?) -> String? {
@@ -2825,6 +2833,13 @@ extension MainWindowController {
             .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
             .headerCell as? SortHeaderCell else { return nil }
         return header.typeText
+    }
+
+    func headerDisplayTitleForTesting(column: Int) -> String? {
+        tableView
+            .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
+            .headerCell
+            .stringValue
     }
 
     func headerTooltipForTesting(column: Int) -> String? {
