@@ -1466,6 +1466,7 @@ extension MainWindowController {
         for (index, name) in columnNames.enumerated() {
             let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))
             column?.title = name
+            let typeText = columnTypeText(index)
             if let sortIndex = sortKeys.firstIndex(where: { $0.column == index }) {
                 let key = sortKeys[sortIndex]
                 let priority = sortKeys.count > 1 ? sortIndex + 1 : nil
@@ -1473,21 +1474,38 @@ extension MainWindowController {
                     header.stringValue = name
                     header.sortPriority = priority
                     header.ascending = key.ascending
+                    header.typeText = typeText
                 }
-                column?.headerToolTip = L.t(
-                    "Sorted \(key.ascending ? "ascending" : "descending")\(priority.map { ", priority \($0)" } ?? "")",
-                    "\(key.ascending ? "오름차순" : "내림차순") 정렬\(priority.map { ", \($0)순위" } ?? "")"
-                )
+                column?.headerToolTip = headerTooltip(columnName: name, typeText: typeText, sortKey: key, priority: priority)
             } else {
                 if let header = column?.headerCell as? SortHeaderCell {
                     header.stringValue = name
                     header.sortPriority = nil
                     header.ascending = nil
+                    header.typeText = typeText
                 }
-                column?.headerToolTip = nil
+                column?.headerToolTip = headerTooltip(columnName: name, typeText: typeText, sortKey: nil, priority: nil)
             }
         }
         tableView.headerView?.needsDisplay = true
+    }
+
+    private func columnTypeText(_ index: Int) -> String? {
+        columnStatisticsReport?.columns[safe: index]?.inferredType.rawValue
+    }
+
+    private func headerTooltip(columnName: String, typeText: String?, sortKey: SortKey?, priority: Int?) -> String? {
+        var lines = [columnName]
+        if let typeText {
+            lines.append(L.t("Type: \(typeText)", "타입: \(typeText)"))
+        }
+        if let sortKey {
+            lines.append(L.t(
+                "Sorted \(sortKey.ascending ? "ascending" : "descending")\(priority.map { ", priority \($0)" } ?? "")",
+                "\(sortKey.ascending ? "오름차순" : "내림차순") 정렬\(priority.map { ", \($0)순위" } ?? "")"
+            ))
+        }
+        return lines.count > 1 ? lines.joined(separator: "\n") : nil
     }
 
     @objc func toggleDetailPanel(_ sender: Any?) {
@@ -1555,7 +1573,8 @@ extension MainWindowController {
 
     @objc func showNumericDistribution(_ sender: Any?) {
         guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let column = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        let selectedColumn = clampedCurrentDataColumn()
+        let column = isNumericColumn(selectedColumn) ? selectedColumn : (firstNumericColumn(excluding: -1) ?? selectedColumn)
         do {
             let distribution = try doc.numericDistribution(column: column, binCount: 10, cancellation: CancellationFlag())
             setInspectorVisible(true, animated: true)
@@ -1568,7 +1587,8 @@ extension MainWindowController {
 
     @objc func showDateHistogram(_ sender: Any?) {
         guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
-        let dateColumn = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+        let selectedColumn = clampedCurrentDataColumn()
+        let dateColumn = isDateColumn(selectedColumn) ? selectedColumn : (firstDateColumn(excluding: -1) ?? selectedColumn)
         let valueColumn = firstNumericColumn(excluding: dateColumn)
         do {
             let histogram = try doc.dateHistogram(dateColumn: dateColumn, valueColumn: valueColumn, period: .month, cancellation: CancellationFlag())
@@ -2283,11 +2303,13 @@ extension MainWindowController {
                 DispatchQueue.main.async {
                     guard doc === self?.csvDocument else { return }
                     self?.columnStatisticsReport = report
+                    self?.updateSortHeaders()
                 }
             } catch {
                 DispatchQueue.main.async {
                     guard doc === self?.csvDocument else { return }
                     self?.columnStatisticsReport = nil
+                    self?.updateSortHeaders()
                 }
             }
         }
@@ -2337,9 +2359,32 @@ extension MainWindowController {
         detailTextView.string = lines.joined(separator: "\n")
     }
 
+    func clampedCurrentDataColumn() -> Int {
+        max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+    }
+
+    func inferredType(column: Int) -> ColumnValueType? {
+        columnStatisticsReport?.columns[safe: column]?.inferredType
+    }
+
+    func isNumericColumn(_ column: Int) -> Bool {
+        guard let type = inferredType(column: column) else { return true }
+        return [.integer, .float].contains(type)
+    }
+
+    func isDateColumn(_ column: Int) -> Bool {
+        inferredType(column: column) == .date
+    }
+
     func firstNumericColumn(excluding excluded: Int) -> Int? {
         columnStatisticsReport?.columns.first {
             $0.index != excluded && [.integer, .float].contains($0.inferredType)
+        }?.index
+    }
+
+    func firstDateColumn(excluding excluded: Int) -> Int? {
+        columnStatisticsReport?.columns.first {
+            $0.index != excluded && $0.inferredType == .date
         }?.index
     }
 
@@ -2765,6 +2810,27 @@ extension MainWindowController {
 
     var selectedValueTextForTesting: String {
         selectedValueTextView.string
+    }
+
+    var detailHeaderTextForTesting: String {
+        detailHeaderLabel.stringValue
+    }
+
+    var detailTextForTesting: String {
+        detailTextView.string
+    }
+
+    func headerTypeTextForTesting(column: Int) -> String? {
+        guard let header = tableView
+            .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
+            .headerCell as? SortHeaderCell else { return nil }
+        return header.typeText
+    }
+
+    func headerTooltipForTesting(column: Int) -> String? {
+        tableView
+            .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
+            .headerToolTip
     }
 }
 #endif

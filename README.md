@@ -10,7 +10,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Recovery for malformed first-row quotes that would otherwise hide following rows
 - Virtual row rendering with `NSTableView`
 - Background indexing progress
-- Column statistics and type inference panel
+- Column statistics with inferred type tags in grid headers
 - Expression-based advanced filters, column filters, and selected-cell value filters
 - Advanced find with plain text, `regex:pattern`, `/pattern/`, and `fuzzy:term`
 - Go to Row command for direct navigation by source row number
@@ -26,7 +26,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Expandable selected value bar for multiline cells
 - Performance dashboard with row, file, storage, indexing, and throughput metrics; memory and repeatable benchmark UI remain roadmap follow-ups
 - Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
-- Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests
+- Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests, with numeric/date defaults guided by inferred column types
 - Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
@@ -84,6 +84,7 @@ swift run NanumCsvViewerMac
   - `fuzzy:term` for ordered-character fuzzy matching
 - Use `View > Save Current View` and `View > Restore Saved View` to keep a per-file view state.
 - Use `View > Performance Dashboard` to inspect row counts, storage mode, indexing time, and throughput.
+- Use the grid header tags to quickly check inferred column types. Analysis actions and Pivot Builder field tags use the same type inference, including common CSV date formats such as dotted, Korean, month-only, and compact `yyyyMMdd` dates.
 - Use `Analysis > Pivot Table` to open the Pivot Builder, then search and add fields by dragging, using the field buttons, or right-clicking a field. Assigned field chips can be dragged between Rows, Columns, Values, and Filters, and dimension chips can be reordered. Values are measures with aggregation; Rows, Columns, and Filters are dimensions. Rows and Columns are optional, and the Pivot Table and Pivot Chart tabs update in the builder's large result panel.
 - Use `File > Export as Markdown...`, `Export as JSON...`, or `Export as HTML...` to share the current filtered/sorted view with only visible columns.
 - Expand the selected value bar with the chevron button when a selected cell contains multiline content.
