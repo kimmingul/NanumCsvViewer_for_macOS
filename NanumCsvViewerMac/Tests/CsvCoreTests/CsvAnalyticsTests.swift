@@ -191,6 +191,100 @@ final class CsvAnalyticsTests: XCTestCase {
         XCTAssertEqual(columnsOnly.value(row: [], column: ["Treatment"]), 12)
     }
 
+    func testPivotTableAppliesFilterSelections() throws {
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let pivot = try doc.pivotTable(
+            rowColumns: [0],
+            columnColumns: [],
+            valueColumn: 2,
+            function: .sum,
+            filters: [PivotFilter(column: 1, selectedValue: "Control")],
+            cancellation: CancellationFlag()
+        )
+
+        XCTAssertEqual(pivot.rowKeys, [["A"], ["B"]])
+        XCTAssertEqual(pivot.value(row: ["A"], column: []), 3)
+        XCTAssertEqual(pivot.value(row: ["B"], column: []), 2)
+    }
+
+    func testPivotTableGroupsDateDimensionsByPeriod() throws {
+        let (doc, path) = try openIndexed("""
+        visit_date,value
+        2026-01-02,3
+        2026-01-20,7
+        2026-02-01,2
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let pivot = try doc.pivotTable(
+            rowColumns: [0],
+            columnColumns: [],
+            valueColumn: 1,
+            function: .sum,
+            dateGroupings: [0: .month],
+            cancellation: CancellationFlag()
+        )
+
+        XCTAssertEqual(pivot.rowKeys, [["2026-01"], ["2026-02"]])
+        XCTAssertEqual(pivot.value(row: ["2026-01"], column: []), 10)
+        XCTAssertEqual(pivot.value(row: ["2026-02"], column: []), 2)
+    }
+
+    func testPivotTableAppliesDateGroupedFilterSelection() throws {
+        let (doc, path) = try openIndexed("""
+        visit_date,site,value
+        2026-01-02,A,3
+        2026-02-01,A,7
+        2027-01-01,A,11
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let pivot = try doc.pivotTable(
+            rowColumns: [1],
+            columnColumns: [],
+            valueColumn: 2,
+            function: .sum,
+            filters: [PivotFilter(column: 0, selectedValue: "2026")],
+            dateGroupings: [0: .year],
+            cancellation: CancellationFlag()
+        )
+
+        XCTAssertEqual(pivot.rowKeys, [["A"]])
+        XCTAssertEqual(pivot.value(row: ["A"], column: []), 10)
+    }
+
+    func testPivotFilterValuesHonorsDateGroupingAndRowLimit() throws {
+        let (doc, path) = try openIndexed("""
+        visit_date,value
+        2026-01-02,3
+        2026-02-01,7
+        2027-01-01,11
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let values = try doc.pivotFilterValues(
+            column: 0,
+            dateGrouping: .year,
+            limit: 500,
+            rowLimit: 2,
+            cancellation: CancellationFlag()
+        )
+
+        XCTAssertEqual(values, ["2026"])
+    }
+
     func testPivotTableHonorsCancellationDuringAggregation() {
         let rows = (0..<20_000).map { index in
             ["A", "\(index)"]

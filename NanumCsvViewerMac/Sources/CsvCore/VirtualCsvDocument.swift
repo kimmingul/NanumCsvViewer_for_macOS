@@ -903,10 +903,14 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         columnColumns: [Int],
         valueColumn: Int,
         function: AggregationFunction,
+        filters: [PivotFilter] = [],
+        dateGroupings: [Int: DateBinPeriod] = [:],
         cancellation: CancellationFlag
     ) throws -> PivotTableResult {
         let rowColumns = rowColumns.filter { $0 >= 0 && $0 < columnCount }
         let columnColumns = columnColumns.filter { $0 >= 0 && $0 < columnCount }
+        let filters = filters.filter { $0.column >= 0 && $0.column < columnCount }
+        let dateGroupings = dateGroupings.filter { column, _ in column >= 0 && column < columnCount }
         guard valueColumn >= 0, valueColumn < columnCount else {
             return PivotTableResult(
                 rowColumns: rowColumns,
@@ -926,8 +930,34 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             columnColumns: columnColumns,
             valueColumn: valueColumn,
             function: function,
+            filters: filters,
+            dateGroupings: dateGroupings,
             cancellation: cancellation
         )
+    }
+
+    public func pivotFilterValues(
+        column: Int,
+        dateGrouping: DateBinPeriod?,
+        limit: Int = 500,
+        rowLimit: Int = 50_000,
+        cancellation: CancellationFlag
+    ) throws -> [String] {
+        guard column >= 0, column < columnCount else { return [] }
+        var values: Set<String> = []
+        let dateGroupings = dateGrouping.map { [column: $0] } ?? [:]
+        let upperBound = min(displayRowCount, max(0, rowLimit))
+        for viewRow in 0..<upperBound {
+            if viewRow & 0x3FFF == 0 { try cancellation.check() }
+            let row = try getDisplayRow(viewRow)
+            values.insert(CsvAnalytics.pivotKeyValue(row: row, column: column, dateGroupings: dateGroupings))
+            if values.count >= limit {
+                break
+            }
+        }
+        return values.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
     }
 
     public func correlation(xColumn: Int, yColumn: Int, method: CorrelationMethod, cancellation: CancellationFlag) throws -> CorrelationResult {

@@ -44,6 +44,8 @@ struct PivotBuilderLayout: Equatable {
     var columns: [Int] = []
     var value: Int?
     var filters: [Int] = []
+    var filterSelections: [Int: String] = [:]
+    var dateGroupings: [Int: DateBinPeriod] = [:]
     var function: AggregationFunction = .count
 
     var isRunnable: Bool {

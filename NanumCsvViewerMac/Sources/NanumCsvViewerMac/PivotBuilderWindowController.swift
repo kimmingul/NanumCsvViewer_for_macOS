@@ -35,8 +35,13 @@ final class PivotBuilderWindowController: NSWindowController {
     private let previewContainer = NSView()
     private let emptyPreviewLabel = NSTextField(labelWithString: "")
     private let resultSummaryLabel = NSTextField(labelWithString: "")
+    private let dateGroupControlsStack = NSStackView()
+    private let filterControlsStack = NSStackView()
     private var zoneViews: [PivotDropZone: PivotDropZoneView] = [:]
     private var fieldActionButtons: [PivotDropZone: NSButton] = [:]
+    private var dateDimensionGroupPopups: [Int: NSPopUpButton] = [:]
+    private var filterValuePopups: [Int: NSPopUpButton] = [:]
+    private var filterDateGroupPopups: [Int: NSPopUpButton] = [:]
 
     init(
         document: VirtualCsvDocument,
@@ -117,10 +122,16 @@ final class PivotBuilderWindowController: NSWindowController {
         fields = fields.map { field in
             PivotField(index: field.index, name: field.name, valueType: typesByIndex[field.index])
         }
+        let didAddDateGrouping = ensureDateGroupingDefaultsForAssignedFields()
         typeAnalysisCancellation = nil
         applyFieldSearch()
         refreshZones()
+        refreshDateGroupControls()
+        refreshFilterControls()
         updateFieldActionButtons()
+        if didAddDateGrouping {
+            refreshPreview()
+        }
     }
 
     func assignField(_ index: Int, to zone: PivotDropZone) {
@@ -139,7 +150,10 @@ final class PivotBuilderWindowController: NSWindowController {
         case .filters:
             insertUnique(index, into: &layout.filters, at: targetPosition)
         }
+        ensureDateGroupingDefaultIfNeeded(for: index)
         refreshZones()
+        refreshDateGroupControls()
+        refreshFilterControls()
         refreshPreview()
     }
 
@@ -163,6 +177,8 @@ final class PivotBuilderWindowController: NSWindowController {
     func removeField(_ index: Int, from zone: PivotDropZone) {
         removeFieldFromLayout(index, from: zone)
         refreshZones()
+        refreshDateGroupControls()
+        refreshFilterControls()
         refreshPreview()
     }
 
@@ -178,7 +194,9 @@ final class PivotBuilderWindowController: NSWindowController {
             }
         case .filters:
             layout.filters.removeAll { $0 == index }
+            layout.filterSelections.removeValue(forKey: index)
         }
+        cleanupDateGroupingIfUnused(for: index)
     }
 
     private func insertUnique(_ index: Int, into target: inout [Int], at position: Int?) {
@@ -225,6 +243,33 @@ final class PivotBuilderWindowController: NSWindowController {
         case .filters:
             return layout.filters.firstIndex(of: index)
         }
+    }
+
+    @discardableResult
+    private func ensureDateGroupingDefaultIfNeeded(for index: Int) -> Bool {
+        guard isDateField(index), layout.dateGroupings[index] == nil else { return false }
+        layout.dateGroupings[index] = .month
+        return true
+    }
+
+    @discardableResult
+    private func ensureDateGroupingDefaultsForAssignedFields() -> Bool {
+        var changed = false
+        for index in Set(layout.rows + layout.columns + layout.filters) {
+            changed = ensureDateGroupingDefaultIfNeeded(for: index) || changed
+        }
+        return changed
+    }
+
+    private func cleanupDateGroupingIfUnused(for index: Int) {
+        guard !layout.rows.contains(index),
+              !layout.columns.contains(index),
+              !layout.filters.contains(index) else { return }
+        layout.dateGroupings.removeValue(forKey: index)
+    }
+
+    private func isDateField(_ index: Int) -> Bool {
+        fields[safe: index]?.valueType == .date
     }
 
     private func buildInterface() {
@@ -369,7 +414,7 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func makeDimensionSection() -> NSView {
         let section = NSView()
-        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 222).isActive = true
+        section.heightAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
 
         let title = NSTextField(labelWithString: L.t("Dimensions", "차원"))
         title.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -386,12 +431,20 @@ final class PivotBuilderWindowController: NSWindowController {
         let columns = makeDropZone(.columns)
         let filters = makeDropZone(.filters)
         filters.translatesAutoresizingMaskIntoConstraints = false
+        dateGroupControlsStack.orientation = .vertical
+        dateGroupControlsStack.spacing = 6
+        dateGroupControlsStack.translatesAutoresizingMaskIntoConstraints = false
+        filterControlsStack.orientation = .vertical
+        filterControlsStack.spacing = 6
+        filterControlsStack.translatesAutoresizingMaskIntoConstraints = false
         firstRow.addArrangedSubview(rows)
         firstRow.addArrangedSubview(columns)
 
         section.addSubview(title)
         section.addSubview(firstRow)
+        section.addSubview(dateGroupControlsStack)
         section.addSubview(filters)
+        section.addSubview(filterControlsStack)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             title.trailingAnchor.constraint(equalTo: section.trailingAnchor),
@@ -400,12 +453,20 @@ final class PivotBuilderWindowController: NSWindowController {
             firstRow.trailingAnchor.constraint(equalTo: section.trailingAnchor),
             firstRow.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             firstRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
+            dateGroupControlsStack.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            dateGroupControlsStack.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            dateGroupControlsStack.topAnchor.constraint(equalTo: firstRow.bottomAnchor, constant: 8),
             filters.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             filters.trailingAnchor.constraint(equalTo: section.trailingAnchor),
-            filters.topAnchor.constraint(equalTo: firstRow.bottomAnchor, constant: 8),
+            filters.topAnchor.constraint(equalTo: dateGroupControlsStack.bottomAnchor, constant: 8),
             filters.heightAnchor.constraint(greaterThanOrEqualToConstant: 92),
-            filters.bottomAnchor.constraint(equalTo: section.bottomAnchor)
+            filterControlsStack.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            filterControlsStack.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            filterControlsStack.topAnchor.constraint(equalTo: filters.bottomAnchor, constant: 8),
+            filterControlsStack.bottomAnchor.constraint(equalTo: section.bottomAnchor)
         ])
+        refreshDateGroupControls()
+        refreshFilterControls()
         return section
     }
 
@@ -557,6 +618,17 @@ final class PivotBuilderWindowController: NSWindowController {
         setAggregation(function)
     }
 
+    @objc private func filterValueChanged(_ sender: NSPopUpButton) {
+        let column = sender.tag
+        let selected = sender.selectedItem?.representedObject as? String
+        setFilterSelection(column: column, value: selected)
+    }
+
+    @objc private func dateGroupingChanged(_ sender: NSPopUpButton) {
+        guard let period = selectedDatePeriod(in: sender) else { return }
+        setDateGrouping(column: sender.tag, period: period)
+    }
+
     @objc private func fieldDoubleClicked(_ sender: NSTableView) {
         addSelectedFieldToDefaultZone()
     }
@@ -624,6 +696,31 @@ final class PivotBuilderWindowController: NSWindowController {
         assignField(selected.index, to: zone)
     }
 
+    private func setFilterSelection(column: Int, value: String?) {
+        guard layout.filters.contains(column) else { return }
+        if let value {
+            layout.filterSelections[column] = value
+        } else {
+            layout.filterSelections.removeValue(forKey: column)
+        }
+        refreshZones()
+        refreshFilterControls()
+        refreshPreview()
+    }
+
+    private func setDateGrouping(column: Int, period: DateBinPeriod) {
+        guard isDateField(column) else { return }
+        let previous = layout.dateGroupings[column]
+        layout.dateGroupings[column] = period
+        if previous != period {
+            layout.filterSelections.removeValue(forKey: column)
+        }
+        refreshZones()
+        refreshDateGroupControls()
+        refreshFilterControls()
+        refreshPreview()
+    }
+
     private func selectedField() -> PivotField? {
         fieldForVisibleRow(fieldTable.selectedRow)
     }
@@ -689,8 +786,8 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func refreshZones() {
-        zoneViews[.rows]?.setFields(layout.rows.compactMap { fields[safe: $0] })
-        zoneViews[.columns]?.setFields(layout.columns.compactMap { fields[safe: $0] })
+        zoneViews[.rows]?.setFieldItems(layout.rows.compactMap { fieldItem(for: $0, zone: .rows) })
+        zoneViews[.columns]?.setFieldItems(layout.columns.compactMap { fieldItem(for: $0, zone: .columns) })
         if let value = layout.value {
             zoneViews[.values]?.setFieldItems([
                 (index: value, name: "\(layout.function.rawValue) of \(fields[value].name)", removable: true)
@@ -698,7 +795,155 @@ final class PivotBuilderWindowController: NSWindowController {
         } else {
             zoneViews[.values]?.setFieldItems([])
         }
-        zoneViews[.filters]?.setFields(layout.filters.compactMap { fields[safe: $0] })
+        zoneViews[.filters]?.setFieldItems(layout.filters.compactMap { fieldItem(for: $0, zone: .filters) })
+    }
+
+    private func refreshDateGroupControls() {
+        dateGroupControlsStack.arrangedSubviews.forEach { view in
+            dateGroupControlsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        dateDimensionGroupPopups = [:]
+
+        let indexes = orderedUnique(layout.rows + layout.columns).filter(isDateField)
+        dateGroupControlsStack.isHidden = indexes.isEmpty
+        for index in indexes {
+            dateGroupControlsStack.addArrangedSubview(makeDateDimensionControlRow(for: index))
+        }
+    }
+
+    private func makeDateDimensionControlRow(for index: Int) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+
+        let label = NSTextField(labelWithString: L.t("Group \(fields[index].name) by", "\(fields[index].name) 그룹"))
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let popup = makeDateGroupingPopup(for: index)
+        dateDimensionGroupPopups[index] = popup
+
+        row.addArrangedSubview(label)
+        row.addArrangedSubview(popup)
+        return row
+    }
+
+    private func fieldItem(for index: Int, zone: PivotDropZone) -> (index: Int, name: String, removable: Bool)? {
+        guard fields.indices.contains(index) else { return nil }
+        return (index: index, name: assignedFieldTitle(index, zone: zone), removable: true)
+    }
+
+    private func assignedFieldTitle(_ index: Int, zone: PivotDropZone) -> String {
+        guard let field = fields[safe: index] else { return L.t("Field", "필드") }
+        var title = field.name
+        if isDateField(index), let period = layout.dateGroupings[index] {
+            title += " (\(period.rawValue))"
+        }
+        if zone == .filters {
+            let selected = layout.filterSelections[index] ?? L.t("All", "전체")
+            title += ": \(selected)"
+        }
+        return title
+    }
+
+    private func refreshFilterControls() {
+        filterControlsStack.arrangedSubviews.forEach { view in
+            filterControlsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        filterValuePopups = [:]
+        filterDateGroupPopups = [:]
+        filterControlsStack.isHidden = layout.filters.isEmpty
+
+        for index in layout.filters {
+            guard fields.indices.contains(index) else { continue }
+            filterControlsStack.addArrangedSubview(makeFilterControlRow(for: index))
+        }
+    }
+
+    private func makeFilterControlRow(for index: Int) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+
+        let label = NSTextField(labelWithString: fields[index].name)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        row.addArrangedSubview(label)
+
+        if isDateField(index) {
+            let groupingPopup = makeDateGroupingPopup(for: index)
+            filterDateGroupPopups[index] = groupingPopup
+            row.addArrangedSubview(groupingPopup)
+        }
+
+        let valuePopup = NSPopUpButton()
+        valuePopup.controlSize = .small
+        valuePopup.tag = index
+        valuePopup.target = self
+        valuePopup.action = #selector(filterValueChanged(_:))
+        valuePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        valuePopup.addItem(withTitle: L.t("All", "전체"))
+        valuePopup.lastItem?.representedObject = nil
+        let selectedValue = layout.filterSelections[index]
+        var selectedIndex = 0
+        for option in filterOptions(for: index) {
+            valuePopup.addItem(withTitle: option.isEmpty ? L.t("(Blank)", "(빈 값)") : option)
+            valuePopup.lastItem?.representedObject = option
+            if option == selectedValue {
+                selectedIndex = valuePopup.numberOfItems - 1
+            }
+        }
+        valuePopup.selectItem(at: selectedIndex)
+        filterValuePopups[index] = valuePopup
+        row.addArrangedSubview(valuePopup)
+        return row
+    }
+
+    private func makeDateGroupingPopup(for index: Int) -> NSPopUpButton {
+        let popup = NSPopUpButton()
+        popup.controlSize = .small
+        popup.tag = index
+        popup.target = self
+        popup.action = #selector(dateGroupingChanged(_:))
+        for period in [DateBinPeriod.year, .month, .day] {
+            popup.addItem(withTitle: period.rawValue)
+            popup.lastItem?.representedObject = period.rawValue
+        }
+        popup.selectItem(withTitle: (layout.dateGroupings[index] ?? .month).rawValue)
+        return popup
+    }
+
+    private func filterOptions(for index: Int) -> [String] {
+        do {
+            return try csvDocument.pivotFilterValues(
+                column: index,
+                dateGrouping: layout.dateGroupings[index],
+                cancellation: CancellationFlag()
+            )
+        } catch {
+            return []
+        }
+    }
+
+    private func selectedDatePeriod(in popup: NSPopUpButton) -> DateBinPeriod? {
+        guard let rawValue = popup.selectedItem?.representedObject as? String else { return nil }
+        return DateBinPeriod(rawValue: rawValue)
+    }
+
+    private func orderedUnique(_ values: [Int]) -> [Int] {
+        var seen: Set<Int> = []
+        var output: [Int] = []
+        for value in values where !seen.contains(value) {
+            seen.insert(value)
+            output.append(value)
+        }
+        return output
     }
 
     private func refreshPreview() {
@@ -733,6 +978,8 @@ final class PivotBuilderWindowController: NSWindowController {
         let document = csvDocument
         let rows = layout.rows
         let columns = layout.columns
+        let filters = layout.filterSelections.map { PivotFilter(column: $0.key, selectedValue: $0.value) }
+        let dateGroupings = layout.dateGroupings
         let function = layout.function
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
@@ -741,6 +988,8 @@ final class PivotBuilderWindowController: NSWindowController {
                     columnColumns: columns,
                     valueColumn: value,
                     function: function,
+                    filters: filters,
+                    dateGroupings: dateGroupings,
                     cancellation: cancellation
                 )
                 DispatchQueue.main.async { [weak self] in
@@ -804,7 +1053,7 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func rowHeaderTitle() -> String {
-        let title = layout.rows.compactMap { fields[safe: $0]?.name }.joined(separator: " | ")
+        let title = layout.rows.map { assignedFieldTitle($0, zone: .rows) }.joined(separator: " | ")
         return title.isEmpty ? L.t("Total", "합계") : title
     }
 
@@ -1046,6 +1295,24 @@ extension PivotBuilderWindowController {
         targetPosition: Int
     ) {
         moveAssignedField(index, from: sourceZone, to: targetZone, targetPosition: targetPosition)
+    }
+
+    func setFilterSelectionForTesting(column: Int, value: String?) {
+        setFilterSelection(column: column, value: value)
+    }
+
+    func setDateGroupingForTesting(column: Int, period: DateBinPeriod) {
+        setDateGrouping(column: column, period: period)
+    }
+
+    var dateDimensionGroupingControlCountForTesting: Int {
+        dateDimensionGroupPopups.count
+    }
+
+    func selectDateGroupingPopupForTesting(column: Int, period: DateBinPeriod) {
+        guard let popup = dateDimensionGroupPopups[column] ?? filterDateGroupPopups[column] else { return }
+        popup.selectItem(withTitle: period.rawValue)
+        dateGroupingChanged(popup)
     }
 
     func setFieldSearchTextForTesting(_ text: String) {

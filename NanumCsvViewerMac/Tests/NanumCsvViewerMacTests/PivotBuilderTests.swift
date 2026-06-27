@@ -183,6 +183,137 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.chartModelForTesting?.categories, ["Control", "Treatment"])
     }
 
+    func testBuilderFilterSelectionAffectsPreview() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .filters)
+        builder.assignFieldForTesting(2, to: .values)
+        builder.setAggregationForTesting(.sum)
+        builder.setFilterSelectionForTesting(column: 1, value: "Control")
+        try waitForPreview(builder) {
+            $0.previewRowForTesting(0) == ["A", "3"]
+        }
+
+        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Sum of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), ["A", "3"])
+        XCTAssertEqual(builder.previewRowForTesting(1), ["B", "2"])
+    }
+
+    func testBuilderGroupsDateRowsByMonthAndCanSwitchToYear() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        visit_date,value
+        2026-01-02,3
+        2026-01-20,7
+        2026-02-01,2
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(
+            document: doc,
+            columnNames: doc.header,
+            columnStatisticsReport: statistics
+        )
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder) {
+            $0.previewHeadersForTesting == ["visit_date (Month)", "Sum of value"]
+        }
+
+        XCTAssertEqual(builder.dateDimensionGroupingControlCountForTesting, 1)
+        XCTAssertEqual(builder.previewHeadersForTesting, ["visit_date (Month)", "Sum of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), ["2026-01", "10"])
+        XCTAssertEqual(builder.previewRowForTesting(1), ["2026-02", "2"])
+
+        builder.selectDateGroupingPopupForTesting(column: 0, period: .year)
+        try waitForPreview(builder) {
+            $0.previewHeadersForTesting == ["visit_date (Year)", "Sum of value"]
+        }
+
+        XCTAssertEqual(builder.previewHeadersForTesting, ["visit_date (Year)", "Sum of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), ["2026", "12"])
+    }
+
+    func testBuilderGroupsDateColumnsByMonthAndCanSwitchToYear() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        visit_date,value
+        2026-01-02,3
+        2026-01-20,7
+        2026-02-01,2
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(
+            document: doc,
+            columnNames: doc.header,
+            columnStatisticsReport: statistics
+        )
+
+        builder.assignFieldForTesting(0, to: .columns)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder) {
+            $0.previewHeadersForTesting == [L.t("Total", "합계"), "2026-01", "2026-02"]
+        }
+
+        XCTAssertEqual(builder.dateDimensionGroupingControlCountForTesting, 1)
+        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "10", "2"])
+
+        builder.selectDateGroupingPopupForTesting(column: 0, period: .year)
+        try waitForPreview(builder) {
+            $0.previewHeadersForTesting == [L.t("Total", "합계"), "2026"]
+        }
+
+        XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "12"])
+    }
+
+    func testBuilderAppliesDateGroupedFilterSelection() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        visit_date,site,value
+        2026-01-02,A,3
+        2026-02-01,A,7
+        2027-01-01,A,11
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(
+            document: doc,
+            columnNames: doc.header,
+            columnStatisticsReport: statistics
+        )
+
+        builder.assignFieldForTesting(1, to: .rows)
+        builder.assignFieldForTesting(0, to: .filters)
+        builder.assignFieldForTesting(2, to: .values)
+        builder.setAggregationForTesting(.sum)
+        builder.selectDateGroupingPopupForTesting(column: 0, period: .year)
+        builder.setFilterSelectionForTesting(column: 0, value: "2026")
+        try waitForPreview(builder) {
+            $0.previewRowForTesting(0) == ["A", "10"]
+        }
+
+        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Sum of value"])
+        XCTAssertEqual(builder.previewRowForTesting(0), ["A", "10"])
+    }
+
     func testBuilderReservesMajorityOfWindowForPivotResults() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""
@@ -466,11 +597,16 @@ final class PivotBuilderTests: XCTestCase {
         XCTFail("Timed out waiting for indexing", file: file, line: line)
     }
 
-    private func waitForPreview(_ builder: PivotBuilderWindowController, file: StaticString = #filePath, line: UInt = #line) throws {
+    private func waitForPreview(
+        _ builder: PivotBuilderWindowController,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        until condition: ((PivotBuilderWindowController) -> Bool)? = nil
+    ) throws {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
-            if !builder.previewHeadersForTesting.isEmpty {
+            if !builder.previewHeadersForTesting.isEmpty, condition?(builder) ?? true {
                 return
             }
         }

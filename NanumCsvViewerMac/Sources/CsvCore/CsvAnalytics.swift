@@ -111,6 +111,16 @@ public struct PivotTableResult: Equatable, Sendable {
     }
 }
 
+public struct PivotFilter: Equatable, Sendable {
+    public let column: Int
+    public let selectedValue: String?
+
+    public init(column: Int, selectedValue: String?) {
+        self.column = column
+        self.selectedValue = selectedValue
+    }
+}
+
 public struct PivotCellKey: Hashable, Codable, Sendable {
     public let row: [String]
     public let column: [String]
@@ -213,16 +223,20 @@ enum CsvAnalytics {
         columnColumns: [Int],
         valueColumn: Int,
         function: AggregationFunction,
+        filters: [PivotFilter] = [],
+        dateGroupings: [Int: DateBinPeriod] = [:],
         cancellation: CancellationFlag? = nil
     ) throws -> PivotTableResult {
         var raw: [PivotCellKey: [String]] = [:]
         var rowKeySet: Set<[String]> = []
         var columnKeySet: Set<[String]> = []
+        let activeFilters = filters.filter { $0.selectedValue != nil }
 
         for (index, row) in rows.enumerated() {
             if index & 0x3FFF == 0 { try cancellation?.check() }
-            let rowKey = rowColumns.map { column in column < row.count ? row[column] : "" }
-            let columnKey = columnColumns.map { column in column < row.count ? row[column] : "" }
+            guard pivotRow(row, matches: activeFilters, dateGroupings: dateGroupings) else { continue }
+            let rowKey = rowColumns.map { pivotKeyValue(row: row, column: $0, dateGroupings: dateGroupings) }
+            let columnKey = columnColumns.map { pivotKeyValue(row: row, column: $0, dateGroupings: dateGroupings) }
             let value = valueColumn < row.count ? row[valueColumn] : ""
             rowKeySet.insert(rowKey)
             columnKeySet.insert(columnKey)
@@ -249,6 +263,29 @@ enum CsvAnalytics {
             columnKeys: columnKeys,
             values: values
         )
+    }
+
+    static func pivotKeyValue(row: [String], column: Int, dateGroupings: [Int: DateBinPeriod]) -> String {
+        let raw = column < row.count ? row[column] : ""
+        guard let period = dateGroupings[column],
+              let date = CsvDateParser.parse(raw, allowCompactNumeric: true) else {
+            return raw
+        }
+        return dateLabel(date, period: period)
+    }
+
+    private static func pivotRow(
+        _ row: [String],
+        matches filters: [PivotFilter],
+        dateGroupings: [Int: DateBinPeriod]
+    ) -> Bool {
+        for filter in filters {
+            guard let selectedValue = filter.selectedValue else { continue }
+            if pivotKeyValue(row: row, column: filter.column, dateGroupings: dateGroupings) != selectedValue {
+                return false
+            }
+        }
+        return true
     }
 
     private static func aggregate(_ function: AggregationFunction, rawValues: [String], numbers: [Double]) -> Double {
