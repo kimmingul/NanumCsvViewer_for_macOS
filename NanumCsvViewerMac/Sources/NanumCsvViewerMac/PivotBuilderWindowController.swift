@@ -14,11 +14,13 @@ final class PivotBuilderWindowController: NSWindowController {
     private var previewGeneration = 0
     private var previewIsComputing = false
     private var controlSectionTitles: [String] = []
+    private var filteredFieldIndexes: [Int] = []
 
     private let rootSplit = NSSplitView()
     private let controlPane = NSView()
     private let resultPane = PivotResultPaneView()
     private let fieldTable = PivotFieldTableView()
+    private let fieldSearch = NSSearchField()
     private let fieldScroll = NSScrollView()
     private let tablePreview = NSTableView()
     private let tableScroll = NSScrollView()
@@ -34,6 +36,7 @@ final class PivotBuilderWindowController: NSWindowController {
     init(document: VirtualCsvDocument, columnNames: [String], columnStatisticsReport: ColumnStatisticsReport? = nil) {
         csvDocument = document
         fields = Self.makeFields(columnNames: columnNames, columnStatisticsReport: columnStatisticsReport)
+        filteredFieldIndexes = Array(fields.indices)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -104,22 +107,26 @@ final class PivotBuilderWindowController: NSWindowController {
             PivotField(index: field.index, name: field.name, valueType: typesByIndex[field.index])
         }
         typeAnalysisCancellation = nil
-        fieldTable.reloadData()
+        applyFieldSearch()
         refreshZones()
         updateFieldActionButtons()
     }
 
     func assignField(_ index: Int, to zone: PivotDropZone) {
+        assignField(index, to: zone, targetPosition: nil)
+    }
+
+    private func assignField(_ index: Int, to zone: PivotDropZone, targetPosition: Int?) {
         guard fields.indices.contains(index) else { return }
         switch zone {
         case .rows:
-            appendUnique(index, to: &layout.rows)
+            insertUnique(index, into: &layout.rows, at: targetPosition)
         case .columns:
-            appendUnique(index, to: &layout.columns)
+            insertUnique(index, into: &layout.columns, at: targetPosition)
         case .values:
             layout.value = index
         case .filters:
-            appendUnique(index, to: &layout.filters)
+            insertUnique(index, into: &layout.filters, at: targetPosition)
         }
         refreshZones()
         refreshPreview()
@@ -133,6 +140,12 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     func removeField(_ index: Int, from zone: PivotDropZone) {
+        removeFieldFromLayout(index, from: zone)
+        refreshZones()
+        refreshPreview()
+    }
+
+    private func removeFieldFromLayout(_ index: Int, from zone: PivotDropZone) {
         switch zone {
         case .rows:
             layout.rows.removeAll { $0 == index }
@@ -145,13 +158,52 @@ final class PivotBuilderWindowController: NSWindowController {
         case .filters:
             layout.filters.removeAll { $0 == index }
         }
-        refreshZones()
-        refreshPreview()
     }
 
-    private func appendUnique(_ index: Int, to target: inout [Int]) {
+    private func insertUnique(_ index: Int, into target: inout [Int], at position: Int?) {
         guard !target.contains(index) else { return }
-        target.append(index)
+        let insertionIndex = min(max(0, position ?? target.count), target.count)
+        target.insert(index, at: insertionIndex)
+    }
+
+    private func moveAssignedField(
+        _ index: Int,
+        from sourceZone: PivotDropZone,
+        to targetZone: PivotDropZone,
+        targetPosition: Int
+    ) {
+        guard fields.indices.contains(index) else { return }
+        let sourcePosition = positionOfField(index, in: sourceZone)
+        var insertionPosition = targetPosition
+        if sourceZone == targetZone,
+           let sourcePosition,
+           sourcePosition < targetPosition {
+            insertionPosition -= 1
+        }
+
+        removeFieldFromLayout(index, from: sourceZone)
+        assignField(index, to: targetZone, targetPosition: insertionPosition)
+    }
+
+    private func handleDroppedField(_ payload: PivotFieldDragPayload, to targetZone: PivotDropZone, targetPosition: Int) {
+        if let sourceZone = payload.sourceZone {
+            moveAssignedField(payload.fieldIndex, from: sourceZone, to: targetZone, targetPosition: targetPosition)
+        } else {
+            assignField(payload.fieldIndex, to: targetZone, targetPosition: targetPosition)
+        }
+    }
+
+    private func positionOfField(_ index: Int, in zone: PivotDropZone) -> Int? {
+        switch zone {
+        case .rows:
+            return layout.rows.firstIndex(of: index)
+        case .columns:
+            return layout.columns.firstIndex(of: index)
+        case .values:
+            return layout.value == index ? 0 : nil
+        case .filters:
+            return layout.filters.firstIndex(of: index)
+        }
     }
 
     private func buildInterface() {
@@ -230,6 +282,12 @@ final class PivotBuilderWindowController: NSWindowController {
         fieldTable.doubleAction = #selector(fieldDoubleClicked(_:))
         fieldTable.menu = makeFieldContextMenu()
 
+        fieldSearch.placeholderString = L.t("Search fields", "필드 검색")
+        fieldSearch.sendsSearchStringImmediately = true
+        fieldSearch.target = self
+        fieldSearch.action = #selector(fieldSearchChanged(_:))
+        fieldSearch.translatesAutoresizingMaskIntoConstraints = false
+
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("field"))
         column.title = L.t("Field", "필드")
         column.width = 220
@@ -246,15 +304,19 @@ final class PivotBuilderWindowController: NSWindowController {
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         section.addSubview(title)
+        section.addSubview(fieldSearch)
         section.addSubview(actions)
         section.addSubview(fieldScroll)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             title.trailingAnchor.constraint(equalTo: section.trailingAnchor),
             title.topAnchor.constraint(equalTo: section.topAnchor),
+            fieldSearch.leadingAnchor.constraint(equalTo: section.leadingAnchor),
+            fieldSearch.trailingAnchor.constraint(equalTo: section.trailingAnchor),
+            fieldSearch.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             actions.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             actions.trailingAnchor.constraint(equalTo: section.trailingAnchor),
-            actions.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            actions.topAnchor.constraint(equalTo: fieldSearch.bottomAnchor, constant: 8),
             fieldScroll.leadingAnchor.constraint(equalTo: section.leadingAnchor),
             fieldScroll.trailingAnchor.constraint(equalTo: section.trailingAnchor),
             fieldScroll.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 8),
@@ -376,8 +438,8 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func makeDropZone(_ zone: PivotDropZone) -> PivotDropZoneView {
-        let view = PivotDropZoneView(zone: zone) { [weak self] index, zone in
-            self?.assignField(index, to: zone)
+        let view = PivotDropZoneView(zone: zone) { [weak self] payload, zone, targetPosition in
+            self?.handleDroppedField(payload, to: zone, targetPosition: targetPosition)
         } onRemove: { [weak self] index, zone in
             self?.removeField(index, from: zone)
         }
@@ -478,6 +540,10 @@ final class PivotBuilderWindowController: NSWindowController {
         addSelectedFieldToDefaultZone()
     }
 
+    @objc private func fieldSearchChanged(_ sender: NSSearchField) {
+        applyFieldSearch()
+    }
+
     @objc private func addSelectedFieldFromButton(_ sender: NSButton) {
         guard let zone = Self.zone(for: sender.tag) else { return }
         addSelectedField(to: zone)
@@ -538,7 +604,7 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func selectedField() -> PivotField? {
-        fields[safe: fieldTable.selectedRow]
+        fieldForVisibleRow(fieldTable.selectedRow)
     }
 
     private func updateFieldActionButtons() {
@@ -578,6 +644,27 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private static func isMeasureZone(_ zone: PivotDropZone) -> Bool {
         zone == .values
+    }
+
+    private func applyFieldSearch() {
+        let query = fieldSearch.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            filteredFieldIndexes = Array(fields.indices)
+        } else {
+            filteredFieldIndexes = fields.indices.filter { index in
+                let field = fields[index]
+                return field.name.localizedCaseInsensitiveContains(query)
+                    || (field.typeHint?.localizedCaseInsensitiveContains(query) ?? false)
+            }
+        }
+        fieldTable.reloadData()
+        fieldTable.deselectAll(nil)
+        updateFieldActionButtons()
+    }
+
+    private func fieldForVisibleRow(_ row: Int) -> PivotField? {
+        guard let fieldIndex = filteredFieldIndexes[safe: row] else { return nil }
+        return fields[safe: fieldIndex]
     }
 
     private func refreshZones() {
@@ -737,14 +824,15 @@ final class PivotBuilderWindowController: NSWindowController {
 extension PivotBuilderWindowController: NSTableViewDataSource, NSTableViewDelegate {
     nonisolated func numberOfRows(in tableView: NSTableView) -> Int {
         MainActor.assumeIsolated {
-            tableView === fieldTable ? fields.count : previewRows.count
+            tableView === fieldTable ? filteredFieldIndexes.count : previewRows.count
         }
     }
 
     nonisolated func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         MainActor.assumeIsolated {
             if tableView === fieldTable {
-                return makeFieldCell(tableView: tableView, field: fields[row])
+                guard let field = fieldForVisibleRow(row) else { return nil }
+                return makeFieldCell(tableView: tableView, field: field)
             }
 
             let columnIndex = tableView.tableColumns.firstIndex { $0 === tableColumn } ?? 0
@@ -755,10 +843,9 @@ extension PivotBuilderWindowController: NSTableViewDataSource, NSTableViewDelega
 
     nonisolated func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         MainActor.assumeIsolated {
-            guard tableView === fieldTable, fields.indices.contains(row) else { return nil }
-            let item = NSPasteboardItem()
-            item.setString(String(fields[row].index), forType: .pivotFieldIndex)
-            return item
+            guard tableView === fieldTable,
+                  let field = fieldForVisibleRow(row) else { return nil }
+            return PivotFieldDragPayload.pasteboardItem(fieldIndex: field.index)
         }
     }
 
@@ -929,6 +1016,20 @@ extension PivotBuilderWindowController {
 
     func addSelectedFieldForTesting(to zone: PivotDropZone) {
         addSelectedField(to: zone)
+    }
+
+    func moveAssignedFieldForTesting(
+        _ index: Int,
+        from sourceZone: PivotDropZone,
+        to targetZone: PivotDropZone,
+        targetPosition: Int
+    ) {
+        moveAssignedField(index, from: sourceZone, to: targetZone, targetPosition: targetPosition)
+    }
+
+    func setFieldSearchTextForTesting(_ text: String) {
+        fieldSearch.stringValue = text
+        applyFieldSearch()
     }
 
     func fieldListVisibleTextForTesting(row: Int) -> String? {

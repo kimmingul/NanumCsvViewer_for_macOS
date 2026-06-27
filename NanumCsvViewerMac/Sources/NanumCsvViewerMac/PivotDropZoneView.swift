@@ -3,11 +3,12 @@ import AppKit
 @MainActor
 final class PivotDropZoneView: NSView {
     private let zone: PivotDropZone
-    private let onDrop: (Int, PivotDropZone) -> Void
+    private let onDrop: (PivotFieldDragPayload, PivotDropZone, Int) -> Void
     private let onRemove: (Int, PivotDropZone) -> Void
     private let titleLabel = NSTextField(labelWithString: "")
     private let stack = NSStackView()
     private var names: [String] = []
+    private var itemViews: [PivotDropZoneItemView] = []
 
     init(
         zone: PivotDropZone,
@@ -15,7 +16,19 @@ final class PivotDropZoneView: NSView {
         onRemove: @escaping (Int, PivotDropZone) -> Void = { _, _ in }
     ) {
         self.zone = zone
-        self.onDrop = onDrop
+        self.onDrop = { payload, zone, _ in onDrop(payload.fieldIndex, zone) }
+        self.onRemove = onRemove
+        super.init(frame: .zero)
+        configure()
+    }
+
+    init(
+        zone: PivotDropZone,
+        onFieldDrop: @escaping (PivotFieldDragPayload, PivotDropZone, Int) -> Void,
+        onRemove: @escaping (Int, PivotDropZone) -> Void = { _, _ in }
+    ) {
+        self.zone = zone
+        self.onDrop = onFieldDrop
         self.onRemove = onRemove
         super.init(frame: .zero)
         configure()
@@ -44,6 +57,7 @@ final class PivotDropZoneView: NSView {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        itemViews = []
 
         if items.isEmpty {
             let empty = NSTextField(labelWithString: L.t("Drop fields here", "여기에 필드 놓기"))
@@ -54,11 +68,8 @@ final class PivotDropZoneView: NSView {
             return
         }
 
-        for item in items {
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.alignment = .centerY
-            row.spacing = 4
+        for (position, item) in items.enumerated() {
+            let row = PivotDropZoneItemView(fieldIndex: item.index, zone: zone, position: position)
 
             let label = NSTextField(labelWithString: item.name)
             label.font = .systemFont(ofSize: 12)
@@ -83,6 +94,7 @@ final class PivotDropZoneView: NSView {
             }
 
             stack.addArrangedSubview(row)
+            itemViews.append(row)
         }
     }
 
@@ -91,7 +103,7 @@ final class PivotDropZoneView: NSView {
         layer?.cornerRadius = 8
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor
-        registerForDraggedTypes([.pivotFieldIndex])
+        registerForDraggedTypes([.pivotFieldPayload, .pivotFieldIndex])
 
         titleLabel.stringValue = zone.title
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -118,17 +130,100 @@ final class PivotDropZoneView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        sender.draggingPasteboard.string(forType: .pivotFieldIndex) == nil ? [] : .copy
+        guard let payload = PivotFieldDragPayload.read(from: sender.draggingPasteboard) else { return [] }
+        layer?.borderColor = NSColor.controlAccentColor.cgColor
+        return dragOperation(for: payload)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let payload = PivotFieldDragPayload.read(from: sender.draggingPasteboard) else { return [] }
+        return dragOperation(for: payload)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        layer?.borderColor = NSColor.separatorColor.cgColor
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let raw = sender.draggingPasteboard.string(forType: .pivotFieldIndex),
-              let index = Int(raw) else { return false }
-        onDrop(index, zone)
+        guard let payload = PivotFieldDragPayload.read(from: sender.draggingPasteboard) else { return false }
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        onDrop(payload, zone, insertionIndex(for: sender))
         return true
     }
 
     @objc private func removeField(_ sender: NSButton) {
         onRemove(sender.tag, zone)
+    }
+
+    private func insertionIndex(for sender: NSDraggingInfo) -> Int {
+        guard !itemViews.isEmpty else { return 0 }
+        let point = convert(sender.draggingLocation, from: nil)
+        for (index, itemView) in itemViews.enumerated() {
+            let itemFrame = itemView.convert(itemView.bounds, to: self)
+            if point.y > itemFrame.midY {
+                return index
+            }
+        }
+        return itemViews.count
+    }
+
+    private func dragOperation(for payload: PivotFieldDragPayload) -> NSDragOperation {
+        payload.sourceZone == nil ? .copy : .move
+    }
+}
+
+@MainActor
+private final class PivotDropZoneItemView: NSStackView, NSDraggingSource {
+    private let fieldIndex: Int
+    private let zone: PivotDropZone
+    private let position: Int
+    private var dragStartEvent: NSEvent?
+
+    init(fieldIndex: Int, zone: PivotDropZone, position: Int) {
+        self.fieldIndex = fieldIndex
+        self.zone = zone
+        self.position = position
+        super.init(frame: .zero)
+        orientation = .horizontal
+        alignment = .centerY
+        spacing = 4
+        toolTip = L.t("Drag to move field", "드래그해서 필드 이동")
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStartEvent = event
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let dragStartEvent else { return }
+        self.dragStartEvent = nil
+        let item = PivotFieldDragPayload.pasteboardItem(
+            fieldIndex: fieldIndex,
+            sourceZone: zone,
+            sourcePosition: position
+        )
+        let draggingItem = NSDraggingItem(pasteboardWriter: item)
+        draggingItem.setDraggingFrame(bounds, contents: nil)
+        beginDraggingSession(with: [draggingItem], event: dragStartEvent, source: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragStartEvent = nil
+    }
+
+    nonisolated func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        .move
     }
 }

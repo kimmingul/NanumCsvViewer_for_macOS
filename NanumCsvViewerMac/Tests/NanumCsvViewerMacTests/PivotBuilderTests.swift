@@ -269,6 +269,80 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.layoutForTesting.columns, [1])
     }
 
+    func testBuilderMovesAssignedFieldsBetweenZones() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .columns)
+        builder.assignFieldForTesting(2, to: .values)
+        builder.moveAssignedFieldForTesting(0, from: .rows, to: .filters, targetPosition: 0)
+        builder.moveAssignedFieldForTesting(2, from: .values, to: .rows, targetPosition: 0)
+
+        XCTAssertEqual(builder.layoutForTesting.rows, [2])
+        XCTAssertEqual(builder.layoutForTesting.columns, [1])
+        XCTAssertEqual(builder.layoutForTesting.filters, [0])
+        XCTAssertNil(builder.layoutForTesting.value)
+    }
+
+    func testBuilderReordersAssignedDimensionFields() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,visit,value
+        A,Control,Day 1,3
+        A,Treatment,Day 2,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .rows)
+        builder.assignFieldForTesting(2, to: .rows)
+        builder.moveAssignedFieldForTesting(0, from: .rows, to: .rows, targetPosition: 3)
+        builder.moveAssignedFieldForTesting(2, from: .rows, to: .rows, targetPosition: 0)
+
+        XCTAssertEqual(builder.layoutForTesting.rows, [2, 1, 0])
+    }
+
+    func testBuilderSearchesFieldListAndAssignsVisibleMatches() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(
+            document: doc,
+            columnNames: doc.header,
+            columnStatisticsReport: statistics
+        )
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.setFieldSearchTextForTesting("val")
+        builder.layoutWindowForTesting()
+        builder.selectFieldForTesting(row: 0)
+        builder.addSelectedFieldToDefaultZoneForTesting()
+
+        XCTAssertEqual(builder.fieldListRowCountForTesting, 1)
+        XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 0), "value")
+        XCTAssertEqual(builder.layoutForTesting.value, 2)
+
+        builder.setFieldSearchTextForTesting("")
+        XCTAssertEqual(builder.fieldListRowCountForTesting, 3)
+    }
+
     func testBuilderSeparatesDimensionsFromMeasuresInControlLayout() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""

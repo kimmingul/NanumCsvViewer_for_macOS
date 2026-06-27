@@ -19,7 +19,7 @@ struct PivotField: Equatable {
     }
 }
 
-enum PivotDropZone: String, CaseIterable {
+enum PivotDropZone: String, CaseIterable, Codable {
     case rows
     case columns
     case values
@@ -48,6 +48,34 @@ struct PivotBuilderLayout: Equatable {
 
     var isRunnable: Bool {
         value != nil
+    }
+}
+
+struct PivotFieldDragPayload: Codable, Equatable {
+    let fieldIndex: Int
+    let sourceZone: PivotDropZone?
+    let sourcePosition: Int?
+
+    static func pasteboardItem(fieldIndex: Int, sourceZone: PivotDropZone? = nil, sourcePosition: Int? = nil) -> NSPasteboardItem {
+        let payload = PivotFieldDragPayload(fieldIndex: fieldIndex, sourceZone: sourceZone, sourcePosition: sourcePosition)
+        let item = NSPasteboardItem()
+        if let data = try? JSONEncoder().encode(payload),
+           let encoded = String(data: data, encoding: .utf8) {
+            item.setString(encoded, forType: .pivotFieldPayload)
+        }
+        item.setString(String(fieldIndex), forType: .pivotFieldIndex)
+        return item
+    }
+
+    static func read(from pasteboard: NSPasteboard) -> PivotFieldDragPayload? {
+        if let encoded = pasteboard.string(forType: .pivotFieldPayload),
+           let data = encoded.data(using: .utf8),
+           let payload = try? JSONDecoder().decode(PivotFieldDragPayload.self, from: data) {
+            return payload
+        }
+        guard let raw = pasteboard.string(forType: .pivotFieldIndex),
+              let fieldIndex = Int(raw) else { return nil }
+        return PivotFieldDragPayload(fieldIndex: fieldIndex, sourceZone: nil, sourcePosition: nil)
     }
 }
 
@@ -108,4 +136,5 @@ struct PivotChartModel: Equatable {
 
 extension NSPasteboard.PasteboardType {
     static let pivotFieldIndex = NSPasteboard.PasteboardType("com.nanum.csvviewer.pivot-field-index")
+    static let pivotFieldPayload = NSPasteboard.PasteboardType("com.nanum.csvviewer.pivot-field-payload")
 }
