@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-### Features
+No unreleased changes.
+
+## v1.7.0 - 2026-06-27
+
+This release upgrades the no-AI v1 analysis workflow with an Excel-style Pivot Builder, visible inferred column types in the main grid, broader CSV date recognition, and a major type-inference performance fix for string-heavy files.
+
+### Highlights
 
 - Replaced the text-only Pivot Table analysis action with a separate drag-and-drop Pivot Builder window, including table and chart previews.
 - Pivot Builder now runs with only a Values field, with Rows+Values, with Columns+Values, or with the full Rows+Columns+Values layout.
@@ -14,9 +20,32 @@
 - Added inferred type tags to grid headers, with header tooltips that include type and sort state.
 - Moved grid header type tags next to the column title so inferred types are visible during normal table scanning.
 - Added the inferred type to the grid header fallback title, for example `visit_date [Date]`, so types remain visible even if AppKit does not draw the custom badge.
-- Fixed the last column header being drawn again in the empty trailing header area.
 - Type inference now starts once enough rows are indexed instead of waiting for full-file indexing to finish; final statistics still refresh after indexing completes.
 - Numeric distribution and date histogram actions now use inferred column types to choose numeric/date defaults when the selected column is not suitable.
+
+### Fixes
+
+- Fixed the last column header being drawn again in the empty trailing header area.
+- Reduced type-tag delay on string-heavy CSV files by skipping date parsing after a column is known to be non-date and by reusing date formatters.
+
+### Validation
+
+- `swift test`: 116 tests passing.
+- Real-file type inference check: the 3,224-row, 6-column CP949 CSV used to reproduce the delayed header tags now completes `analyzeColumns` in about 0.095 s after previously taking about 28.19 s.
+
+### Distribution
+
+- Bundle version: `1.7.0`
+- Bundle build: `170`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application
+- Notarization: Apple notary service, stapled app and DMG
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.7.0.dmg`
+  - `Nanum-CSV-Viewer-v1.7.0.zip`
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.7.0.dmg`: `519f2ad16944a45570cbd7757a14d86b8c7b47094e497a03f63a67ca55a485b1`
+  - `Nanum-CSV-Viewer-v1.7.0.zip`: `c4b4cf09964328966576f8e5d8c6e30a49fecb8c1a7591ccf2443c64b833fcf6`
 
 ## v1.6.1 - 2026-06-26
 

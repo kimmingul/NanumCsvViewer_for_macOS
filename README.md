@@ -10,7 +10,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Recovery for malformed first-row quotes that would otherwise hide following rows
 - Virtual row rendering with `NSTableView`
 - Background indexing progress
-- Column statistics with inferred type tags in grid headers
+- Column statistics with responsive inferred type tags in grid headers
 - Expression-based advanced filters, column filters, and selected-cell value filters
 - Advanced find with plain text, `regex:pattern`, `/pattern/`, and `fuzzy:term`
 - Go to Row command for direct navigation by source row number
@@ -27,7 +27,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Performance dashboard with row, file, storage, indexing, and throughput metrics; memory and repeatable benchmark UI remain roadmap follow-ups
 - Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
 - Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests, with numeric/date defaults guided by inferred column types
-- Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
+- Excel-style Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
 
@@ -73,7 +73,7 @@ cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
-## v1.6 User Workflows
+## v1.7 User Workflows
 
 - Open several CSV files at once from `File > Open...`; additional files open in native macOS tabs.
 - Drag CSV files or CSV text onto the empty state or table area to open them quickly.
@@ -84,14 +84,14 @@ swift run NanumCsvViewerMac
   - `fuzzy:term` for ordered-character fuzzy matching
 - Use `View > Save Current View` and `View > Restore Saved View` to keep a per-file view state.
 - Use `View > Performance Dashboard` to inspect row counts, storage mode, indexing time, and throughput.
-- Use the grid header tags to quickly check inferred column types. Analysis actions and Pivot Builder field tags use the same type inference, including common CSV date formats such as dotted, Korean, month-only, and compact `yyyyMMdd` dates.
+- Use the grid header tags to quickly check inferred column types. Analysis actions and Pivot Builder field tags use the same type inference, including common CSV date formats such as dotted, Korean, month-only, and compact `yyyyMMdd` dates. Type tags are calculated early during indexing and avoid slow date parsing for obvious non-date text columns.
 - Use `Analysis > Pivot Table` to open the Pivot Builder, then search and add fields by dragging, using the field buttons, or right-clicking a field. Assigned field chips can be dragged between Rows, Columns, Values, and Filters, and dimension chips can be reordered. Values are measures with aggregation; Rows, Columns, and Filters are dimensions. Rows and Columns are optional, and the Pivot Table and Pivot Chart tabs update in the builder's large result panel.
 - Use `File > Export as Markdown...`, `Export as JSON...`, or `Export as HTML...` to share the current filtered/sorted view with only visible columns.
 - Expand the selected value bar with the chevron button when a selected cell contains multiline content.
 
 ## Roadmap Audit Status
 
-The v1.6 release ships useful workflow coverage, but a post-release multi-review audit found that several GitHub v1 roadmap items are still partial rather than complete. Most analytics tools are still inspector/text summaries, while Pivot Table now opens an interactive builder with table and chart previews; column management does not yet include frozen columns; saved views are one per file rather than multiple named bookmarks; and UI customization controls for theme, font, and row density remain follow-up work.
+The v1.7 release improves the v1 no-AI analysis workflow with an interactive Pivot Builder, chart/table previews, and visible inferred column types. Some GitHub v1 roadmap items are still partial rather than complete: broader analytics tools are still inspector/text summaries, column management does not yet include frozen columns, saved views are one per file rather than multiple named bookmarks, and UI customization controls for theme, font, and row density remain follow-up work.
 
 See `ROADMAP_STATUS.md` for the detailed issue-by-issue audit and follow-up list.
 
