@@ -17,6 +17,11 @@ final class SortHeaderCell: NSTableHeaderCell {
     }
 
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        guard let cellFrame = visibleColumnFrame(from: cellFrame, in: controlView) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: cellFrame).addClip()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+
         let titleFont = font ?? NSFont.systemFont(ofSize: 12, weight: .semibold)
         let titleAttributes = Self.titleAttributes(font: titleFont)
         let title = titleText ?? stringValue
@@ -133,5 +138,26 @@ final class SortHeaderCell: NSTableHeaderCell {
             ),
             withAttributes: attributes
         )
+    }
+
+    private func visibleColumnFrame(from cellFrame: NSRect, in controlView: NSView) -> NSRect? {
+        guard let headerView = controlView as? NSTableHeaderView,
+              let tableView = headerView.tableView,
+              let columnIndex = tableView.tableColumns.firstIndex(where: { $0.headerCell === self }) else {
+            return cellFrame
+        }
+        let headerFrame = headerView.headerRect(ofColumn: columnIndex)
+        let columnWidth = tableView.tableColumns[columnIndex].width
+        let actualFrame = NSRect(
+            x: headerFrame.minX,
+            y: headerFrame.minY,
+            width: min(headerFrame.width, columnWidth),
+            height: headerFrame.height
+        )
+        let visibleFrame = cellFrame.intersection(actualFrame)
+        guard !visibleFrame.isNull, visibleFrame.width > 0, visibleFrame.height > 0 else {
+            return nil
+        }
+        return visibleFrame
     }
 }

@@ -8,6 +8,7 @@ final class MainWindowController: NSWindowController {
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
     private static let tableCellPreviewLimit = 512
+    private static let earlyColumnStatisticsRowThreshold = 200
 
     private let tableView = CsvTableView()
     private let scrollView = NSScrollView()
@@ -69,6 +70,9 @@ final class MainWindowController: NSWindowController {
     private var valueConditions: [(description: String, predicate: ([String]) -> Bool)] = []
     private var detailUpdateWorkItem: DispatchWorkItem?
     private var columnStatisticsReport: ColumnStatisticsReport?
+    private var columnStatisticsCancellation: CancellationFlag?
+    private var earlyColumnStatisticsRequested = false
+    private var acceptedColumnStatisticsPriority = 0
     private var hiddenColumnIndexes: Set<Int> = []
     private var currentFilePath: String?
     private var pivotBuilderWindow: PivotBuilderWindowController?
@@ -1038,6 +1042,10 @@ extension MainWindowController {
             currentFilePath = url.path
             indexingElapsed = nil
             columnStatisticsReport = nil
+            columnStatisticsCancellation?.cancel()
+            columnStatisticsCancellation = nil
+            earlyColumnStatisticsRequested = false
+            acceptedColumnStatisticsPriority = 0
             window?.title = "Nanum CSV Viewer - \(url.lastPathComponent)"
             resetViewState()
             buildColumns(from: doc.header)
@@ -1118,7 +1126,7 @@ extension MainWindowController {
         refreshRowCount()
         updateFeatureState()
         statusLabel.stringValue = ""
-        refreshColumnStatistics(for: doc)
+        refreshColumnStatistics(for: doc, final: true)
     }
 
     private func startRowTimer() {
@@ -1138,6 +1146,9 @@ extension MainWindowController {
             scheduleVisibleRowPrefetch()
         }
         updateStatusMetrics()
+        if let doc = csvDocument {
+            maybeRefreshEarlyColumnStatistics(for: doc)
+        }
     }
 
     private func buildColumns(from header: [String]) {
@@ -2302,25 +2313,59 @@ extension MainWindowController {
         }
     }
 
-    func refreshColumnStatistics(for doc: VirtualCsvDocument) {
+    func refreshColumnStatistics(for doc: VirtualCsvDocument, final: Bool = true) {
+        let priority = final ? 2 : 1
+        if final {
+            columnStatisticsCancellation?.cancel()
+        }
         let cancellation = CancellationFlag()
+        columnStatisticsCancellation = cancellation
         DispatchQueue.global(qos: .utility).async { [weak self, weak doc] in
             guard let doc else { return }
             do {
                 let report = try doc.analyzeColumns(sampleLimit: 5_000, cancellation: cancellation)
                 DispatchQueue.main.async {
                     guard doc === self?.csvDocument else { return }
+                    guard !cancellation.isCancelled else { return }
+                    guard priority >= (self?.acceptedColumnStatisticsPriority ?? 0) else { return }
+                    self?.acceptedColumnStatisticsPriority = priority
                     self?.columnStatisticsReport = report
                     self?.updateSortHeaders()
                 }
             } catch {
                 DispatchQueue.main.async {
                     guard doc === self?.csvDocument else { return }
+                    guard !cancellation.isCancelled else { return }
+                    guard priority >= (self?.acceptedColumnStatisticsPriority ?? 0) else { return }
+                    self?.acceptedColumnStatisticsPriority = priority
                     self?.columnStatisticsReport = nil
                     self?.updateSortHeaders()
                 }
             }
         }
+    }
+
+    func maybeRefreshEarlyColumnStatistics(for doc: VirtualCsvDocument) {
+        guard Self.shouldStartEarlyColumnStatistics(
+            availableRows: doc.dataRowsAvailable,
+            indexingComplete: doc.indexingComplete,
+            alreadyRequested: earlyColumnStatisticsRequested,
+            hasReport: columnStatisticsReport != nil
+        ) else { return }
+        earlyColumnStatisticsRequested = true
+        refreshColumnStatistics(for: doc, final: false)
+    }
+
+    static func shouldStartEarlyColumnStatistics(
+        availableRows: Int,
+        indexingComplete: Bool,
+        alreadyRequested: Bool,
+        hasReport: Bool
+    ) -> Bool {
+        !indexingComplete &&
+            !alreadyRequested &&
+            !hasReport &&
+            availableRows >= earlyColumnStatisticsRowThreshold
     }
 
     func renderColumnStatistics(column: Int) {
@@ -2593,6 +2638,7 @@ extension MainWindowController {
         operationCancellation?.cancel()
         findCancellation?.cancel()
         prefetchCancellation?.cancel()
+        columnStatisticsCancellation?.cancel()
         rowTimer?.invalidate()
         detailUpdateWorkItem?.cancel()
         indexing = false

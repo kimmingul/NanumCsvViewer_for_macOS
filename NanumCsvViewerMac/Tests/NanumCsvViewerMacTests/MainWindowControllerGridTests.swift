@@ -252,6 +252,39 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertTrue(controller.detailTextForTesting.contains("2026-02"))
     }
 
+    func testEarlyColumnStatisticsStartsAfterRowsArriveBeforeIndexingCompletes() {
+        XCTAssertFalse(MainWindowController.shouldStartEarlyColumnStatistics(
+            availableRows: 199,
+            indexingComplete: false,
+            alreadyRequested: false,
+            hasReport: false
+        ))
+        XCTAssertTrue(MainWindowController.shouldStartEarlyColumnStatistics(
+            availableRows: 200,
+            indexingComplete: false,
+            alreadyRequested: false,
+            hasReport: false
+        ))
+        XCTAssertFalse(MainWindowController.shouldStartEarlyColumnStatistics(
+            availableRows: 200,
+            indexingComplete: true,
+            alreadyRequested: false,
+            hasReport: false
+        ))
+        XCTAssertFalse(MainWindowController.shouldStartEarlyColumnStatistics(
+            availableRows: 200,
+            indexingComplete: false,
+            alreadyRequested: true,
+            hasReport: false
+        ))
+        XCTAssertFalse(MainWindowController.shouldStartEarlyColumnStatistics(
+            availableRows: 200,
+            indexingComplete: false,
+            alreadyRequested: false,
+            hasReport: true
+        ))
+    }
+
     private func waitUntilIndexed(_ controller: MainWindowController, file: StaticString = #filePath, line: UInt = #line) throws {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {

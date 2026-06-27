@@ -14,7 +14,46 @@ final class SortHeaderCellTests: XCTestCase {
         XCTAssertGreaterThan(adjacentTypeAreaPixels, 40)
     }
 
+    func testTypeBadgeDoesNotRenderInTrailingHeaderFillerArea() throws {
+        let image = renderHeaderFillerArea()
+        let fillerPixels = countVisiblePixels(
+            in: image,
+            xRange: 150..<300,
+            yRange: 4..<24
+        )
+
+        XCTAssertLessThan(fillerPixels, 20)
+    }
+
     private func renderHeaderCell(title: String, type: String, width: Int, height: Int) -> NSBitmapImageRep {
+        renderBitmap(width: width, height: height) {
+            let frame = NSRect(x: 0, y: 0, width: width, height: height)
+            let view = NSView(frame: frame)
+            let cell = SortHeaderCell(textCell: title)
+            cell.typeText = type
+            cell.draw(withFrame: frame, in: view)
+        }
+    }
+
+    private func renderHeaderFillerArea() -> NSBitmapImageRep {
+        renderBitmap(width: 300, height: 28) {
+            let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
+            let headerView = NSTableHeaderView(frame: tableView.bounds)
+            tableView.headerView = headerView
+
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c0"))
+            column.width = 150
+            let cell = SortHeaderCell(textCell: "주소 [Categorical]")
+            cell.titleText = "주소"
+            cell.typeText = "Categorical"
+            column.headerCell = cell
+            tableView.addTableColumn(column)
+
+            cell.drawInterior(withFrame: NSRect(x: 150, y: 0, width: 150, height: 28), in: headerView)
+        }
+    }
+
+    private func renderBitmap(width: Int, height: Int, drawContent: @escaping () -> Void) -> NSBitmapImageRep {
         let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: width,
@@ -39,11 +78,7 @@ final class SortHeaderCellTests: XCTestCase {
             let frame = NSRect(x: 0, y: 0, width: width, height: height)
             NSColor.black.setFill()
             frame.fill()
-
-            let view = NSView(frame: frame)
-            let cell = SortHeaderCell(textCell: title)
-            cell.typeText = type
-            cell.draw(withFrame: frame, in: view)
+            drawContent()
         }
         if let appearance = NSAppearance(named: .darkAqua) {
             appearance.performAsCurrentDrawingAppearance(draw)
