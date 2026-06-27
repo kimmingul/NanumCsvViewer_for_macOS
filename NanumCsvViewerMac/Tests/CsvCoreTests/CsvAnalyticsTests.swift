@@ -97,6 +97,24 @@ final class CsvAnalyticsTests: XCTestCase {
         XCTAssertEqual(histogram.bins[1].count, 1)
     }
 
+    func testDateHistogramParsesCommonCsvDateFormats() throws {
+        let (doc, path) = try openIndexed("""
+        visit_date,value
+        2026.01.01,10
+        2026년 1월 15일,20
+        20260131,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let histogram = try doc.dateHistogram(dateColumn: 0, valueColumn: 1, period: .month, cancellation: CancellationFlag())
+
+        XCTAssertEqual(histogram.bins.count, 1)
+        XCTAssertEqual(histogram.bins[0].label, "2026-01")
+        XCTAssertEqual(histogram.bins[0].count, 3)
+        XCTAssertEqual(histogram.bins[0].sum, 35)
+    }
+
     func testPivotTableAggregatesRowsAndColumns() throws {
         let (doc, path) = try openIndexed("""
         site,arm,event,value

@@ -244,6 +244,30 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertTrue(builder.fieldListAutohidesScrollersForTesting)
     }
 
+    func testBuilderDisplaysDateTypeTagForCommonCsvDateFormats() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        visit_date,value
+        2026.01.02,3
+        2026.01.03,7
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(
+            document: doc,
+            columnNames: doc.header,
+            columnStatisticsReport: statistics
+        )
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.layoutWindowForTesting()
+
+        XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 0), "visit_date")
+        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 0), "Date")
+    }
+
     func testBuilderSupportsSelectionBasedFieldAssignmentActions() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""

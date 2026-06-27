@@ -221,6 +221,24 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(stats.columns[5].topValues.first?.count, 2)
     }
 
+    func testColumnStatisticsInfersCommonCsvDateFormats() throws {
+        let (doc, path) = try openIndexed("""
+        dotted_date,korean_date,month_date,visit_date,patient_id
+        2026.01.02,2026년 1월 2일,2026-01,20260102,20260102
+        2026.01.03,2026년 1월 3일,2026-02,20260103,20260103
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let stats = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
+
+        XCTAssertEqual(stats.columns[0].inferredType, .date)
+        XCTAssertEqual(stats.columns[1].inferredType, .date)
+        XCTAssertEqual(stats.columns[2].inferredType, .date)
+        XCTAssertEqual(stats.columns[3].inferredType, .date)
+        XCTAssertEqual(stats.columns[4].inferredType, .integer)
+    }
+
     func testExpressionFilterSupportsComparisonContainsAndBooleanLogic() throws {
         let (doc, path) = try openIndexed("""
         name,age,sex,note

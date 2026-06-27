@@ -182,7 +182,8 @@ enum CsvAnalytics {
     static func dateHistogram(rows: [[String]], dateColumn: Int, valueColumn: Int?, period: DateBinPeriod) -> DateHistogram {
         var buckets: [String: (count: Int, sum: Double)] = [:]
         for row in rows {
-            guard dateColumn < row.count, let date = parseDate(row[dateColumn]) else { continue }
+            guard dateColumn < row.count,
+                  let date = CsvDateParser.parse(row[dateColumn], allowCompactNumeric: true) else { continue }
             let label = dateLabel(date, period: period)
             let value = valueColumn.flatMap { column -> Double? in
                 guard column < row.count else { return nil }
@@ -248,23 +249,6 @@ enum CsvAnalytics {
             columnKeys: columnKeys,
             values: values
         )
-    }
-
-    static func parseDate(_ value: String) -> Date? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let date = ISO8601DateFormatter().date(from: trimmed) {
-            return date
-        }
-        for format in ["yyyy-MM-dd", "yyyy/MM/dd", "MM/dd/yyyy", "yyyy-MM-dd HH:mm:ss", "yyyy/MM/dd HH:mm:ss"] {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = TimeZone(secondsFromGMT: 0)
-            formatter.dateFormat = format
-            if let date = formatter.date(from: trimmed) {
-                return date
-            }
-        }
-        return nil
     }
 
     private static func aggregate(_ function: AggregationFunction, rawValues: [String], numbers: [Double]) -> Double {

@@ -10,6 +10,7 @@
 - Reworked the Pivot Builder layout so fields, drop zones, and aggregation controls stay on the left while the table/chart result panel takes the majority of the window.
 - Added Pivot Builder field type tags, selection buttons, right-click assignment actions, and a clearer Dimensions versus Measures layout.
 - Added Pivot Builder field search plus drag-to-move assigned fields between Rows, Columns, Values, and Filters, including dimension field reordering.
+- Expanded CSV date inference for dotted, Korean, month-only, and compact `yyyyMMdd` date formats so Pivot Builder field tags and date analytics recognize more real-world date columns.
 
 ## v1.6.1 - 2026-06-26
 

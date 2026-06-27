@@ -60,6 +60,7 @@ struct ColumnStatisticsBuilder {
         var floatCompatible = true
         var dateCompatible = true
         var booleanCompatible = true
+        let allowCompactNumericDates = CsvDateParser.headerSuggestsDate(name)
 
         for row in rows {
             let raw = index < row.count ? row[index] : ""
@@ -81,7 +82,7 @@ struct ColumnStatisticsBuilder {
                 floatCompatible = false
             }
 
-            if parseDate(value) == nil {
+            if CsvDateParser.parse(value, allowCompactNumeric: allowCompactNumericDates) == nil {
                 dateCompatible = false
             }
             if !booleanTokens.contains(value.lowercased()) {
@@ -95,12 +96,12 @@ struct ColumnStatisticsBuilder {
             inferredType = .empty
         } else if booleanCompatible {
             inferredType = .boolean
+        } else if dateCompatible && (!integerCompatible && !floatCompatible || allowCompactNumericDates) {
+            inferredType = .date
         } else if integerCompatible {
             inferredType = .integer
         } else if floatCompatible {
             inferredType = .float
-        } else if dateCompatible {
-            inferredType = .date
         } else if frequencies.count <= max(20, nonNullCount / 2) {
             inferredType = .categorical
         } else {
@@ -151,18 +152,4 @@ struct ColumnStatisticsBuilder {
         )
     }
 
-    private static func parseDate(_ value: String) -> Date? {
-        if let date = ISO8601DateFormatter().date(from: value) {
-            return date
-        }
-        for format in ["yyyy-MM-dd", "yyyy/MM/dd", "MM/dd/yyyy", "yyyy-MM-dd HH:mm:ss", "yyyy/MM/dd HH:mm:ss"] {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = format
-            if let date = formatter.date(from: value) {
-                return date
-            }
-        }
-        return nil
-    }
 }
