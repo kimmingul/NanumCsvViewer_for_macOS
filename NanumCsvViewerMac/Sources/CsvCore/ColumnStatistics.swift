@@ -82,10 +82,10 @@ struct ColumnStatisticsBuilder {
                 floatCompatible = false
             }
 
-            if CsvDateParser.parse(value, allowCompactNumeric: allowCompactNumericDates) == nil {
+            if dateCompatible, CsvDateParser.parse(value, allowCompactNumeric: allowCompactNumericDates) == nil {
                 dateCompatible = false
             }
-            if !booleanTokens.contains(value.lowercased()) {
+            if booleanCompatible, !booleanTokens.contains(value.lowercased()) {
                 booleanCompatible = false
             }
         }

@@ -504,6 +504,7 @@ final class MainWindowController: NSWindowController {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = false
+        tableView.headerView = CsvTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 0))
         tableView.delegate = self
         tableView.dataSource = self
         tableView.usesAlternatingRowBackgroundColors = true

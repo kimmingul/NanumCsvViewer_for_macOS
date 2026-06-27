@@ -239,6 +239,24 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(stats.columns[4].inferredType, .integer)
     }
 
+    func testColumnStatisticsAvoidsSlowDateParsingForObviousNonDateText() throws {
+        var rows: [String] = ["id,sex,address"]
+        for index in 0..<500 {
+            rows.append("A\(index)XYZ\(index),\(index.isMultiple(of: 2) ? "M" : "F"),광주광역시 서구")
+        }
+        let (doc, path) = try openIndexed(rows.joined(separator: "\n") + "\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        let stats = try doc.analyzeColumns(sampleLimit: 500, cancellation: CancellationFlag())
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000
+
+        XCTAssertEqual(stats.columns[0].inferredType, .string)
+        XCTAssertEqual(stats.columns[1].inferredType, .categorical)
+        XCTAssertEqual(stats.columns[2].inferredType, .categorical)
+        XCTAssertLessThan(elapsed, 0.5)
+    }
+
     func testExpressionFilterSupportsComparisonContainsAndBooleanLogic() throws {
         let (doc, path) = try openIndexed("""
         name,age,sex,note
