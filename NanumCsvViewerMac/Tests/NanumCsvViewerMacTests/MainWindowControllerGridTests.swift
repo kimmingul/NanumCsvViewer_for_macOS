@@ -1,4 +1,5 @@
 import AppKit
+@preconcurrency import CsvCore
 import XCTest
 @testable import NanumCsvViewerMac
 
@@ -285,6 +286,40 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertFalse(controller.validateMenuItem(pivotItem))
     }
 
+    func testCloseCurrentDocumentDeletesIndexCacheWhenEnabled() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        let cacheDirectory = try temporaryDirectory()
+        VirtualCsvDocument.persistentIndexDirectoryOverride = URL(fileURLWithPath: cacheDirectory, isDirectory: true)
+        try """
+        id,name
+        1,Alice
+        2,Bob
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer {
+            VirtualCsvDocument.persistentIndexDirectoryOverride = nil
+            VirtualCsvDocument.deletePersistentIndexOnClose = false
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: cacheDirectory)
+        }
+
+        let controller = MainWindowController()
+        VirtualCsvDocument.deletePersistentIndexOnClose = true
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+
+        let sidecarURL = VirtualCsvDocument.persistentIndexURL(forCSVAt: path)
+        try waitUntilFileExists(atPath: sidecarURL.path)
+
+        controller.closeCurrentDocument(nil)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sidecarURL.path))
+    }
+
     func testToolbarContainsCloseAndPivotCommands() throws {
         _ = NSApplication.shared
         let controller = MainWindowController()
@@ -504,5 +539,23 @@ final class MainWindowControllerGridTests: XCTestCase {
     private func temporaryCsvPath() throws -> String {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         return directory.appendingPathComponent("nanumcsv_grid_\(UUID().uuidString).csv").path
+    }
+
+    private func temporaryDirectory() throws -> String {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("nanumcsv_grid_dir_\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.path
+    }
+
+    private func waitUntilFileExists(atPath path: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            if FileManager.default.fileExists(atPath: path) {
+                return
+            }
+        }
+        XCTFail("Timed out waiting for file at \(path)", file: file, line: line)
     }
 }

@@ -2,10 +2,49 @@ import Foundation
 
 public final class VirtualCsvDocument: @unchecked Sendable {
     public static var persistentIndexEnabled = true
+    public static var deletePersistentIndexOnClose = false
+    public static var persistentIndexDirectoryOverride: URL?
 
     public static var ramBufferBudgetBytes: Int64 {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         return min(max(1_500_000_000, physical / 4), 8_000_000_000)
+    }
+
+    public static func persistentIndexDirectoryURL() -> URL {
+        if let persistentIndexDirectoryOverride {
+            return persistentIndexDirectoryOverride
+        }
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        return base
+            .appendingPathComponent("com.nanum.csvviewer.mac", isDirectory: true)
+            .appendingPathComponent("Indexes", isDirectory: true)
+    }
+
+    public static func ensurePersistentIndexDirectory() throws -> URL {
+        let directory = persistentIndexDirectoryURL()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    public static func persistentIndexURL(forCSVAt path: String) -> URL {
+        let sourceURL = URL(fileURLWithPath: path)
+        let standardizedPath = sourceURL.standardizedFileURL.path
+        let baseName = sanitizedIndexBaseName(sourceURL.lastPathComponent)
+        let hash = stablePathHash(standardizedPath)
+        return persistentIndexDirectoryURL()
+            .appendingPathComponent("\(baseName)-\(hash).ncvidx", isDirectory: false)
+    }
+
+    public static func clearPersistentIndexDirectory() throws {
+        let directory = try ensurePersistentIndexDirectory()
+        let items = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )
+        for item in items {
+            try FileManager.default.removeItem(at: item)
+        }
     }
 
     private static var rowCacheCapacity: Int {
@@ -28,6 +67,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     private let stateLock = NSLock()
     private let viewLock = NSLock()
     private let sourceLock = NSLock()
+    private let persistentIndexLock = NSLock()
 
     private var encoding: String.Encoding
     private let preamble: Int
@@ -37,6 +77,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     private var viewMap: [Int]?
     private var ramBuffer: MemoryFileBuffer?
     private var indexingCompleteValue = false
+    private var persistentIndexDeleteRequested = false
     private var recoverMalformedHeader = false
 
     public let fileLength: Int64
@@ -98,6 +139,14 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         let document = try VirtualCsvDocument(path: path, detection: detection)
         try document.initialize()
         return document
+    }
+
+    public func deletePersistentIndex() {
+        persistentIndexLock.lock()
+        persistentIndexDeleteRequested = true
+        try? FileManager.default.removeItem(atPath: sidecarPath)
+        try? FileManager.default.removeItem(atPath: legacySidecarPath)
+        persistentIndexLock.unlock()
     }
 
     private func initialize() throws {
@@ -1288,6 +1337,10 @@ private extension VirtualCsvDocument {
     }
 
     var sidecarPath: String {
+        Self.persistentIndexURL(forCSVAt: path).path
+    }
+
+    var legacySidecarPath: String {
         path + ".ncvidx"
     }
 
@@ -1336,12 +1389,35 @@ private extension VirtualCsvDocument {
             offsets: offsets
         )
         let data = sidecar.encoded()
+        guard (try? Self.ensurePersistentIndexDirectory()) != nil else { return }
+        persistentIndexLock.lock()
+        defer { persistentIndexLock.unlock() }
+        guard !persistentIndexDeleteRequested else { return }
+        try? FileManager.default.removeItem(atPath: legacySidecarPath)
         try? data.write(to: URL(fileURLWithPath: sidecarPath), options: .atomic)
     }
 
     func currentModificationTime() -> TimeInterval {
         let attrs = try? FileManager.default.attributesOfItem(atPath: path)
         return (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+    }
+
+    static func sanitizedIndexBaseName(_ name: String) -> String {
+        let raw = name.isEmpty ? "csv" : name
+        let replaced = String(raw.map { character in
+            character == ":" ? "_" : character
+        })
+        let limited = replaced.count > 80 ? String(replaced.prefix(80)) : replaced
+        return limited.isEmpty ? "csv" : limited
+    }
+
+    static func stablePathHash(_ value: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "%016llx", hash)
     }
 }
 

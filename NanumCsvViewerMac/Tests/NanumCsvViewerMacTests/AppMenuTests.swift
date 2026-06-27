@@ -47,6 +47,26 @@ final class AppMenuTests: XCTestCase {
         XCTAssertNotNil(exportItem.image)
     }
 
+    func testSettingsMenuContainsIndexCacheManagementActions() throws {
+        let mainMenu = try buildMainMenu()
+        let settingsItem = try XCTUnwrap(mainMenu.items.first { $0.title == L.t("Settings", "설정") })
+        let settingsMenu = try XCTUnwrap(settingsItem.submenu)
+
+        let persistentIndex = try XCTUnwrap(settingsMenu.items.first { $0.title == L.t("Persistent Index", "인덱스 저장") })
+        let deleteOnClose = try XCTUnwrap(settingsMenu.items.first { $0.title == L.t("Delete Index Cache on Close", "CSV 닫을 때 인덱스 캐시 삭제") })
+        let revealFolder = try XCTUnwrap(settingsMenu.items.first { $0.title == L.t("Show Index Folder", "인덱스 폴더 보기") })
+        let clearFolder = try XCTUnwrap(settingsMenu.items.first { $0.title == L.t("Clear Index Folder", "인덱스 폴더 비우기") })
+
+        XCTAssertEqual(persistentIndex.action, NSSelectorFromString("togglePersistentIndex:"))
+        XCTAssertEqual(deleteOnClose.action, NSSelectorFromString("toggleDeleteIndexCacheOnClose:"))
+        XCTAssertEqual(revealFolder.action, NSSelectorFromString("showIndexFolder:"))
+        XCTAssertEqual(clearFolder.action, NSSelectorFromString("clearIndexFolder:"))
+        XCTAssertNotNil(persistentIndex.image)
+        XCTAssertNotNil(deleteOnClose.image)
+        XCTAssertNotNil(revealFolder.image)
+        XCTAssertNotNil(clearFolder.image)
+    }
+
     func testEverySubmenuCommandHasIcon() throws {
         let mainMenu = try buildMainMenu()
         let missingIcons = mainMenu.items.flatMap { item -> [String] in

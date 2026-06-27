@@ -152,8 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let restoreView = NSMenuItem(title: L.t("Restore Saved View", "저장된 보기 복원"), action: #selector(MainWindowController.restoreSavedView(_:)), keyEquivalent: "r")
         restoreView.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(restoreView)
-        let persistentIndex = NSMenuItem(title: L.t("Persistent Index", "인덱스 저장"), action: #selector(MainWindowController.togglePersistentIndex(_:)), keyEquivalent: "")
-        viewMenu.addItem(persistentIndex)
         viewMenu.addItem(.separator())
         let encodingItem = NSMenuItem(title: L.t("Encoding", "인코딩"), action: nil, keyEquivalent: "")
         let encodingMenu = NSMenu(title: encodingItem.title)
@@ -164,6 +162,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         encodingItem.submenu = encodingMenu
         viewMenu.addItem(encodingItem)
+
+        let settingsItem = NSMenuItem(title: L.t("Settings", "설정"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(settingsItem)
+        let settingsMenu = NSMenu(title: settingsItem.title)
+        settingsItem.submenu = settingsMenu
+        let persistentIndex = NSMenuItem(title: L.t("Persistent Index", "인덱스 저장"), action: #selector(MainWindowController.togglePersistentIndex(_:)), keyEquivalent: "")
+        settingsMenu.addItem(persistentIndex)
+        let deleteIndexCacheOnClose = NSMenuItem(title: L.t("Delete Index Cache on Close", "CSV 닫을 때 인덱스 캐시 삭제"), action: #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)), keyEquivalent: "")
+        settingsMenu.addItem(deleteIndexCacheOnClose)
+        settingsMenu.addItem(.separator())
+        let showIndexFolder = NSMenuItem(title: L.t("Show Index Folder", "인덱스 폴더 보기"), action: #selector(MainWindowController.showIndexFolder(_:)), keyEquivalent: "")
+        settingsMenu.addItem(showIndexFolder)
+        let clearIndexFolder = NSMenuItem(title: L.t("Clear Index Folder", "인덱스 폴더 비우기"), action: #selector(MainWindowController.clearIndexFolder(_:)), keyEquivalent: "")
+        settingsMenu.addItem(clearIndexFolder)
 
         let analysisItem = NSMenuItem(title: L.t("Analysis", "분석"), action: nil, keyEquivalent: "")
         mainMenu.addItem(analysisItem)
@@ -289,6 +301,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "bookmark.fill"
         case #selector(MainWindowController.togglePersistentIndex(_:)):
             return "internaldrive"
+        case #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)):
+            return "trash"
+        case #selector(MainWindowController.showIndexFolder(_:)):
+            return "folder"
+        case #selector(MainWindowController.clearIndexFolder(_:)):
+            return "trash.circle"
         case #selector(MainWindowController.changeEncodingFromMenu(_:)):
             return "textformat"
         case #selector(MainWindowController.showNumericDistribution(_:)):
@@ -332,6 +350,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "pencil"
         case L.t("View", "보기"):
             return "eye"
+        case L.t("Settings", "설정"):
+            return "gearshape"
         case L.t("Encoding", "인코딩"):
             return "textformat"
         case L.t("Analysis", "분석"):

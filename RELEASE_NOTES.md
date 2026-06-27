@@ -4,6 +4,45 @@
 
 No unreleased changes.
 
+## v1.7.2 - 2026-06-27
+
+This patch release moves persistent CSV indexes out of source CSV folders and adds settings for managing cached `.ncvidx` files.
+
+### Highlights
+
+- Moved persistent `.ncvidx` files from the CSV file's folder into the app cache folder: `~/Library/Caches/com.nanum.csvviewer.mac/Indexes/`.
+- Added `Settings > Delete Index Cache on Close` so users can keep index files temporary and remove the active CSV's cached index when closing it.
+- Added `Settings > Show Index Folder` to reveal the index cache folder in Finder.
+- Added `Settings > Clear Index Folder` to remove cached index files from the app.
+- Moved the existing `Persistent Index` toggle into the new `Settings` menu.
+- Cleans up legacy CSV-adjacent `.ncvidx` files during the new cache save/delete flow.
+
+### Validation
+
+- `swift test`: 150 tests passing.
+- `git diff --check`: passed.
+- App bundle signing verification: passed.
+- App bundle Gatekeeper check: accepted as Notarized Developer ID.
+- DMG signing verification: passed.
+- DMG Gatekeeper check: accepted as Notarized Developer ID.
+- Apple notarization:
+  - App ZIP submission `edf86836-3bed-4237-b7ac-a75251711aba`: Accepted.
+  - DMG submission `fa67cbdc-e9d8-4135-b4d0-89a5e2ad3cec`: Accepted.
+
+### Distribution
+
+- Bundle version: `1.7.2`
+- Bundle build: `172`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application
+- Notarization: Apple notary service, stapled app and DMG
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.7.2.dmg`
+  - `Nanum-CSV-Viewer-v1.7.2.zip`
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.7.2.dmg`: `6bb6dc8ad8b6bf0c6029e11272282938dc82b525761139b807054d143b31a2ba`
+  - `Nanum-CSV-Viewer-v1.7.2.zip`: `e8a2649a1cbe2f7e87d46d57497c40b7dacaec30910c955e7c2e7194a18c07da`
+
 ## v1.7.1 - 2026-06-27
 
 This patch release refines the Pivot Builder into a more Excel-like workflow for no-AI v1 analysis, especially for multi-measure pivots and clearer field semantics.

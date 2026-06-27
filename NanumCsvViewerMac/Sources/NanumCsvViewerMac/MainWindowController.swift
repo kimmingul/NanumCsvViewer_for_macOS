@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class MainWindowController: NSWindowController {
     private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
+    private static let deleteIndexCacheOnCloseDefaultsKey = "NanumCsvViewerMac.DeleteIndexCacheOnClose"
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
     private static let tableCellPreviewLimit = 512
@@ -104,6 +105,7 @@ final class MainWindowController: NSWindowController {
         window.tabbingMode = .preferred
         super.init(window: window)
         VirtualCsvDocument.persistentIndexEnabled = UserDefaults.standard.object(forKey: Self.persistentIndexDefaultsKey) as? Bool ?? true
+        VirtualCsvDocument.deletePersistentIndexOnClose = UserDefaults.standard.object(forKey: Self.deleteIndexCacheOnCloseDefaultsKey) as? Bool ?? false
         hiddenColumnIndexes = Set(UserDefaults.standard.array(forKey: Self.hiddenColumnsDefaultsKey) as? [Int] ?? [])
         buildInterface()
         configureToolbar()
@@ -961,6 +963,11 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(togglePersistentIndex(_:)):
                 menuItem.state = VirtualCsvDocument.persistentIndexEnabled ? .on : .off
                 return true
+            case #selector(toggleDeleteIndexCacheOnClose(_:)):
+                menuItem.state = VirtualCsvDocument.deletePersistentIndexOnClose ? .on : .off
+                return true
+            case #selector(showIndexFolder(_:)), #selector(clearIndexFolder(_:)):
+                return true
             case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showPivotChart(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)):
                 return ready
             case #selector(changeEncodingFromMenu(_:)):
@@ -1006,7 +1013,7 @@ extension MainWindowController {
     }
 
     @objc func closeCurrentDocument(_ sender: Any?) {
-        guard csvDocument != nil else { return }
+        guard let closingDocument = csvDocument else { return }
 
         cancelAll()
         indexCancellation = nil
@@ -1020,6 +1027,10 @@ extension MainWindowController {
 
         pivotBuilderWindow?.close()
         pivotBuilderWindow = nil
+
+        if VirtualCsvDocument.deletePersistentIndexOnClose {
+            closingDocument.deletePersistentIndex()
+        }
 
         csvDocument = nil
         currentFilePath = nil
@@ -2574,6 +2585,33 @@ extension MainWindowController {
         statusLabel.stringValue = VirtualCsvDocument.persistentIndexEnabled
             ? L.t("Persistent index enabled.", "인덱스 저장을 켰습니다.")
             : L.t("Persistent index disabled.", "인덱스 저장을 껐습니다.")
+    }
+
+    @objc func toggleDeleteIndexCacheOnClose(_ sender: Any?) {
+        VirtualCsvDocument.deletePersistentIndexOnClose.toggle()
+        UserDefaults.standard.set(VirtualCsvDocument.deletePersistentIndexOnClose, forKey: Self.deleteIndexCacheOnCloseDefaultsKey)
+        statusLabel.stringValue = VirtualCsvDocument.deletePersistentIndexOnClose
+            ? L.t("Index cache will be deleted when a CSV is closed.", "CSV를 닫을 때 인덱스 캐시를 삭제합니다.")
+            : L.t("Index cache will be kept after closing CSV files.", "CSV를 닫은 뒤에도 인덱스 캐시를 유지합니다.")
+    }
+
+    @objc func showIndexFolder(_ sender: Any?) {
+        do {
+            let directory = try VirtualCsvDocument.ensurePersistentIndexDirectory()
+            NSWorkspace.shared.open(directory)
+            statusLabel.stringValue = L.t("Opened index folder.", "인덱스 폴더를 열었습니다.")
+        } catch {
+            presentError(error)
+        }
+    }
+
+    @objc func clearIndexFolder(_ sender: Any?) {
+        do {
+            try VirtualCsvDocument.clearPersistentIndexDirectory()
+            statusLabel.stringValue = L.t("Index folder cleared.", "인덱스 폴더를 비웠습니다.")
+        } catch {
+            presentError(error)
+        }
     }
 
     @objc func saveCurrentView(_ sender: Any?) {

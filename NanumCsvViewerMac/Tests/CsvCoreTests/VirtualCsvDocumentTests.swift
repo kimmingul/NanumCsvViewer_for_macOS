@@ -303,25 +303,52 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(exported, "name,note\nCarol,\"quoted \"\"value\"\"\"\nAlice,\"hello, world\"\n")
     }
 
-    func testPersistentIndexSidecarLoadsReopenedFile() throws {
+    func testPersistentIndexSidecarLoadsReopenedFileFromCacheDirectory() throws {
         let path = try temporaryPath()
+        let cacheDirectory = try temporaryDirectory()
+        VirtualCsvDocument.persistentIndexDirectoryOverride = URL(fileURLWithPath: cacheDirectory, isDirectory: true)
         try "name,city\nAlice,NY\nBob,LA\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
         defer {
+            VirtualCsvDocument.persistentIndexDirectoryOverride = nil
             try? FileManager.default.removeItem(atPath: path)
             try? FileManager.default.removeItem(atPath: path + ".ncvidx")
+            try? FileManager.default.removeItem(atPath: cacheDirectory)
         }
 
         let first = try VirtualCsvDocument.open(path: path)
         XCTAssertFalse(first.indexingComplete)
         try first.runIndexing(progress: { _ in }, cancellation: CancellationFlag())
-        try waitForFile(atPath: path + ".ncvidx")
-        let sidecarPrefix = try Data(contentsOf: URL(fileURLWithPath: path + ".ncvidx")).prefix(13)
+        let sidecarURL = VirtualCsvDocument.persistentIndexURL(forCSVAt: path)
+        try waitForFile(atPath: sidecarURL.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".ncvidx"))
+        let sidecarPrefix = try Data(contentsOf: sidecarURL).prefix(13)
         XCTAssertEqual(String(data: sidecarPrefix, encoding: .utf8), "NanumCsvIdx2\n")
 
         let second = try VirtualCsvDocument.open(path: path)
         XCTAssertTrue(second.indexingComplete)
         XCTAssertEqual(second.dataRowsAvailable, 2)
         XCTAssertEqual(try second.getDisplayRow(1), ["Bob", "LA"])
+    }
+
+    func testPersistentIndexDirectoryCanBeCleared() throws {
+        let cacheDirectory = try temporaryDirectory()
+        VirtualCsvDocument.persistentIndexDirectoryOverride = URL(fileURLWithPath: cacheDirectory, isDirectory: true)
+        defer {
+            VirtualCsvDocument.persistentIndexDirectoryOverride = nil
+            try? FileManager.default.removeItem(atPath: cacheDirectory)
+        }
+
+        let first = VirtualCsvDocument.persistentIndexURL(forCSVAt: "/tmp/a.csv")
+        let second = VirtualCsvDocument.persistentIndexURL(forCSVAt: "/tmp/b.csv")
+        try FileManager.default.createDirectory(at: first.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("a".utf8).write(to: first)
+        try Data("b".utf8).write(to: second)
+
+        try VirtualCsvDocument.clearPersistentIndexDirectory()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: second.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheDirectory))
     }
 
     func testIndexProgressCanOverrideDisplayedPercent() {
@@ -333,6 +360,13 @@ final class VirtualCsvDocumentTests: XCTestCase {
 func temporaryPath() throws -> String {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
     return directory.appendingPathComponent("nanumcsv_swift_\(UUID().uuidString).csv").path
+}
+
+func temporaryDirectory() throws -> String {
+    let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        .appendingPathComponent("nanumcsv_dir_\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory.path
 }
 
 func waitForFile(atPath path: String, timeout: TimeInterval = 2.0) throws {
