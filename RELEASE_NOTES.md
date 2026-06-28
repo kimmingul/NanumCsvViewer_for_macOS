@@ -21,12 +21,16 @@ This patch release fixes Pivot Builder chart hover tooltips so bar and line valu
 - `swift test --filter PivotBuilderTests`: 43 tests passing.
 - `swift test`: 163 tests passing.
 - `git diff --check`: passed.
-- `Scripts/release-app.sh`: release build and Developer ID app signing passed; notarization blocked because no notary credentials were configured.
+- `Scripts/release-app.sh`: release build and Developer ID app signing passed.
 - `Scripts/create-dmg.sh`: DMG creation and signing passed.
 - App bundle signing verification: passed.
 - DMG signing verification: passed.
 - DMG verification: passed.
-- Gatekeeper assessment: rejected as Unnotarized Developer ID because notarization could not run without credentials.
+- App bundle Gatekeeper check: accepted as Notarized Developer ID.
+- DMG Gatekeeper check: accepted as Notarized Developer ID.
+- Apple notarization:
+  - App ZIP submission `102fd106-aa98-4b0e-9ef5-ac32b543485f`: Accepted.
+  - DMG submission `29c9764a-11a3-4ff6-aa80-3f3d279f6fe9`: Accepted.
 
 ### Distribution
 
@@ -34,13 +38,13 @@ This patch release fixes Pivot Builder chart hover tooltips so bar and line valu
 - Bundle build: `176`
 - Minimum macOS: `14.0`
 - Signing: Developer ID Application
-- Notarization: blocked; no `NOTARYTOOL_PROFILE`, `ASC_*`, or Apple ID notarization credentials were configured.
+- Notarization: Apple notary service, stapled app and DMG
 - Release artifacts:
   - `Nanum-CSV-Viewer-v1.7.6.dmg`
   - `Nanum-CSV-Viewer-v1.7.6.zip`
 - SHA-256:
-  - `Nanum-CSV-Viewer-v1.7.6.dmg`: `91bd21178cc1374a67fe853e8f69a414fe9a65c32b5061daa44d4ddc8b86512c`
-  - `Nanum-CSV-Viewer-v1.7.6.zip`: `d28028c325d7ad4a57a5608f1a74ff816d68a45cb844295f3fdbc918503fffd4`
+  - `Nanum-CSV-Viewer-v1.7.6.dmg`: `8184f1f3846bd4d9dd708bc6264cdc4945044f18deea30b2915e2af09ac8d8f6`
+  - `Nanum-CSV-Viewer-v1.7.6.zip`: `da1199bb174e1d289849c7ac9ee3126ecb96a8f451515ca26aa21b3197d3e706`
 
 ## v1.7.5 - 2026-06-28
 
