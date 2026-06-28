@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nanum CSV Viewer for macOS</title>
+  <meta name="description" content="Nanum CSV Viewer is a native macOS app for opening, filtering, analyzing, and pivoting large CSV files locally on your Mac.">
+  <meta property="og:title" content="Nanum CSV Viewer for macOS">
+  <meta property="og:description" content="Open large CSV files, inspect columns, filter rows, and build pivot tables and charts locally on your Mac.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="assets/app-icon.png">
+  <link rel="icon" href="assets/app-icon.png">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --line: #d2d2d7;
+      --blue: #0071e3;
+      --blue-hover: #0077ed;
+      --tile: #fbfbfd;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-bottom: 1px solid rgba(0, 0, 0, .08);
+      background: rgba(245, 245, 247, .78);
+      backdrop-filter: saturate(180%) blur(20px);
+    }
+
+    .nav-inner {
+      width: min(1100px, calc(100% - 36px));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--text);
+    }
+
+    .brand img {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .button {
+      display: inline-flex;
+      min-height: 36px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 8px 18px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .button:hover {
+      background: var(--blue-hover);
+      text-decoration: none;
+    }
+
+    .button.secondary {
+      background: transparent;
+      color: var(--blue);
+      border: 1px solid rgba(0, 113, 227, .35);
+    }
+
+    .hero {
+      min-height: calc(100vh - 52px);
+      display: grid;
+      place-items: center;
+      padding: 66px 22px 54px;
+      background:
+        radial-gradient(circle at 50% 2%, rgba(255, 255, 255, .95), rgba(245, 245, 247, 0) 42%),
+        linear-gradient(180deg, #fff 0%, var(--bg) 74%);
+    }
+
+    .hero-inner {
+      width: min(1120px, 100%);
+      display: grid;
+      grid-template-columns: minmax(0, 1.04fr) minmax(360px, .96fr);
+      align-items: center;
+      gap: 46px;
+    }
+
+    .eyebrow {
+      margin: 0 0 16px;
+      color: #bf4800;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 720px;
+      font-size: clamp(48px, 7vw, 86px);
+      line-height: .97;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .hero-copy {
+      margin: 24px 0 0;
+      max-width: 660px;
+      color: var(--muted);
+      font-size: clamp(21px, 2.2vw, 28px);
+      line-height: 1.22;
+      font-weight: 500;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 32px;
+      align-items: center;
+    }
+
+    .availability {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .product-visual {
+      position: relative;
+      min-height: 520px;
+      display: grid;
+      place-items: center;
+    }
+
+    .app-icon {
+      position: absolute;
+      top: 18px;
+      width: 118px;
+      height: 118px;
+      border-radius: 27px;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, .18);
+      z-index: 2;
+    }
+
+    .window {
+      width: min(520px, 100%);
+      margin-top: 82px;
+      border-radius: 22px;
+      background: #1f2327;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, .18);
+    }
+
+    .window-bar {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 18px;
+      background: #2b3035;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .red { background: #ff5f57; }
+    .yellow { background: #ffbd2e; }
+    .green { background: #28c840; }
+
+    .grid {
+      padding: 18px;
+      background: #17191c;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr 88px;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .search, .metric {
+      height: 30px;
+      border-radius: 8px;
+      background: #252a30;
+      color: #9ca3af;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      overflow: hidden;
+      border-radius: 10px;
+      font-size: 12px;
+      color: #d7dce2;
+    }
+
+    th, td {
+      padding: 10px 9px;
+      border-bottom: 1px solid rgba(255, 255, 255, .06);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+    }
+
+    th {
+      background: #2a3036;
+      color: #8fb7ff;
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) td {
+      background: rgba(255, 255, 255, .025);
+    }
+
+    .section {
+      padding: 84px 22px;
+    }
+
+    .section-inner {
+      width: min(1100px, 100%);
+      margin: 0 auto;
+    }
+
+    .section-title {
+      margin: 0 auto 16px;
+      max-width: 840px;
+      text-align: center;
+      font-size: clamp(34px, 4.3vw, 58px);
+      line-height: 1.03;
+      font-weight: 700;
+    }
+
+    .section-lede {
+      margin: 0 auto 44px;
+      max-width: 760px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 21px;
+      line-height: 1.35;
+      font-weight: 500;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .feature {
+      min-height: 230px;
+      border-radius: 28px;
+      padding: 28px;
+      background: var(--surface);
+      box-shadow: 0 1px 0 rgba(0, 0, 0, .04);
+    }
+
+    .feature h3 {
+      margin: 0 0 12px;
+      font-size: 26px;
+      line-height: 1.1;
+    }
+
+    .feature p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.42;
+      font-weight: 500;
+    }
+
+    .privacy {
+      border-radius: 34px;
+      background: #111;
+      color: #f5f5f7;
+      padding: 56px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 42px;
+      align-items: center;
+    }
+
+    .privacy h2 {
+      margin: 0;
+      font-size: clamp(34px, 4vw, 56px);
+      line-height: 1.04;
+    }
+
+    .privacy p {
+      margin: 0;
+      color: #a1a1a6;
+      font-size: 21px;
+      line-height: 1.38;
+      font-weight: 500;
+    }
+
+    .release {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: center;
+      border-top: 1px solid var(--line);
+      padding-top: 34px;
+    }
+
+    .release h2 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+
+    .release p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    footer {
+      padding: 26px 22px 44px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    footer .section-inner {
+      border-top: 1px solid var(--line);
+      padding-top: 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 860px) {
+      .nav-links a:not(.button) {
+        display: none;
+      }
+
+      .hero {
+        padding-top: 46px;
+      }
+
+      .hero-inner {
+        grid-template-columns: 1fr;
+        text-align: center;
+      }
+
+      .hero-copy, h1 {
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .hero-actions {
+        justify-content: center;
+      }
+
+      .product-visual {
+        min-height: 430px;
+      }
+
+      .feature-grid, .privacy, .release {
+        grid-template-columns: 1fr;
+      }
+
+      .privacy {
+        padding: 34px 28px;
+      }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000;
+        --surface: #161617;
+        --text: #f5f5f7;
+        --muted: #a1a1a6;
+        --line: #2f2f32;
+        --tile: #161617;
+      }
+
+      .nav {
+        border-bottom-color: rgba(255, 255, 255, .12);
+        background: rgba(22, 22, 23, .72);
+      }
+
+      .hero {
+        background:
+          radial-gradient(circle at 50% 2%, rgba(34, 39, 46, .9), rgba(0, 0, 0, 0) 46%),
+          linear-gradient(180deg, #0b0b0c 0%, #000 74%);
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a class="brand" href="#top" aria-label="Nanum CSV Viewer home">
+        <img src="assets/app-icon.png" alt="">
+        <span>Nanum CSV Viewer</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#download" class="button">Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-inner">
+        <div>
+          <p class="eyebrow">Native macOS app</p>
+          <h1>Big CSV files. Opened fast.</h1>
+          <p class="hero-copy">Nanum CSV Viewer helps you inspect, filter, analyze, and pivot large CSV files locally on your Mac.</p>
+          <div class="hero-actions">
+            <a class="button" href="https://github.com/kimmingul/NanumCsvViewer_for_macOS/releases/download/v1.7.4/Nanum-CSV-Viewer-v1.7.4.dmg">Download v1.7.4</a>
+            <a class="button secondary" href="https://github.com/kimmingul/NanumCsvViewer_for_macOS">View on GitHub</a>
+          </div>
+          <p class="availability">Notarized Developer ID release for macOS 14 or later. Mac App Store version is currently waiting for review.</p>
+        </div>
+
+        <div class="product-visual" aria-label="Nanum CSV Viewer interface preview">
+          <img class="app-icon" src="assets/app-icon.png" alt="Nanum CSV Viewer app icon">
+          <div class="window">
+            <div class="window-bar">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+            </div>
+            <div class="grid">
+              <div class="toolbar">
+                <div class="search">Find, filter, and inspect rows</div>
+                <div class="metric">1.2M rows</div>
+              </div>
+              <table aria-label="CSV preview mockup">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Region</th>
+                    <th>Segment</th>
+                    <th>Revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>2026-01-04</td><td>North America</td><td>Enterprise</td><td>42,180</td></tr>
+                  <tr><td>2026-01-05</td><td>Korea</td><td>Research</td><td>18,420</td></tr>
+                  <tr><td>2026-01-06</td><td>Europe</td><td>Public Sector</td><td>24,900</td></tr>
+                  <tr><td>2026-01-07</td><td>Japan</td><td>Healthcare</td><td>31,760</td></tr>
+                  <tr><td>2026-01-08</td><td>Australia</td><td>Education</td><td>12,550</td></tr>
+                  <tr><td>2026-01-09</td><td>Singapore</td><td>Finance</td><td>36,230</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section">
+      <div class="section-inner">
+        <h2 class="section-title">Everything you need to read the file before it reads your day.</h2>
+        <p class="section-lede">Built for large CSV workflows, with a virtual table, background indexing, native search, pivot tools, and charts.</p>
+        <div class="feature-grid">
+          <article class="feature">
+            <h3>Large-file first.</h3>
+            <p>Byte-offset indexing and virtual row rendering keep multi-gigabyte CSV files responsive without loading everything into memory.</p>
+          </article>
+          <article class="feature">
+            <h3>Search that adapts.</h3>
+            <p>Use plain text, regular expressions, slash regex, or fuzzy search, then combine results with column and selected-cell filters.</p>
+          </article>
+          <article class="feature">
+            <h3>Pivot in place.</h3>
+            <p>Create pivot tables and native Swift Charts output with multiple measures, date grouping, filters, totals, and chart modes.</p>
+          </article>
+          <article class="feature">
+            <h3>Reads real CSV.</h3>
+            <p>Handles UTF-8, UTF-8 BOM, CP949/EUC-KR, quoted newlines, escaped quotes, and malformed first-row quotes.</p>
+          </article>
+          <article class="feature">
+            <h3>Export the view.</h3>
+            <p>Share the current filtered and sorted view as CSV, Markdown, JSON, or HTML with visible columns only.</p>
+          </article>
+          <article class="feature">
+            <h3>Designed for macOS.</h3>
+            <p>Native menus, tabs, drag and drop, clipboard import, light and dark appearance, and a notarized Developer ID release.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacy" class="section">
+      <div class="section-inner">
+        <div class="privacy">
+          <h2>Your CSV stays on your Mac.</h2>
+          <p>Nanum CSV Viewer is a local desktop app. It opens files you choose, builds local indexes, and does not need a cloud service to inspect or analyze your data.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="download" class="section">
+      <div class="section-inner">
+        <div class="release">
+          <div>
+            <h2>Nanum CSV Viewer v1.7.4</h2>
+            <p>Developer ID signed, notarized, and stapled. SHA-256: 4882901b90c0079c83e03e763ac3d554ef46ca4ee01b69b7cbf380f6f4d4b1ce</p>
+          </div>
+          <a class="button" href="https://github.com/kimmingul/NanumCsvViewer_for_macOS/releases/download/v1.7.4/Nanum-CSV-Viewer-v1.7.4.dmg">Download DMG</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="section-inner">
+      <span>Copyright © 2026 Min-Gul Kim. All rights reserved.</span>
+      <span>Developed by Min-Gul Kim, MD, PhD · Nanum Space Co., Ltd.</span>
+    </div>
+  </footer>
+</body>
+</html>
