@@ -360,6 +360,35 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(builder.previewChartFirstSectionHeightForTesting, 300)
     }
 
+    func testBuilderSizesChartViewToMostOfResultPaneWidth() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,arm,value
+        A,Control,3
+        A,Treatment,7
+        B,Control,2
+        B,Treatment,5
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .columns)
+        builder.assignFieldForTesting(2, to: .values)
+        try waitForPreview(builder)
+        builder.selectResultTab(.chart)
+        builder.layoutWindowForTesting()
+
+        let chartView = try XCTUnwrap(firstSubview(ofType: PivotChartView.self, in: builder.window?.contentView))
+        XCTAssertGreaterThanOrEqual(
+            chartView.frame.width,
+            builder.resultPaneWidthForTesting * 0.8
+        )
+    }
+
     func testBuilderFilterSelectionAffectsPreview() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""
@@ -1070,5 +1099,18 @@ final class PivotBuilderTests: XCTestCase {
             }
         }
         XCTFail("Timed out waiting for pivot preview", file: file, line: line)
+    }
+
+    private func firstSubview<T: NSView>(ofType type: T.Type, in root: NSView?) -> T? {
+        guard let root else { return nil }
+        if let view = root as? T {
+            return view
+        }
+        for subview in root.subviews {
+            if let match = firstSubview(ofType: type, in: subview) {
+                return match
+            }
+        }
+        return nil
     }
 }

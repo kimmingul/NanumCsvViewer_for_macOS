@@ -1558,6 +1558,7 @@ final class PivotBuilderWindowController: NSWindowController {
         let stack = NSStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
+        stack.alignment = .width
         stack.spacing = 6
 
         let title = NSTextField(labelWithString: section.title)
@@ -1567,8 +1568,11 @@ final class PivotBuilderWindowController: NSWindowController {
         let chart = reusePrimaryChart ? chartView : PivotChartView()
         chart.update(model: section.chartModel)
         chart.translatesAutoresizingMaskIntoConstraints = false
+        chart.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        chart.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         chart.heightAnchor.constraint(equalToConstant: Self.previewChartHeight).isActive = true
         stack.addArrangedSubview(chart)
+        chart.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return stack
     }
 

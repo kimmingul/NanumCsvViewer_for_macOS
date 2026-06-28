@@ -4,6 +4,45 @@
 
 No unreleased changes.
 
+## v1.7.5 - 2026-06-28
+
+This patch release improves Pivot Builder chart readability by making chart output use the available Pivot Result panel width.
+
+### Fixes
+
+- Enlarged Pivot Builder charts so the actual Swift Charts view expands with the result pane instead of staying at a narrow intrinsic width.
+- Added regression coverage that verifies the chart view is at least 80% as wide as the Pivot Result pane.
+- Bumped bundle metadata to version `1.7.5(175)`.
+
+### Validation
+
+- `swift test --filter PivotBuilderTests`: 42 tests passing.
+- `swift test`: 162 tests passing.
+- `Scripts/release-app.sh`: release build and Developer ID app signing passed.
+- `Scripts/create-dmg.sh`: DMG creation and signing passed.
+- App bundle signing verification: passed.
+- App bundle Gatekeeper check: accepted as Notarized Developer ID.
+- DMG signing verification: passed.
+- DMG verification: passed.
+- DMG Gatekeeper check: accepted as Notarized Developer ID.
+- Apple notarization:
+  - App ZIP submission `eb835945-2c9e-4554-bc95-04975eaa30fb`: Accepted.
+  - DMG submission `0e67bc00-2771-4822-b027-59017c0d9e0d`: Accepted.
+
+### Distribution
+
+- Bundle version: `1.7.5`
+- Bundle build: `175`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application
+- Notarization: Apple notary service, stapled app and DMG
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.7.5.dmg`
+  - `Nanum-CSV-Viewer-v1.7.5.zip`
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.7.5.dmg`: `dfe489ef372cba136c63f693819ef2ec098b7d2ca385406d88d23be8f6af7a4c`
+  - `Nanum-CSV-Viewer-v1.7.5.zip`: `d7092b803eeb0b134e431716c3e1e349f382b6ff58e1950c43169cb85ca938ad`
+
 ## v1.7.2 - 2026-06-27
 
 This patch release moves persistent CSV indexes out of source CSV folders and adds settings for managing cached `.ncvidx` files.
