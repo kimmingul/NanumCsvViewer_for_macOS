@@ -44,6 +44,13 @@ ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
 Scripts/upload-appstore.sh
 ```
 
+## v1.7.4 Highlights
+
+- 상단 앱 메뉴명이 `Nanum CSV Viewer`로 명확히 표시되고, 첫 번째 앱 메뉴 항목은 장식 아이콘 대상에서 제외되어 Apple 메뉴 옆에서 아이콘과 이름이 겹치지 않습니다.
+- `Nanum CSV Viewer 정보` 메뉴가 커스텀 About 창을 열도록 바뀌었습니다.
+- About 창에는 앱 아이콘, 버전, 저작권, 개발자명, 그리고 두 소속이 compact macOS 스타일 글자 크기로 표시됩니다.
+- 앱 번들 기본 버전은 `1.7.4(174)`입니다.
+
 ## v1.7.3 Highlights
 
 - 피벗 차트가 SwiftUI Charts 기반 네이티브 차트로 표시됩니다.

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Nanum CSV Viewer"
-VERSION="${VERSION:-1.7.3}"
+VERSION="${VERSION:-1.7.4}"
 APP_PATH="${APP_PATH:-$ROOT/dist/appstore/$APP_NAME.app}"
 PKG_PATH="${PKG_PATH:-$ROOT/dist/appstore/Nanum-CSV-Viewer-AppStore-v$VERSION.pkg}"
 INSTALLER_IDENTITY="${INSTALLER_IDENTITY:-${MAC_INSTALLER_IDENTITY:-3rd Party Mac Developer Installer: MINGUL KIM (XB673TQF3A)}}"

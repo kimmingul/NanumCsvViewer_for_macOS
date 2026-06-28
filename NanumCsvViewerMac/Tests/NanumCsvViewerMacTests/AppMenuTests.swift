@@ -77,6 +77,47 @@ final class AppMenuTests: XCTestCase {
         XCTAssertEqual(missingIcons, [])
     }
 
+    func testApplicationMenuItemDoesNotReceiveIconDecoration() throws {
+        let mainMenu = try buildMainMenu()
+        let appMenuItem = try XCTUnwrap(mainMenu.items.first)
+
+        XCTAssertEqual(appMenuItem.title, "Nanum CSV Viewer")
+        XCTAssertNil(appMenuItem.image)
+    }
+
+    func testAppMenuUsesCustomAboutWindowAction() throws {
+        let mainMenu = try buildMainMenu()
+        let appMenuItem = try XCTUnwrap(mainMenu.items.first)
+        let appMenu = try XCTUnwrap(appMenuItem.submenu)
+        let aboutItem = try XCTUnwrap(appMenu.items.first { $0.title == L.t("About Nanum CSV Viewer", "Nanum CSV Viewer 정보") })
+
+        XCTAssertEqual(aboutItem.action, NSSelectorFromString("showAboutWindow:"))
+    }
+
+    func testAboutWindowContentIncludesDeveloperAffiliations() {
+        let content = AboutWindowContent.current()
+
+        XCTAssertEqual(content.developerLabel, "Developed by")
+        XCTAssertEqual(content.developerName, "Min-Gul Kim, MD, PhD")
+        XCTAssertEqual(content.affiliationLines, [
+            "Professor",
+            "Department of Pharmacology",
+            "Jeonbuk National University Medical School",
+            "CEO",
+            "Nanum Space Co., Ltd."
+        ])
+        XCTAssertEqual(content.footerText, "© 2026 김민걸")
+    }
+
+    func testAboutWindowUsesCompactTypography() {
+        XCTAssertEqual(AboutTypography.appNameSize, 18)
+        XCTAssertEqual(AboutTypography.versionSize, 12)
+        XCTAssertEqual(AboutTypography.headlineSize, 15)
+        XCTAssertEqual(AboutTypography.subheadlineSize, 13)
+        XCTAssertEqual(AboutTypography.bodySize, 13)
+        XCTAssertEqual(AboutTypography.footerSize, 12)
+    }
+
     private func buildMainMenu() throws -> NSMenu {
         _ = NSApplication.shared
         let previousMenu = NSApp.mainMenu

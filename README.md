@@ -74,6 +74,12 @@ cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
+## v1.7.4 User Workflows
+
+- Use the app menu's `Nanum CSV Viewer 정보` command to open the custom About window, which now shows the app icon, version, copyright, developer name, and both affiliations in a compact macOS-style layout.
+- The top-level app menu name is explicitly set to `Nanum CSV Viewer` and is excluded from decorative menu icons so it no longer overlaps with an icon beside the Apple menu.
+- App bundle metadata now includes `CFBundleDisplayName` and version `1.7.4(174)`.
+
 ## v1.7.3 User Workflows
 
 - Open several CSV files at once from `File > Open...`; additional files open in native macOS tabs.

@@ -31,14 +31,16 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
   <string>com.nanum.csvviewer.mac</string>
   <key>CFBundleName</key>
   <string>Nanum CSV Viewer</string>
+  <key>CFBundleDisplayName</key>
+  <string>Nanum CSV Viewer</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.7.3</string>
+  <string>1.7.4</string>
   <key>CFBundleVersion</key>
-  <string>173</string>
+  <string>174</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>

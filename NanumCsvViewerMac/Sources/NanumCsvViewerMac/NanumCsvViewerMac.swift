@@ -3,6 +3,7 @@ import AppKit
 
 @main
 struct NanumCsvViewerMacApp {
+    static let displayName = "Nanum CSV Viewer"
     private static var retainedDelegate: AppDelegate?
 
     static func main() {
@@ -18,6 +19,7 @@ struct NanumCsvViewerMacApp {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [MainWindowController] = []
+    private var aboutWindowController: AboutWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -65,11 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mainMenu = NSMenu()
         NSApp.mainMenu = mainMenu
 
-        let appMenuItem = NSMenuItem()
+        let appMenuItem = NSMenuItem(title: NanumCsvViewerMacApp.displayName, action: nil, keyEquivalent: "")
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
-        appMenu.addItem(NSMenuItem(title: L.t("About Nanum CSV Viewer", "Nanum CSV Viewer 정보"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        let about = NSMenuItem(title: L.t("About Nanum CSV Viewer", "Nanum CSV Viewer 정보"), action: #selector(showAboutWindow(_:)), keyEquivalent: "")
+        about.target = self
+        appMenu.addItem(about)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: L.t("Quit Nanum CSV Viewer", "Nanum CSV Viewer 종료"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -224,12 +228,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let usage = NSMenuItem(title: L.t("How to Use", "사용법"), action: #selector(MainWindowController.showUsage(_:)), keyEquivalent: "?")
         helpMenu.addItem(usage)
 
-        decorateMenuIcons(mainMenu)
+        decorateMenuIcons(mainMenu, skippingFirstItem: true)
     }
 
-    private func decorateMenuIcons(_ menu: NSMenu) {
-        for item in menu.items {
-            if !item.isSeparatorItem, !item.title.isEmpty, item.image == nil {
+    private func decorateMenuIcons(_ menu: NSMenu, skippingFirstItem: Bool = false) {
+        for (index, item) in menu.items.enumerated() {
+            if !(skippingFirstItem && index == 0), !item.isSeparatorItem, !item.title.isEmpty, item.image == nil {
                 item.image = menuIcon(symbol: menuIconSymbol(for: item), title: item.title)
             }
             if let submenu = item.submenu {
@@ -245,7 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func menuIconSymbol(for item: NSMenuItem) -> String {
         switch item.action {
-        case #selector(NSApplication.orderFrontStandardAboutPanel(_:)):
+        case #selector(showAboutWindow(_:)):
             return "info.circle"
         case #selector(NSApplication.terminate(_:)):
             return "power"
@@ -363,5 +367,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             return "circle"
         }
+    }
+
+    @objc func showAboutWindow(_ sender: Any?) {
+        if aboutWindowController == nil {
+            aboutWindowController = AboutWindowController()
+        }
+        aboutWindowController?.showWindow(sender)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
