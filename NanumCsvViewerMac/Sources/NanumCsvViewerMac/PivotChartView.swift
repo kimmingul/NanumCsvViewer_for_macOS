@@ -83,16 +83,7 @@ private struct PivotChartContentView: View {
                 Spacer(minLength: 12)
             }
 
-            ZStack(alignment: .topTrailing) {
-                chart(model, kind: kind)
-                if let selectedCategory {
-                    let selectedPoints = model.points.filter { $0.category == selectedCategory }
-                    if !selectedPoints.isEmpty {
-                        PivotChartTooltip(category: selectedCategory, points: selectedPoints)
-                            .padding(8)
-                    }
-                }
-            }
+            chart(model, kind: kind)
         }
         .padding(10)
     }
@@ -145,7 +136,43 @@ private struct PivotChartContentView: View {
         }
         .chartLegend(model.series.count > 1 ? .visible : .hidden)
         .chartXSelection(value: $selectedCategory)
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                if let selectedCategory,
+                   let selectedX = proxy.position(forX: selectedCategory),
+                   let plotAnchor = proxy.plotFrame {
+                    let plotFrame = geometry[plotAnchor]
+                    let selectedPoints = model.points.filter { $0.category == selectedCategory }
+                    if !selectedPoints.isEmpty {
+                        let tooltipValue = selectedPoints.map(\.value).max() ?? 0
+                        let selectedY = proxy.position(forY: tooltipValue) ?? 0
+                        PivotChartTooltip(category: selectedCategory, points: selectedPoints)
+                            .allowsHitTesting(false)
+                            .position(
+                                x: tooltipXPosition(
+                                    plotX: plotFrame.minX + selectedX,
+                                    plotFrame: plotFrame
+                                ),
+                                y: tooltipYPosition(
+                                    plotY: plotFrame.minY + selectedY,
+                                    plotFrame: plotFrame
+                                )
+                            )
+                    }
+                }
+            }
+        }
         .frame(minHeight: 190)
+    }
+
+    private func tooltipXPosition(plotX: CGFloat, plotFrame: CGRect) -> CGFloat {
+        let horizontalInset: CGFloat = 92
+        return min(max(plotX, plotFrame.minX + horizontalInset), plotFrame.maxX - horizontalInset)
+    }
+
+    private func tooltipYPosition(plotY: CGFloat, plotFrame: CGRect) -> CGFloat {
+        let verticalInset: CGFloat = 42
+        return min(max(plotY - 44, plotFrame.minY + verticalInset), plotFrame.maxY - verticalInset)
     }
 
     private func chartKindBinding(defaultKind: PivotChartKind) -> Binding<PivotChartKind> {
@@ -184,12 +211,13 @@ private struct PivotChartTooltip: View {
         .font(.caption)
         .foregroundStyle(.primary)
         .padding(8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .frame(minWidth: 140)
+        .fixedSize(horizontal: true, vertical: true)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
         )
-        .frame(minWidth: 140)
     }
 
     private func format(_ value: Double) -> String {

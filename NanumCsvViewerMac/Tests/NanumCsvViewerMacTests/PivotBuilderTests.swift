@@ -131,6 +131,19 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertTrue(chart.usesSwiftChartsSurfaceForTesting)
     }
 
+    func testChartHoverTooltipUsesChartCoordinatesAndDoesNotStealHover() throws {
+        let source = try String(contentsOfFile: "Sources/NanumCsvViewerMac/PivotChartView.swift")
+
+        XCTAssertTrue(source.contains(".chartOverlay"))
+        XCTAssertTrue(source.contains(".allowsHitTesting(false)"))
+        XCTAssertTrue(source.contains("proxy.position(forY: tooltipValue"))
+        XCTAssertTrue(source.contains(".fixedSize(horizontal: true, vertical: true)"))
+        XCTAssertTrue(source.contains("Color(nsColor: .controlBackgroundColor)"))
+        XCTAssertFalse(source.contains(".background(.regularMaterial"))
+        XCTAssertFalse(source.contains("ZStack(alignment: .topTrailing)"))
+        XCTAssertFalse(source.contains("y: plotFrame.minY + 46"))
+    }
+
     func testBuilderAssignsFieldsAndBuildsPreview() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""

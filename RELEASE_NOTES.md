@@ -4,6 +4,44 @@
 
 No unreleased changes.
 
+## v1.7.6 - 2026-06-28
+
+This patch release fixes Pivot Builder chart hover tooltips so bar and line values are readable without covering the chart.
+
+### Fixes
+
+- Positioned Pivot Builder chart hover tooltips from the selected chart mark instead of a fixed top-right overlay.
+- Kept chart hover tooltips compact and opaque so the tooltip no longer stretches across the chart or blends into the plot.
+- Prevented chart hover tooltips from participating in hit testing, avoiding mouse-tracking flicker while inspecting bars or line points.
+- Added regression coverage for chart-coordinate tooltip placement, non-hit-testing hover behavior, and compact tooltip rendering.
+- Bumped bundle metadata to version `1.7.6(176)`.
+
+### Validation
+
+- `swift test --filter PivotBuilderTests`: 43 tests passing.
+- `swift test`: 163 tests passing.
+- `git diff --check`: passed.
+- `Scripts/release-app.sh`: release build and Developer ID app signing passed; notarization blocked because no notary credentials were configured.
+- `Scripts/create-dmg.sh`: DMG creation and signing passed.
+- App bundle signing verification: passed.
+- DMG signing verification: passed.
+- DMG verification: passed.
+- Gatekeeper assessment: rejected as Unnotarized Developer ID because notarization could not run without credentials.
+
+### Distribution
+
+- Bundle version: `1.7.6`
+- Bundle build: `176`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application
+- Notarization: blocked; no `NOTARYTOOL_PROFILE`, `ASC_*`, or Apple ID notarization credentials were configured.
+- Release artifacts:
+  - `Nanum-CSV-Viewer-v1.7.6.dmg`
+  - `Nanum-CSV-Viewer-v1.7.6.zip`
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.7.6.dmg`: `91bd21178cc1374a67fe853e8f69a414fe9a65c32b5061daa44d4ddc8b86512c`
+  - `Nanum-CSV-Viewer-v1.7.6.zip`: `d28028c325d7ad4a57a5608f1a74ff816d68a45cb844295f3fdbc918503fffd4`
+
 ## v1.7.5 - 2026-06-28
 
 This patch release improves Pivot Builder chart readability by making chart output use the available Pivot Result panel width.
