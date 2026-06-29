@@ -223,9 +223,9 @@ final class VirtualCsvDocumentTests: XCTestCase {
 
     func testColumnStatisticsInfersCommonCsvDateFormats() throws {
         let (doc, path) = try openIndexed("""
-        dotted_date,korean_date,month_date,visit_date,patient_id
-        2026.01.02,2026년 1월 2일,2026-01,20260102,20260102
-        2026.01.03,2026년 1월 3일,2026-02,20260103,20260103
+        dotted_date,korean_date,month_date,visit_date,patient_id,sample_id
+        2026.01.02,2026년 1월 2일,2026-01,20260102,20260102,20260102123456
+        2026.01.03,2026년 1월 3일,2026-02,20260103,20260103,20260103123456
 
         """)
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -236,7 +236,8 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(stats.columns[1].inferredType, .date)
         XCTAssertEqual(stats.columns[2].inferredType, .date)
         XCTAssertEqual(stats.columns[3].inferredType, .date)
-        XCTAssertEqual(stats.columns[4].inferredType, .integer)
+        XCTAssertEqual(stats.columns[4].inferredType, .date)
+        XCTAssertEqual(stats.columns[5].inferredType, .date)
     }
 
     func testColumnStatisticsAvoidsSlowDateParsingForObviousNonDateText() throws {

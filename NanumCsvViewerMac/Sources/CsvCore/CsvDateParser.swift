@@ -1,24 +1,6 @@
 import Foundation
 
 enum CsvDateParser {
-    private static let dateHeaderTokens: Set<String> = [
-        "date",
-        "datetime",
-        "time",
-        "timestamp",
-        "dt",
-        "dob"
-    ]
-
-    private static let dateHeaderSubstrings = [
-        "날짜",
-        "일자",
-        "일시",
-        "생년",
-        "년월",
-        "월일"
-    ]
-
     private static let separatedDateFormats = [
         "yyyy-MM-dd",
         "yyyy-M-d",
@@ -81,15 +63,6 @@ enum CsvDateParser {
         }
 
         return nil
-    }
-
-    static func headerSuggestsDate(_ name: String) -> Bool {
-        let lower = name.lowercased()
-        if dateHeaderSubstrings.contains(where: { lower.contains($0) }) {
-            return true
-        }
-        let tokens = lower.split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        return tokens.contains { dateHeaderTokens.contains($0) }
     }
 
     private static func looksDateLike(_ value: String, allowCompactNumeric: Bool) -> Bool {
