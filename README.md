@@ -27,7 +27,7 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Performance dashboard with row, file, storage, indexing, and throughput metrics; memory and repeatable benchmark UI remain roadmap follow-ups
 - Bounded one-line table previews for long multiline/XML cells, with full values preserved in the inspector and copy actions
 - Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests, with numeric/date defaults guided by inferred column types and roomy native parameter sheets for field selection
-- Excel-style Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, filter controls, type-aware value aggregations, multiple measures, totals, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
+- Excel-style Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, filter controls, type-aware value aggregations, multiple measures, totals, result-table sorting/filtering/copy/export, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
 - Native Swift Charts pivot chart output with grouped bar, stacked bar, bar, and line chart modes, legends, stable value hover tooltips, date-aware defaults, and per-measure chart sections sized to fill the Pivot Result panel
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
@@ -73,6 +73,13 @@ CLANG_MODULE_CACHE_PATH=../.clang-cache swift test
 cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
+
+## v1.7.7 User Workflows
+
+- Use the Pivot Builder's `Pivot Table` tab to sort pivot result columns by clicking headers while keeping total rows pinned at the bottom.
+- Use the Pivot Result toolbar to filter visible pivot result rows, copy the result table as tab-separated text, or export the result table as CSV.
+- Pivot result tables now keep one visible header row, fill the available width without a blank trailing header area, and preserve adjusted column widths after sort/filter refreshes.
+- App bundle metadata now uses version `1.7.7(177)`.
 
 ## v1.7.6 User Workflows
 
