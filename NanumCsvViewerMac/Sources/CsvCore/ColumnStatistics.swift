@@ -60,8 +60,6 @@ struct ColumnStatisticsBuilder {
         var floatCompatible = true
         var dateCompatible = true
         var booleanCompatible = true
-        let allowCompactNumericDates = CsvDateParser.headerSuggestsDate(name)
-
         for row in rows {
             let raw = index < row.count ? row[index] : ""
             let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -82,7 +80,7 @@ struct ColumnStatisticsBuilder {
                 floatCompatible = false
             }
 
-            if dateCompatible, CsvDateParser.parse(value, allowCompactNumeric: allowCompactNumericDates) == nil {
+            if dateCompatible, CsvDateParser.parse(value, allowCompactNumeric: true) == nil {
                 dateCompatible = false
             }
             if booleanCompatible, !booleanTokens.contains(value.lowercased()) {
@@ -96,7 +94,7 @@ struct ColumnStatisticsBuilder {
             inferredType = .empty
         } else if booleanCompatible {
             inferredType = .boolean
-        } else if dateCompatible && (!integerCompatible && !floatCompatible || allowCompactNumericDates) {
+        } else if dateCompatible {
             inferredType = .date
         } else if integerCompatible {
             inferredType = .integer

@@ -5,6 +5,56 @@ import XCTest
 
 @MainActor
 final class PivotBuilderTests: XCTestCase {
+    func testPivotResultTableModelSortsNumericCellsAndKeepsTotalLast() {
+        var model = PivotResultTableModel(
+            headers: ["site", "Sum"],
+            rows: [
+                ["A", "2"],
+                ["B", "10"],
+                [L.t("Total", "합계"), "12"]
+            ]
+        )
+
+        model.sort(column: 1, ascending: false)
+
+        XCTAssertEqual(model.visibleRows, [
+            ["B", "10"],
+            ["A", "2"],
+            [L.t("Total", "합계"), "12"]
+        ])
+    }
+
+    func testPivotResultTableModelFiltersAcrossVisibleColumns() {
+        var model = PivotResultTableModel(
+            headers: ["site", "Sum"],
+            rows: [
+                ["Control", "2"],
+                ["Treatment", "10"],
+                [L.t("Total", "합계"), "12"]
+            ]
+        )
+
+        model.setFilter(column: nil, query: "treat")
+
+        XCTAssertEqual(model.visibleRows, [
+            ["Treatment", "10"]
+        ])
+    }
+
+    func testPivotResultTableModelExportsVisibleRowsAsTsvAndCsv() {
+        var model = PivotResultTableModel(
+            headers: ["site", "Sum"],
+            rows: [
+                ["A, quoted", "2"],
+                ["B", "10"]
+            ]
+        )
+        model.setFilter(column: nil, query: "quoted")
+
+        XCTAssertEqual(model.exportString(format: .tsv), "site\tSum\nA, quoted\t2\n")
+        XCTAssertEqual(model.exportString(format: .csv), "site,Sum\n\"A, quoted\",2\n")
+    }
+
     func testChartModelProjectsSimplePivotIntoSeries() {
         let pivot = PivotTableResult(
             rowColumns: [0],
@@ -427,6 +477,252 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Sum"])
         XCTAssertEqual(builder.previewRowForTesting(0), ["A", "3"])
         XCTAssertEqual(builder.previewRowForTesting(1), ["B", "2"])
+    }
+
+    func testBuilderSortsPivotResultRowsAfterAggregation() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder) {
+            $0.previewRowForTesting(0) == ["A", "2"]
+        }
+
+        builder.sortPreviewSectionForTesting(section: 0, column: 1, ascending: false)
+
+        XCTAssertEqual(builder.previewRowForTesting(0), ["B", "10"])
+        XCTAssertEqual(builder.previewRowForTesting(1), ["A", "2"])
+        XCTAssertEqual(builder.previewRowForTesting(2), [L.t("Total", "합계"), "12"])
+    }
+
+    func testBuilderPivotResultTablesUseClippedHeaderViewToAvoidRepeatedTrailingHeaders() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+        builder.layoutWindowForTesting()
+
+        XCTAssertNotNil(firstSubview(ofType: CsvTableHeaderView.self, in: builder.window?.contentView))
+    }
+
+    func testBuilderPivotResultTableHeaderRemainsVisible() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+        builder.layoutWindowForTesting()
+
+        let header = try XCTUnwrap(firstSubview(ofType: CsvTableHeaderView.self, in: builder.window?.contentView))
+        XCTAssertGreaterThanOrEqual(header.frame.height, 20)
+    }
+
+    func testBuilderValueOnlyPivotResultDoesNotLeaveLargeBlankAreaAfterTotalRow() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+        builder.layoutWindowForTesting()
+
+        XCTAssertLessThanOrEqual(builder.previewTableDocumentHeightForTesting, 80)
+    }
+
+    func testBuilderPivotResultColumnsFillVisibleHeaderWidth() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+        builder.layoutWindowForTesting()
+
+        XCTAssertGreaterThan(builder.previewTableSectionVisibleWidthForTesting(section: 0), 320)
+        XCTAssertGreaterThanOrEqual(
+            builder.previewTableHeaderColumnsMaxXForTesting(section: 0),
+            builder.previewTableSectionVisibleWidthForTesting(section: 0) - 1
+        )
+    }
+
+    func testBuilderKeepsPivotResultColumnWidthWhenSorting() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+        builder.layoutWindowForTesting()
+
+        let sectionIdentity = builder.previewTableSectionIdentityForTesting(section: 0)
+        builder.setPreviewTableColumnWidthForTesting(section: 0, column: 0, width: 260)
+        builder.layoutWindowForTesting()
+
+        builder.sortPreviewSectionForTesting(section: 0, column: 1, ascending: false)
+        builder.layoutWindowForTesting()
+
+        XCTAssertEqual(builder.previewTableSectionIdentityForTesting(section: 0), sectionIdentity)
+        let columnWidth = try XCTUnwrap(builder.previewTableColumnWidthsForTesting(section: 0).first)
+        XCTAssertEqual(columnWidth, 260, accuracy: 0.5)
+        XCTAssertEqual(builder.previewRowForTesting(0), ["B", "10"])
+    }
+
+    func testBuilderKeepsPivotResultColumnWidthWhenFilteringResults() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        Control,2
+        Treatment,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+        builder.layoutWindowForTesting()
+
+        let sectionIdentity = builder.previewTableSectionIdentityForTesting(section: 0)
+        builder.setPreviewTableColumnWidthForTesting(section: 0, column: 0, width: 260)
+        builder.layoutWindowForTesting()
+
+        builder.setResultFilterForTesting("treat")
+        builder.layoutWindowForTesting()
+
+        XCTAssertEqual(builder.previewTableSectionIdentityForTesting(section: 0), sectionIdentity)
+        let columnWidth = try XCTUnwrap(builder.previewTableColumnWidthsForTesting(section: 0).first)
+        XCTAssertEqual(columnWidth, 260, accuracy: 0.5)
+        XCTAssertEqual(builder.previewVisibleRowCountForTesting(section: 0), 1)
+        XCTAssertEqual(builder.previewRowForTesting(0), ["Treatment", "10"])
+    }
+
+    func testBuilderFiltersPivotResultRowsAfterAggregation() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        Control,2
+        Treatment,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+
+        builder.setResultFilterForTesting("treat")
+
+        XCTAssertEqual(builder.previewVisibleRowCountForTesting(section: 0), 1)
+        XCTAssertEqual(builder.previewRowForTesting(0), ["Treatment", "10"])
+    }
+
+    func testBuilderCopiesVisiblePivotResultAsTsv() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+
+        builder.setResultFilterForTesting("B")
+
+        XCTAssertEqual(builder.copyPivotResultForTesting(), "site\tSum\nB\t10\n")
+    }
+
+    func testBuilderExportsVisiblePivotResultAsCsv() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("""
+        site,value
+        A,2
+        B,10
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setAggregationForTesting(.sum)
+        try waitForPreview(builder)
+
+        builder.setResultFilterForTesting("B")
+
+        XCTAssertEqual(builder.pivotResultExportForTesting(format: .csv), "site,Sum\nB,10\n")
     }
 
     func testBuilderShowsFilterDropdownsInResultPane() throws {
