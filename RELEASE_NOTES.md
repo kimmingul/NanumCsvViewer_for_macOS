@@ -58,11 +58,24 @@ Excel workbook import, on top of the Swift 6 migration and grid scroll fixes.
 - Visual smoke tests: facet cross-filtering, all seven chart windows, Excel
   multi-sheet open, and grid interaction verified with screenshots.
 - `git diff --check`: passed.
-- `Scripts/release-app.sh` (SKIP_NOTARIZE=1): release build and Developer ID
-  app signing passed.
-- `Scripts/create-dmg.sh`: DMG created and signed
-  (`Nanum-CSV-Viewer-v1.8.0.dmg`). Apple notarization not yet submitted.
+- `Scripts/release-app.sh`: release build and Developer ID app signing passed.
+- `Scripts/create-dmg.sh`: DMG creation and signing passed.
+- App bundle and DMG Gatekeeper checks: accepted as Notarized Developer ID.
+- DMG verification (`hdiutil verify`): passed.
+- Apple notarization:
+  - App ZIP submission `47f1f06c-a96b-4118-8394-383df2432542`: Accepted.
+  - DMG submission `ac1141d5-e132-4d21-ae60-f98fe1c33f5d`: Accepted.
 - Bumped bundle metadata to version `1.8.0(180)`.
+
+### Distribution
+
+- Bundle version: `1.8.0`
+- Bundle build: `180`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application, notarized and stapled
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.8.0.dmg`: `a51d79454b25dd4eadc25f18b512c08dd5d349dd848a97b0d2a2fb77e5fa8066`
+  - `Nanum-CSV-Viewer-v1.8.0.zip`: `e83966787d6d975909f499786411719c0a7070a25de087ffb8cb49ecf37a884a`
 
 ## v1.7.6 - 2026-06-28
 

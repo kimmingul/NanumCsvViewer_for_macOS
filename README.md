@@ -29,6 +29,12 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Text-summary analytics for numeric distribution, date histogram, duplicate detection, group-by aggregation, and basic statistical tests, with numeric/date defaults guided by inferred column types and roomy native parameter sheets for field selection
 - Excel-style Pivot Builder with field type tags, field search, drag-and-drop plus selection/right-click field assignment, assigned-field move/reorder, filter controls, type-aware value aggregations, multiple measures, totals, result-table sorting/filtering/copy/export, and an in-window Pivot Result panel for table and chart output; Values-only, Rows+Values, Columns+Values, and full Rows+Columns+Values layouts are supported.
 - Native Swift Charts pivot chart output with grouped bar, stacked bar, bar, and line chart modes, legends, stable value hover tooltips, date-aware defaults, and per-measure chart sections sized to fill the Pivot Result panel
+- Facets panel (View ▸ Facets Panel, F6): 6-bin histograms for numeric columns and top-6 value bars for other columns beside the grid, with bar-click cross-filtering that composes with text and header filters
+- Visualization menu with seven statistical chart windows: histogram with KDE and a Shapiro-Wilk badge, grouped boxplot with ANOVA, scatter with OLS fit and density-grid fallback, correlation heatmap, normal Q-Q plot, date-binned time series, and Pareto
+- Extended statistics engine (descriptive statistics, frequency analysis, one-way ANOVA, Shapiro-Wilk normality) with scipy-verified results, plus manual column type override from the header context menu
+- Data Quality menu (Cmd+Shift+P): full-file profiler with sentinel, type-validity, key-uniqueness, ragged-row, and duplicate-row rules, a categorical codebook, a 0-100 score, and Markdown/HTML/JSON report export
+- Excel .xlsx/.xlsm import with a multi-sheet picker (open one sheet or all sheets in tabs), built on a dependency-free ZIP/XML reader with shared strings and 1900/1904 date serial support
+- SQLite .db/.sqlite/.sqlite3 read-only import with a table/view picker through the same temp-CSV bridge
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
 
@@ -73,6 +79,16 @@ CLANG_MODULE_CACHE_PATH=../.clang-cache swift test
 cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
+
+## v1.8.0 User Workflows
+
+- Toggle `View > Facets Panel` (F6) to see per-column value distributions beside the grid; click a bar to cross-filter, click it again to remove the filter, and click more bars in the same column to widen the selection.
+- Open `Visualization` menu charts in their own windows: histogram + KDE, boxplot + ANOVA, scatter + regression, correlation heatmap, Q-Q plot, time series, and Pareto. Chart windows snapshot the current filtered view and close when the document changes.
+- Run `Data Quality > Run Quality Profile` (Cmd+Shift+P) to profile the entire file regardless of active filters, then export the report as Markdown, HTML, or JSON.
+- Open Excel workbooks from `File > Open...` or drag and drop; multi-sheet workbooks show a sheet picker with an "Open All in Tabs" option.
+- The Inspector panel is visible by default on first launch (toggle with F4) and remembers its visibility.
+- Analysis, chart, and pivot scans cap at 2,000,000 rows and reports say "showing first N rows" when the cap applies; exports and filtering always use the full view.
+- App bundle metadata now uses version `1.8.0(180)`.
 
 ## v1.7.7 User Workflows
 
@@ -119,7 +135,7 @@ swift run NanumCsvViewerMac
 
 ## Roadmap Audit Status
 
-The v1.7 release line improves the v1 no-AI analysis workflow with an interactive Pivot Builder, native Swift Charts pivot output, readable analysis parameter sheets, visible inferred column types, and type-aware pivot measures. Some GitHub v1 roadmap items are still partial rather than complete: broader analytics tools are still inspector/text summaries, column management does not yet include frozen columns, saved views are one per file rather than multiple named bookmarks, and UI customization controls for theme, font, and row density remain follow-up work.
+The v1.8 release reaches feature parity with the Windows twin v1.15: facet analysis, a graphical statistical chart suite, a data quality module, Excel and SQLite import, extended statistics, and manual column type override, on top of the Swift 6 language-mode migration. SPSS .sav and SAS .sas7bdat import are documented as a known gap (no dependable Swift readers exist; see the scope decision in `ROADMAP_STATUS.md`). Some GitHub v1 roadmap items remain partial: column management does not yet include frozen columns, saved views are one per file rather than multiple named bookmarks, and UI customization controls for theme, font, and row density remain follow-up work.
 
 See `ROADMAP_STATUS.md` for the detailed issue-by-issue audit and follow-up list.
 
