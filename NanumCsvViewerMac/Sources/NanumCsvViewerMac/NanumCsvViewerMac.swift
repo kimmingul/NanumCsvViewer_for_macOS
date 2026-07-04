@@ -17,9 +17,17 @@ struct NanumCsvViewerMacApp {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var windowControllers: [MainWindowController] = []
     private var aboutWindowController: AboutWindowController?
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == L.t("Columns", "컬럼") else { return }
+        let controller = (NSApp.keyWindow?.windowController as? MainWindowController)
+            ?? windowControllers.first { $0.window?.isKeyWindow == true }
+            ?? windowControllers.last
+        controller?.populateColumnsMenu(menu)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -163,6 +171,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let performance = NSMenuItem(title: L.t("Performance Dashboard", "성능 대시보드"), action: #selector(MainWindowController.showPerformanceDashboard(_:)), keyEquivalent: "p")
         performance.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(performance)
+        let columnsItem = NSMenuItem(title: L.t("Columns", "컬럼"), action: nil, keyEquivalent: "")
+        let columnsMenu = NSMenu(title: columnsItem.title)
+        columnsMenu.delegate = self
+        columnsMenu.autoenablesItems = false
+        columnsItem.submenu = columnsMenu
+        viewMenu.addItem(columnsItem)
         let showAllColumns = NSMenuItem(title: L.t("Show All Columns", "모든 컬럼 보기"), action: #selector(MainWindowController.showAllColumns(_:)), keyEquivalent: "")
         viewMenu.addItem(showAllColumns)
         let rowDensityItem = NSMenuItem(title: L.t("Row Density", "행 밀도"), action: nil, keyEquivalent: "")
@@ -458,6 +472,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "textformat"
         case L.t("Row Density", "행 밀도"):
             return "arrow.up.and.down.text.horizontal"
+        case L.t("Columns", "컬럼"):
+            return "checklist"
         case L.t("Analysis", "분석"):
             return "chart.xyaxis.line"
         case L.t("Visualization", "시각화"):

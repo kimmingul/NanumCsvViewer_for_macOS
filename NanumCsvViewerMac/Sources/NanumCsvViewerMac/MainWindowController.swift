@@ -55,6 +55,7 @@ final class MainWindowController: NSWindowController {
     private static let savedViewStoreDefaultsKey = "NanumCsvViewerMac.SavedViewStore"
     private static let autoRestoreViewDefaultsKey = "NanumCsvViewerMac.AutoRestoreView"
     private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
+    private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
     private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
@@ -151,6 +152,7 @@ final class MainWindowController: NSWindowController {
     private var currentInspectorContentKind: InspectorContentKind = .empty
     private var gridColumnBaseWidths: [NSUserInterfaceItemIdentifier: CGFloat] = [:]
     private var applyingGridLayout = false
+    private var isApplyingColumnOrder = false
     private var gridLayoutPassCount = 0
     private var earlyColumnStatisticsRequested = false
     private var acceptedColumnStatisticsPriority = 0
@@ -1285,10 +1287,94 @@ extension MainWindowController {
     }
 
     private func visibleColumnIndexesForExport() -> [Int]? {
-        let visible = columnNames.indices.filter { index in
-            tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden != true
+        ColumnManagement.exportColumnOrder(
+            visualDataColumns: visualDataColumnOrder(),
+            hidden: hiddenColumnIndexes,
+            totalColumns: columnNames.count
+        )
+    }
+
+    /// Data-column indices in on-screen (visual) order, derived from the live
+    /// table columns so drag-reordering is reflected.
+    private func visualDataColumnOrder() -> [Int] {
+        tableView.tableColumns.compactMap { column in
+            column.identifier.rawValue.hasPrefix("c") ? columnIndex(from: column.identifier) : nil
         }
-        return visible.count == columnNames.count ? nil : visible
+    }
+
+    // MARK: - Column order persistence and checklist
+
+    private func columnOrderMap() -> [String: [Int]] {
+        (UserDefaults.standard.dictionary(forKey: Self.columnOrderDefaultsKey) as? [String: [Int]]) ?? [:]
+    }
+
+    private func persistColumnOrder() {
+        guard let currentFilePath else { return }
+        var map = columnOrderMap()
+        let order = visualDataColumnOrder()
+        if order == Array(0..<columnNames.count) {
+            map[currentFilePath] = nil
+        } else {
+            map[currentFilePath] = order
+        }
+        UserDefaults.standard.set(map, forKey: Self.columnOrderDefaultsKey)
+    }
+
+    private func applyStoredColumnOrder() {
+        guard let currentFilePath, let stored = columnOrderMap()[currentFilePath] else { return }
+        let target = ColumnManagement.normalizedOrder(stored: stored, totalColumns: columnNames.count)
+        guard target != Array(0..<columnNames.count) else { return }
+        isApplyingColumnOrder = true
+        // The row-number gutter stays at visual index 0; data columns follow.
+        for (position, dataColumn) in target.enumerated() {
+            let identifier = NSUserInterfaceItemIdentifier("c\(dataColumn)")
+            let currentVisual = tableView.column(withIdentifier: identifier)
+            let targetVisual = position + 1
+            if currentVisual >= 0, currentVisual != targetVisual {
+                tableView.moveColumn(currentVisual, toColumn: targetVisual)
+            }
+        }
+        isApplyingColumnOrder = false
+        updateTableDocumentWidthForViewport()
+    }
+
+    func populateColumnsMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard !columnNames.isEmpty else {
+            let empty = NSMenuItem(title: L.t("No columns", "컬럼 없음"), action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+        for (index, name) in columnNames.enumerated() {
+            let item = NSMenuItem(title: name, action: #selector(toggleColumnVisibilityFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = hiddenColumnIndexes.contains(index) ? .off : .on
+            item.tag = index
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func toggleColumnVisibilityFromMenu(_ sender: NSMenuItem) {
+        toggleColumnVisibility(sender.tag)
+    }
+
+    private func toggleColumnVisibility(_ index: Int) {
+        guard index >= 0, index < columnNames.count else { return }
+        // Keep at least one data column visible.
+        if !hiddenColumnIndexes.contains(index), hiddenColumnIndexes.count >= columnNames.count - 1 {
+            statusLabel.stringValue = L.t("At least one column must stay visible.", "최소 한 개의 컬럼은 표시되어야 합니다.")
+            return
+        }
+        if hiddenColumnIndexes.contains(index) {
+            hiddenColumnIndexes.remove(index)
+        } else {
+            hiddenColumnIndexes.insert(index)
+        }
+        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden = hiddenColumnIndexes.contains(index)
+        persistColumnVisibility()
+        updateTableDocumentWidthForViewport()
+        scheduleFacetRefresh()
     }
 
     var hasOpenDocument: Bool {
@@ -1695,6 +1781,7 @@ extension MainWindowController {
         filterColumnPopup.addItems(withTitles: columnNames)
         filterColumnPopup.selectItem(at: 0)
         updateSortHeaders()
+        applyStoredColumnOrder()
         DispatchQueue.main.async { [weak self] in
             self?.updateTableDocumentWidthForViewport()
         }
@@ -3523,6 +3610,8 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewColumnDidMove(_ notification: Notification) {
         updateTableDocumentWidthForViewport()
+        guard !isApplyingColumnOrder else { return }
+        persistColumnOrder()
     }
 
     nonisolated func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
@@ -5403,6 +5492,29 @@ extension MainWindowController {
 
     var tableRowHeightForTesting: CGFloat {
         tableView.rowHeight
+    }
+
+    func exportColumnOrderForTesting() -> [Int]? {
+        visibleColumnIndexesForExport()
+    }
+
+    var visualDataColumnOrderForTesting: [Int] {
+        visualDataColumnOrder()
+    }
+
+    func moveDataColumnForTesting(from dataColumn: Int, to dataPosition: Int) {
+        let identifier = NSUserInterfaceItemIdentifier("c\(dataColumn)")
+        let currentVisual = tableView.column(withIdentifier: identifier)
+        guard currentVisual >= 0 else { return }
+        tableView.moveColumn(currentVisual, toColumn: dataPosition + 1)
+    }
+
+    func populateColumnsMenuForTesting(_ menu: NSMenu) {
+        populateColumnsMenu(menu)
+    }
+
+    func toggleColumnVisibilityForTesting(_ index: Int) {
+        toggleColumnVisibility(index)
     }
 
     func setRowDensityForTesting(_ density: GridRowDensity) {
