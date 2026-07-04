@@ -390,17 +390,33 @@ extension VirtualCsvDocument {
     }
 
     public func descriptiveStatistics(column: Int, cancellation: CancellationFlag) throws -> DescriptiveStatisticsResult {
-        var values: [Double] = []
-        var missing = 0
+        let results = try descriptiveStatisticsBatch(columns: [column], cancellation: cancellation)
+        return results[column] ?? CsvStatistics.descriptive(values: [], missingCount: 0)
+    }
+
+    /// Single streaming pass that aggregates several columns at once, so
+    /// "all numeric columns" descriptive statistics reads the view only once.
+    public func descriptiveStatisticsBatch(columns: [Int], cancellation: CancellationFlag) throws -> [Int: DescriptiveStatisticsResult] {
+        let targets = columns.filter { $0 >= 0 }
+        guard !targets.isEmpty else { return [:] }
+        var values: [Int: [Double]] = Dictionary(uniqueKeysWithValues: targets.map { ($0, []) })
+        var missing: [Int: Int] = Dictionary(uniqueKeysWithValues: targets.map { ($0, 0) })
         try forEachDisplayRow(cancellation: cancellation) { row in
-            guard column >= 0, column < row.count else { return }
-            if let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)) {
-                values.append(value)
-            } else {
-                missing += 1
+            for column in targets {
+                guard column < row.count,
+                      let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
+                      value.isFinite else {
+                    missing[column, default: 0] += 1
+                    continue
+                }
+                values[column, default: []].append(value)
             }
         }
-        return CsvStatistics.descriptive(values: values, missingCount: missing)
+        var results: [Int: DescriptiveStatisticsResult] = [:]
+        for column in targets {
+            results[column] = CsvStatistics.descriptive(values: values[column] ?? [], missingCount: missing[column] ?? 0)
+        }
+        return results
     }
 
     public func frequencyAnalysis(column: Int, blankLabel: String, limit: Int? = nil, cancellation: CancellationFlag) throws -> FrequencyAnalysisResult {

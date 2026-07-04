@@ -405,7 +405,8 @@ enum AnalysisReportBuilder {
             let result = try document.chiSquareTest(rowColumn: rowColumn, columnColumn: columnColumn, cancellation: cancellation)
             return chiSquareReport(result, rowColumn: rowColumn, columnColumn: columnColumn, columnNames: columnNames, provenance: provenance)
         case .descriptiveStatistics(let columns):
-            let results = try columns.map { ($0, try document.descriptiveStatistics(column: $0, cancellation: cancellation)) }
+            let batch = try document.descriptiveStatisticsBatch(columns: columns, cancellation: cancellation)
+            let results = columns.compactMap { column in batch[column].map { (column, $0) } }
             return descriptiveStatisticsReport(results, columnNames: columnNames, provenance: provenance)
         case .frequencyAnalysis(let column):
             let result = try document.frequencyAnalysis(column: column, blankLabel: L.t("(Blank)", "(빈 값)"), limit: 200, cancellation: cancellation)

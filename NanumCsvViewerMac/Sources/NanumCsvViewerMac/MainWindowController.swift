@@ -1059,7 +1059,7 @@ extension MainWindowController: NSMenuItemValidation {
                 return true
             case #selector(showIndexFolder(_:)), #selector(clearIndexFolder(_:)):
                 return true
-            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showPivotChart(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)):
+            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showPivotChart(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)), #selector(showDescriptiveStatistics(_:)), #selector(showFrequencyAnalysis(_:)), #selector(showOneWayAnova(_:)), #selector(showNormalityTest(_:)):
                 return ready
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
@@ -1219,6 +1219,10 @@ extension MainWindowController {
         return visible.count == columnNames.count ? nil : visible
     }
 
+    var hasOpenDocument: Bool {
+        csvDocument != nil
+    }
+
     func openFileURL(_ url: URL) {
         if SqliteWorkbook.hasSqliteExtension(url.path) || SqliteWorkbook.isSqliteFile(path: url.path) {
             openSqliteDatabase(url)
@@ -1272,6 +1276,7 @@ extension MainWindowController {
         let base = url.deletingPathExtension().lastPathComponent
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("NanumCsvViewerSqlite", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         operationCancellation?.cancel()
         let cancellation = CancellationFlag()
         operationCancellation = cancellation
@@ -2638,27 +2643,34 @@ extension MainWindowController {
             do {
                 try operation(cancellation) { pct in
                     DispatchQueue.main.async {
-                        self?.updateProgress(pct)
+                        guard let self, self.operationCancellation === cancellation else { return }
+                        self.updateProgress(pct)
                     }
                 }
                 DispatchQueue.main.async {
-                    self?.setProgressVisible(false)
-                    self?.setBusy(false)
-                    self?.refreshRowCount()
-                    self?.tableView.reloadData()
-                    self?.scheduleVisibleRowPrefetch()
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.refreshRowCount()
+                    self.tableView.reloadData()
+                    self.scheduleVisibleRowPrefetch()
                     completion()
                 }
             } catch CsvError.cancelled {
                 DispatchQueue.main.async {
-                    self?.setProgressVisible(false)
-                    self?.setBusy(false)
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self?.setProgressVisible(false)
-                    self?.setBusy(false)
-                    self?.presentError(error)
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.presentError(error)
                 }
             }
         }
@@ -2856,6 +2868,9 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         }
         columnStatisticsReport = baseColumnStatisticsReport?.applyingOverrides(columnTypeOverrides)
         updateSortHeaders()
+        if case .columnStatistics(let shownColumn) = currentInspectorContentKind, shownColumn == column {
+            renderColumnStatistics(column: column)
+        }
         let name = columnNames[safe: column] ?? "\(column + 1)"
         if let type {
             statusLabel.stringValue = L.t("\(name) type set to \(type.rawValue).", "\(name) 컬럼 타입을 \(type.rawValue)(으)로 설정했습니다.")
@@ -2909,8 +2924,9 @@ extension MainWindowController {
     }
 
     func handleTableCellHit(_ hit: CsvTableCellHit) {
-        guard hit.row >= 0, hit.column > 0 else { return }
-        let dataColumn = hit.column - 1
+        guard hit.row >= 0, hit.column >= 0, hit.column < tableView.tableColumns.count else { return }
+        let identifier = tableView.tableColumns[hit.column].identifier.rawValue
+        guard identifier.hasPrefix("c"), let dataColumn = Int(identifier.dropFirst()) else { return }
         switch hit.phase {
         case .mouseDown, .rightMouseDown:
             selectGridCell(

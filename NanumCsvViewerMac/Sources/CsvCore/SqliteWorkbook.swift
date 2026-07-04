@@ -78,6 +78,7 @@ public enum SqliteWorkbook {
             sqlite3_column_name(statement, Int32(index)).map { String(cString: $0) } ?? "column\(index + 1)"
         }
 
+        try? FileManager.default.removeItem(at: destination)
         FileManager.default.createFile(atPath: destination.path, contents: nil)
         guard let output = FileHandle(forWritingAtPath: destination.path) else {
             throw SqliteWorkbookError.queryFailed("cannot write \(destination.path)")
@@ -86,7 +87,8 @@ public enum SqliteWorkbook {
         do {
             var buffer = csvLine(headers)
             var rowCount = 0
-            while sqlite3_step(statement) == SQLITE_ROW {
+            var stepResult = sqlite3_step(statement)
+            while stepResult == SQLITE_ROW {
                 if rowCount & 0xFFF == 0 { try cancellation.check() }
                 let fields = (0..<columnCount).map { index -> String in
                     columnText(statement, Int32(index))
@@ -97,6 +99,10 @@ public enum SqliteWorkbook {
                     try output.write(contentsOf: Data(buffer.utf8))
                     buffer = ""
                 }
+                stepResult = sqlite3_step(statement)
+            }
+            guard stepResult == SQLITE_DONE else {
+                throw SqliteWorkbookError.queryFailed(lastErrorMessage(db))
             }
             if !buffer.isEmpty {
                 try output.write(contentsOf: Data(buffer.utf8))

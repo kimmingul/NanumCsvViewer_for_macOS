@@ -23,18 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        let controller = makeWindowController(opening: Self.fileURLFromCommandLine())
+        let controller = makeWindowController()
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private static func fileURLFromCommandLine() -> URL? {
-        for argument in CommandLine.arguments.dropFirst() where !argument.hasPrefix("-") {
-            if FileManager.default.fileExists(atPath: argument) {
-                return URL(fileURLWithPath: argument)
-            }
-        }
-        return nil
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -42,7 +33,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
-        openAdditionalDocuments([URL(fileURLWithPath: filename)], tabbedTo: NSApp.keyWindow)
+        let url = URL(fileURLWithPath: filename)
+        if windowControllers.count == 1,
+           let only = windowControllers.first,
+           !only.hasOpenDocument {
+            only.openFileURL(url)
+            return true
+        }
+        openAdditionalDocuments([url], tabbedTo: NSApp.keyWindow)
         return true
     }
 
