@@ -137,7 +137,9 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
         for (index, header) in headers.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("preview_\(index)"))
             column.title = header
-            column.headerCell = SortHeaderCell(textCell: header)
+            let headerCell = SortHeaderCell(textCell: header)
+            headerCell.columnIdentifierRawValue = column.identifier.rawValue
+            column.headerCell = headerCell
             column.width = index == 0 ? 160 : 110
             column.minWidth = index == 0 ? 120 : 80
             tableView.addTableColumn(column)
@@ -189,6 +191,7 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
                 cell.stringValue = header
                 cell.titleText = header
                 cell.typeText = nil
+                cell.columnIdentifierRawValue = column.identifier.rawValue
                 if let sort = section.tableModel.state.sort, sort.column == index {
                     cell.ascending = sort.ascending
                     cell.sortPriority = nil

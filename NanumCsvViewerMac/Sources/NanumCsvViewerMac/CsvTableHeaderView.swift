@@ -1,6 +1,36 @@
 import AppKit
 
 final class CsvTableHeaderView: NSTableHeaderView {
+    var filterClickHandler: ((Int, NSRect) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let hit = filterHit(at: point) {
+            filterClickHandler?(hit.dataColumn, hit.frame)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    func filterHit(at point: NSPoint) -> (dataColumn: Int, frame: NSRect)? {
+        guard let tableView else { return nil }
+        guard let columnIndex = (0..<tableView.tableColumns.count).first(where: { index in
+            headerFrame(forColumn: index).contains(point)
+        }) else { return nil }
+        let column = tableView.tableColumns[columnIndex]
+        guard column.identifier.rawValue.hasPrefix("c"),
+              let dataColumn = Int(column.identifier.rawValue.dropFirst()),
+              let cell = column.headerCell as? SortHeaderCell else {
+            return nil
+        }
+        let frame = headerFrame(forColumn: columnIndex)
+        guard let filterFrame = cell.filterButtonFrame(withFrame: frame, in: self),
+              filterFrame.contains(point) else {
+            return nil
+        }
+        return (dataColumn, filterFrame)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard tableView != nil else {
             super.draw(dirtyRect)
@@ -54,11 +84,18 @@ final class CsvTableHeaderView: NSTableHeaderView {
         for columnIndex in 0..<tableView.numberOfColumns {
             let column = tableView.tableColumns[columnIndex]
             guard !column.isHidden else { continue }
-            let rect = headerRect(ofColumn: columnIndex)
+            let rect = headerFrame(forColumn: columnIndex)
             guard !rect.isNull, rect.width > 0 else { continue }
             maxX = max(maxX, rect.maxX)
         }
 
         return maxX
+    }
+
+    private func headerFrame(forColumn columnIndex: Int) -> NSRect {
+        guard let tableView, columnIndex >= 0, columnIndex < tableView.tableColumns.count else {
+            return .null
+        }
+        return GridTableGeometry.headerFrame(forColumn: columnIndex, in: tableView, headerView: self)
     }
 }

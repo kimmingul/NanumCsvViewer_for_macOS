@@ -1,5 +1,15 @@
 import Foundation
 
+public struct DistinctColumnValue: Equatable, Sendable {
+    public let value: String
+    public let count: Int
+
+    public init(value: String, count: Int) {
+        self.value = value
+        self.count = count
+    }
+}
+
 public final class VirtualCsvDocument: @unchecked Sendable {
     public static var persistentIndexEnabled = true
     public static var deletePersistentIndexOnClose = false
@@ -807,6 +817,40 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             rows.append(try getDataRowUncached(row))
         }
         return ColumnStatisticsBuilder.summarize(headers: header, rows: rows)
+    }
+
+    public func distinctValues(
+        column: Int,
+        withinCurrentView: Bool,
+        limit: Int?,
+        progress: ((Int) -> Void)?,
+        cancellation: CancellationFlag
+    ) throws -> [DistinctColumnValue] {
+        guard column >= 0, column < columnCount else { return [] }
+        let baseMap = withinCurrentView ? (viewMapSnapshot() ?? Self.identity(dataRowsAvailable)) : Self.identity(dataRowsAvailable)
+        var counts: [String: Int] = [:]
+        counts.reserveCapacity(min(baseMap.count, 1_024))
+
+        for index in baseMap.indices {
+            if index & 0xFFFF == 0 { try cancellation.check() }
+            let dataRow = baseMap[index]
+            let fields = try getDataRowUncached(dataRow)
+            let value = column < fields.count ? fields[column] : ""
+            counts[value, default: 0] += 1
+            if index & 0x3FFFF == 0, !baseMap.isEmpty {
+                progress?(Int(Int64(index) * 100 / Int64(baseMap.count)))
+            }
+        }
+
+        progress?(100)
+        let sorted = counts
+            .map { DistinctColumnValue(value: $0.key, count: $0.value) }
+            .sorted { lhs, rhs in
+                if lhs.count != rhs.count { return lhs.count > rhs.count }
+                return lhs.value.localizedCaseInsensitiveCompare(rhs.value) == .orderedAscending
+            }
+        guard let limit, limit >= 0 else { return sorted }
+        return Array(sorted.prefix(limit))
     }
 
     public func exportCurrentView(to outputPath: String, selectedColumns: [Int]? = nil, cancellation: CancellationFlag) throws {

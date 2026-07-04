@@ -60,6 +60,73 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(try doc.getDisplayRow(0)[0], "Bob")
     }
 
+    func testDistinctValuesCountsAndSortsVisibleColumnValues() throws {
+        let (doc, path) = try openIndexed("""
+        site,status
+        A,open
+        B,open
+        A,closed
+        ,open
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let allValues = try doc.distinctValues(column: 0, withinCurrentView: false, limit: nil, progress: nil, cancellation: CancellationFlag())
+        XCTAssertEqual(allValues, [
+            DistinctColumnValue(value: "A", count: 2),
+            DistinctColumnValue(value: "", count: 1),
+            DistinctColumnValue(value: "B", count: 1)
+        ])
+
+        try doc.filterColumnEquals(column: 1, value: "open", withinCurrentView: false, progress: nil, cancellation: CancellationFlag())
+        let visibleValues = try doc.distinctValues(column: 0, withinCurrentView: true, limit: nil, progress: nil, cancellation: CancellationFlag())
+        XCTAssertEqual(visibleValues, [
+            DistinctColumnValue(value: "", count: 1),
+            DistinctColumnValue(value: "A", count: 1),
+            DistinctColumnValue(value: "B", count: 1)
+        ])
+    }
+
+    func testDistinctValuesAppliesLimitAfterSorting() throws {
+        let (doc, path) = try openIndexed("""
+        site
+        B
+        A
+        A
+        C
+
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let values = try doc.distinctValues(column: 0, withinCurrentView: false, limit: 2, progress: nil, cancellation: CancellationFlag())
+
+        XCTAssertEqual(values, [
+            DistinctColumnValue(value: "A", count: 2),
+            DistinctColumnValue(value: "B", count: 1)
+        ])
+    }
+
+    func testColumnFilterStateBuildsSelectedValueAndDateRangePredicate() throws {
+        var state = ColumnFilterState()
+        state.setValues(column: 0, values: ["A"], includeBlanks: true)
+        state.setDateRange(
+            column: 1,
+            start: DateComponents(calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 1, day: 2).date,
+            end: DateComponents(calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 1, day: 3, hour: 23, minute: 59, second: 59).date
+        )
+
+        let predicate = state.predicate()
+
+        XCTAssertTrue(predicate(["A", "20260102"]))
+        XCTAssertTrue(predicate(["", "2026-01-03"]))
+        XCTAssertFalse(predicate(["B", "2026-01-02"]))
+        XCTAssertFalse(predicate(["A", "2026-01-04"]))
+        XCTAssertEqual(state.descriptions(columnNames: ["site", "date"], blankLabel: "(Blank)"), [
+            #"site in "A", (Blank)"#,
+            "date between 2026-01-02 and 2026-01-03"
+        ])
+    }
+
     func testNumericSortUsesValueOrderNotLexicographic() throws {
         let (doc, path) = try openIndexed("n\n2\n10\n1\n")
         defer { try? FileManager.default.removeItem(atPath: path) }

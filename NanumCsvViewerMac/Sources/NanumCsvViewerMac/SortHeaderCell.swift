@@ -5,6 +5,9 @@ final class SortHeaderCell: NSTableHeaderCell {
     var sortPriority: Int?
     var ascending: Bool?
     var typeText: String?
+    var columnIdentifierRawValue: String?
+    var filterAvailable = false
+    var filterActive = false
 
     override init(textCell string: String) {
         super.init(textCell: string)
@@ -14,6 +17,28 @@ final class SortHeaderCell: NSTableHeaderCell {
     required init(coder: NSCoder) {
         super.init(coder: coder)
         lineBreakMode = .byTruncatingTail
+    }
+
+    override func copy(with zone: NSZone? = nil) -> Any {
+        let copy = SortHeaderCell(textCell: stringValue)
+        copy.objectValue = objectValue
+        copy.font = font
+        copy.alignment = alignment
+        copy.lineBreakMode = lineBreakMode
+        copy.isEnabled = isEnabled
+        copy.controlSize = controlSize
+        copy.backgroundStyle = backgroundStyle
+        copy.baseWritingDirection = baseWritingDirection
+        copy.image = image?.copy() as? NSImage
+        copy.usesSingleLineMode = usesSingleLineMode
+        copy.titleText = titleText
+        copy.sortPriority = sortPriority
+        copy.ascending = ascending
+        copy.typeText = typeText
+        copy.columnIdentifierRawValue = columnIdentifierRawValue
+        copy.filterAvailable = filterAvailable
+        copy.filterActive = filterActive
+        return copy
     }
 
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
@@ -28,9 +53,11 @@ final class SortHeaderCell: NSTableHeaderCell {
         let titleSize = title.size(withAttributes: titleAttributes)
         let typeWidth = typeText.map { Self.badgeSize(text: $0, font: Self.typeFont).width } ?? 0
         let sortWidth = ascending.map { _ in Self.badgeSize(text: sortMarkerText, font: Self.sortFont).width } ?? 0
+        let filterWidth = filterAvailable ? Self.filterButtonSize.width : 0
         let contentFrame = cellFrame.insetBy(dx: 6, dy: 0)
         let sortReservedWidth = sortWidth > 0 ? sortWidth + 6 : 0
-        let maxContentX = cellFrame.maxX - 6 - sortReservedWidth
+        let filterReservedWidth = filterWidth > 0 ? filterWidth + 6 : 0
+        let maxContentX = cellFrame.maxX - 6 - sortReservedWidth - filterReservedWidth
         let typeSpacing: CGFloat = typeWidth > 0 ? 6 : 0
         let availableTitleWidth = max(0, maxContentX - contentFrame.minX - typeWidth - typeSpacing)
         let drawnTitleWidth = min(titleSize.width, availableTitleWidth)
@@ -55,6 +82,10 @@ final class SortHeaderCell: NSTableHeaderCell {
             )
         }
 
+        if let filterFrame = filterButtonFrame(withFrame: cellFrame, in: controlView) {
+            drawFilterIndicator(in: filterFrame)
+        }
+
         guard ascending != nil else { return }
         let marker = sortMarkerText
         let frame = Self.badgeFrame(text: marker, font: Self.sortFont, trailingX: cellFrame.maxX - 6, cellFrame: cellFrame)
@@ -64,6 +95,34 @@ final class SortHeaderCell: NSTableHeaderCell {
             font: Self.sortFont,
             foreground: .controlAccentColor,
             background: NSColor.controlAccentColor.withAlphaComponent(0.12)
+        )
+    }
+
+    func filterButtonFrame(withFrame cellFrame: NSRect, in controlView: NSView) -> NSRect? {
+        guard filterAvailable, let cellFrame = visibleColumnFrame(from: cellFrame, in: controlView) else { return nil }
+        let titleFont = font ?? NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let titleAttributes = Self.titleAttributes(font: titleFont)
+        let title = titleText ?? stringValue
+        let titleSize = title.size(withAttributes: titleAttributes)
+        let typeWidth = typeText.map { Self.badgeSize(text: $0, font: Self.typeFont).width } ?? 0
+        let sortWidth = ascending.map { _ in Self.badgeSize(text: sortMarkerText, font: Self.sortFont).width } ?? 0
+        let sortReservedWidth = sortWidth > 0 ? sortWidth + 6 : 0
+        let contentMinX = cellFrame.minX + 6
+        let contentTrailingX = cellFrame.maxX - 6 - sortReservedWidth
+        let spacing: CGFloat = 6
+        let typeSpacing: CGFloat = typeWidth > 0 ? spacing : 0
+        let filterWidth = Self.filterButtonSize.width
+        let maxContentX = contentTrailingX - filterWidth - spacing
+        let availableTitleWidth = max(0, maxContentX - contentMinX - typeWidth - typeSpacing)
+        let drawnTitleWidth = min(titleSize.width, availableTitleWidth)
+        let preferredX = contentMinX + drawnTitleWidth + typeSpacing + typeWidth + spacing
+        let trailingX = contentTrailingX - filterWidth
+        let buttonX = min(preferredX, trailingX)
+        return NSRect(
+            x: buttonX,
+            y: cellFrame.midY - Self.filterButtonSize.height / 2,
+            width: filterWidth,
+            height: Self.filterButtonSize.height
         )
     }
 
@@ -78,6 +137,10 @@ final class SortHeaderCell: NSTableHeaderCell {
 
     private static var typeFont: NSFont {
         NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+    }
+
+    private static var filterButtonSize: NSSize {
+        NSSize(width: 18, height: 18)
     }
 
     private static func titleAttributes(font: NSFont) -> [NSAttributedString.Key: Any] {
@@ -140,16 +203,34 @@ final class SortHeaderCell: NSTableHeaderCell {
         )
     }
 
+    private func drawFilterIndicator(in frame: NSRect) {
+        if filterActive {
+            let background = NSBezierPath(roundedRect: frame.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5)
+            NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
+            background.fill()
+        }
+
+        let inset = frame.insetBy(dx: 4.5, dy: 4)
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: inset.minX, y: inset.maxY))
+        path.line(to: NSPoint(x: inset.maxX, y: inset.maxY))
+        path.line(to: NSPoint(x: inset.midX + 2, y: inset.midY))
+        path.line(to: NSPoint(x: inset.midX + 2, y: inset.minY))
+        path.line(to: NSPoint(x: inset.midX - 2, y: inset.minY))
+        path.line(to: NSPoint(x: inset.midX - 2, y: inset.midY))
+        path.close()
+        (filterActive ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setFill()
+        path.fill()
+    }
+
     private func visibleColumnFrame(from cellFrame: NSRect, in controlView: NSView) -> NSRect? {
         guard let headerView = controlView as? NSTableHeaderView,
               let tableView = headerView.tableView,
-              let columnIndex = tableView.tableColumns.firstIndex(where: { $0.headerCell === self }) else {
+              let columnIndex = resolvedColumnIndex(in: tableView) else {
             return cellFrame
         }
-        let headerFrame = headerView.headerRect(ofColumn: columnIndex)
-        guard !headerFrame.isNull, headerFrame.width > 0, headerFrame.height > 0 else {
-            return cellFrame
-        }
+        let headerFrame = GridTableGeometry.headerFrame(forColumn: columnIndex, in: tableView, headerView: headerView)
+        let proposedHeaderFrame = headerView.headerRect(ofColumn: columnIndex)
         let columnWidth = tableView.tableColumns[columnIndex].width
         let actualFrame = NSRect(
             x: headerFrame.minX,
@@ -157,10 +238,47 @@ final class SortHeaderCell: NSTableHeaderCell {
             width: min(headerFrame.width, columnWidth),
             height: headerFrame.height
         )
-        let visibleFrame = cellFrame.intersection(actualFrame)
-        guard !visibleFrame.isNull, visibleFrame.width > 0, visibleFrame.height > 0 else {
+        let visibleRect = headerView.visibleRect
+        let clippedFrame: NSRect
+        if visibleRect.width > 0, visibleRect.height > 0 {
+            clippedFrame = actualFrame.intersection(visibleRect)
+            guard !clippedFrame.isNull, clippedFrame.width > 0, clippedFrame.height > 0 else {
+                return nil
+            }
+        } else {
+            clippedFrame = actualFrame
+        }
+
+        let incomingFrameIsStaleHeaderRect = framesMatch(cellFrame, proposedHeaderFrame) &&
+            !framesMatch(proposedHeaderFrame, headerFrame)
+        let frameForIntersection = cellFrame.isNull || cellFrame.width <= 0 || cellFrame.height <= 0 || incomingFrameIsStaleHeaderRect
+            ? headerFrame
+            : cellFrame
+        let visibleFrame = frameForIntersection.intersection(clippedFrame)
+        let documentMaxX = max(tableView.frame.width, headerView.bounds.maxX)
+        let cellFrameOutsideDocument = frameForIntersection.minX < -0.5 || frameForIntersection.maxX > documentMaxX + 0.5
+        let effectiveFrame = visibleFrame.isNull && cellFrameOutsideDocument ? clippedFrame : visibleFrame
+        guard !effectiveFrame.isNull, effectiveFrame.width > 0, effectiveFrame.height > 0 else {
             return nil
         }
-        return visibleFrame
+        return effectiveFrame
+    }
+
+    private func framesMatch(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        guard !lhs.isNull, !rhs.isNull else { return false }
+        return abs(lhs.minX - rhs.minX) <= 0.5 &&
+            abs(lhs.minY - rhs.minY) <= 0.5 &&
+            abs(lhs.width - rhs.width) <= 0.5 &&
+            abs(lhs.height - rhs.height) <= 0.5
+    }
+
+    private func resolvedColumnIndex(in tableView: NSTableView) -> Int? {
+        if let columnIndex = tableView.tableColumns.firstIndex(where: { $0.headerCell === self }) {
+            return columnIndex
+        }
+        guard let columnIdentifierRawValue else { return nil }
+        return tableView.tableColumns.firstIndex {
+            $0.identifier.rawValue == columnIdentifierRawValue
+        }
     }
 }
