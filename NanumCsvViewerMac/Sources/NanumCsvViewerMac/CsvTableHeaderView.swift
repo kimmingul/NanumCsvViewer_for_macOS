@@ -2,6 +2,20 @@ import AppKit
 
 final class CsvTableHeaderView: NSTableHeaderView {
     var filterClickHandler: ((Int, NSRect) -> Void)?
+    var headerMenuProvider: ((Int) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let columnIndex = column(at: point)
+        guard let tableView, columnIndex >= 0, columnIndex < tableView.tableColumns.count else {
+            return super.menu(for: event)
+        }
+        let identifier = tableView.tableColumns[columnIndex].identifier.rawValue
+        guard identifier.hasPrefix("c"), let dataColumn = Int(identifier.dropFirst()) else {
+            return super.menu(for: event)
+        }
+        return headerMenuProvider?(dataColumn) ?? super.menu(for: event)
+    }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)

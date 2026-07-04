@@ -9,6 +9,10 @@ enum AnalysisKind: String, CaseIterable, Sendable {
     case correlation
     case independentTTest
     case chiSquare
+    case descriptiveStatistics
+    case frequencyAnalysis
+    case oneWayAnova
+    case normalityTest
     case documentSummary
 
     var title: String {
@@ -27,6 +31,14 @@ enum AnalysisKind: String, CaseIterable, Sendable {
             return L.t("t-test", "t-검정")
         case .chiSquare:
             return L.t("Chi-square Test", "카이제곱 검정")
+        case .descriptiveStatistics:
+            return L.t("Descriptive Statistics", "기술통계")
+        case .frequencyAnalysis:
+            return L.t("Frequency Analysis", "빈도분석")
+        case .oneWayAnova:
+            return L.t("One-way ANOVA", "일원배치 분산분석")
+        case .normalityTest:
+            return L.t("Normality Test (Shapiro-Wilk)", "정규성 검정 (Shapiro-Wilk)")
         case .documentSummary:
             return L.t("Quick Stats", "빠른 통계")
         }
@@ -41,6 +53,10 @@ enum AnalysisRequest: Equatable, Sendable {
     case correlation(xColumn: Int, yColumn: Int)
     case independentTTest(groupColumn: Int, valueColumn: Int, groupA: String, groupB: String)
     case chiSquare(rowColumn: Int, columnColumn: Int)
+    case descriptiveStatistics(columns: [Int])
+    case frequencyAnalysis(column: Int)
+    case oneWayAnova(groupColumn: Int, valueColumn: Int)
+    case normalityTest(column: Int)
     case documentSummary
 
     var kind: AnalysisKind {
@@ -59,6 +75,14 @@ enum AnalysisRequest: Equatable, Sendable {
             return .independentTTest
         case .chiSquare:
             return .chiSquare
+        case .descriptiveStatistics:
+            return .descriptiveStatistics
+        case .frequencyAnalysis:
+            return .frequencyAnalysis
+        case .oneWayAnova:
+            return .oneWayAnova
+        case .normalityTest:
+            return .normalityTest
         case .documentSummary:
             return .documentSummary
         }
@@ -80,6 +104,14 @@ enum AnalysisRequest: Equatable, Sendable {
             return [groupColumn, valueColumn]
         case .chiSquare(let rowColumn, let columnColumn):
             return [rowColumn, columnColumn]
+        case .descriptiveStatistics(let columns):
+            return columns
+        case .frequencyAnalysis(let column):
+            return [column]
+        case .oneWayAnova(let groupColumn, let valueColumn):
+            return [groupColumn, valueColumn]
+        case .normalityTest(let column):
+            return [column]
         case .documentSummary:
             return []
         }
@@ -126,6 +158,18 @@ enum AnalysisRequest: Equatable, Sendable {
                 L.t("Row column: \(columnName(rowColumn, columnNames: columnNames))", "행 컬럼: \(columnName(rowColumn, columnNames: columnNames))"),
                 L.t("Column column: \(columnName(columnColumn, columnNames: columnNames))", "열 컬럼: \(columnName(columnColumn, columnNames: columnNames))")
             ]
+        case .descriptiveStatistics(let columns):
+            let names = columns.map { columnName($0, columnNames: columnNames) }.joined(separator: ", ")
+            return [L.t("Columns: \(names)", "컬럼: \(names)")]
+        case .frequencyAnalysis(let column):
+            return [L.t("Column: \(columnName(column, columnNames: columnNames))", "컬럼: \(columnName(column, columnNames: columnNames))")]
+        case .oneWayAnova(let groupColumn, let valueColumn):
+            return [
+                L.t("Group column: \(columnName(groupColumn, columnNames: columnNames))", "그룹 컬럼: \(columnName(groupColumn, columnNames: columnNames))"),
+                L.t("Value column: \(columnName(valueColumn, columnNames: columnNames))", "값 컬럼: \(columnName(valueColumn, columnNames: columnNames))")
+            ]
+        case .normalityTest(let column):
+            return [L.t("Column: \(columnName(column, columnNames: columnNames))", "컬럼: \(columnName(column, columnNames: columnNames))")]
         case .documentSummary:
             return []
         }
@@ -360,6 +404,18 @@ enum AnalysisReportBuilder {
         case .chiSquare(let rowColumn, let columnColumn):
             let result = try document.chiSquareTest(rowColumn: rowColumn, columnColumn: columnColumn, cancellation: cancellation)
             return chiSquareReport(result, rowColumn: rowColumn, columnColumn: columnColumn, columnNames: columnNames, provenance: provenance)
+        case .descriptiveStatistics(let columns):
+            let results = try columns.map { ($0, try document.descriptiveStatistics(column: $0, cancellation: cancellation)) }
+            return descriptiveStatisticsReport(results, columnNames: columnNames, provenance: provenance)
+        case .frequencyAnalysis(let column):
+            let result = try document.frequencyAnalysis(column: column, blankLabel: L.t("(Blank)", "(빈 값)"), limit: 200, cancellation: cancellation)
+            return frequencyAnalysisReport(result, column: column, columnNames: columnNames, provenance: provenance)
+        case .oneWayAnova(let groupColumn, let valueColumn):
+            let result = try document.oneWayAnova(groupColumn: groupColumn, valueColumn: valueColumn, cancellation: cancellation)
+            return oneWayAnovaReport(result, groupColumn: groupColumn, valueColumn: valueColumn, columnNames: columnNames, provenance: provenance)
+        case .normalityTest(let column):
+            let result = try document.shapiroWilk(column: column, cancellation: cancellation)
+            return normalityReport(result, column: column, columnNames: columnNames, provenance: provenance)
         case .documentSummary:
             return documentSummaryReport(document: document, columnNames: columnNames, columnStatisticsReport: columnStatisticsReport, provenance: provenance)
         }
@@ -549,6 +605,121 @@ enum AnalysisReportBuilder {
             provenance: provenance,
             sections: sections
         )
+    }
+
+    private static func descriptiveStatisticsReport(_ results: [(Int, DescriptiveStatisticsResult)], columnNames: [String], provenance: AnalysisProvenance) -> AnalysisReport {
+        let names = results.map { columnName($0.0, columnNames: columnNames) }
+        let statRows: [(String, (DescriptiveStatisticsResult) -> String)] = [
+            ("N", { $0.count.formatted() }),
+            (L.t("Missing", "결측"), { $0.missingCount.formatted() }),
+            (L.t("Mean", "평균"), { formatNumber($0.mean) }),
+            (L.t("Std Dev", "표준편차"), { formatNumber($0.standardDeviation) }),
+            (L.t("Std Error", "표준오차"), { formatNumber($0.standardError) }),
+            ("95% CI", { "\(formatNumber($0.confidenceIntervalLow)) ~ \(formatNumber($0.confidenceIntervalHigh))" }),
+            ("Min", { formatNumber($0.minimum) }),
+            ("Q1", { formatNumber($0.quartile1) }),
+            (L.t("Median", "중앙값"), { formatNumber($0.median) }),
+            ("Q3", { formatNumber($0.quartile3) }),
+            ("Max", { formatNumber($0.maximum) }),
+            (L.t("Range", "범위"), { formatNumber($0.range) }),
+            ("IQR", { formatNumber($0.interquartileRange) }),
+            (L.t("Mode", "최빈값"), { $0.modes.isEmpty ? "-" : $0.modes.prefix(3).map(formatNumber).joined(separator: ", ") }),
+            (L.t("Skewness", "왜도"), { formatNumber($0.skewness) }),
+            (L.t("Kurtosis", "첨도"), { formatNumber($0.excessKurtosis) }),
+            ("CV", { formatNumber($0.coefficientOfVariation) })
+        ]
+        let rows = statRows.map { name, extract in
+            [name] + results.map { extract($0.1) }
+        }
+        return AnalysisReport(
+            title: AnalysisKind.descriptiveStatistics.title,
+            summary: L.t("Descriptive statistics for \(names.joined(separator: ", ")).", "\(names.joined(separator: ", "))의 기술통계입니다."),
+            provenance: provenance,
+            sections: [
+                .table(AnalysisTable(
+                    title: L.t("Statistics", "통계"),
+                    headers: [L.t("Statistic", "통계량")] + names,
+                    rows: rows,
+                    truncated: false
+                ))
+            ]
+        )
+    }
+
+    private static func frequencyAnalysisReport(_ result: FrequencyAnalysisResult, column: Int, columnNames: [String], provenance: AnalysisProvenance) -> AnalysisReport {
+        let name = columnName(column, columnNames: columnNames)
+        return AnalysisReport(
+            title: AnalysisKind.frequencyAnalysis.title,
+            summary: L.t("\(result.distinctCount.formatted()) distinct values in \(name).", "\(name)의 고유값 \(result.distinctCount.formatted())개."),
+            provenance: provenance,
+            sections: [
+                .table(AnalysisTable(
+                    title: name,
+                    headers: [L.t("Value", "값"), L.t("Count", "빈도"), "%", L.t("Cumulative %", "누적 %")],
+                    rows: result.entries.map {
+                        [$0.value, $0.count.formatted(), formatNumber($0.percent), formatNumber($0.cumulativePercent)]
+                    },
+                    truncated: result.entries.count < result.distinctCount
+                ))
+            ]
+        )
+    }
+
+    private static func oneWayAnovaReport(_ result: OneWayAnovaResult, groupColumn: Int, valueColumn: Int, columnNames: [String], provenance: AnalysisProvenance) -> AnalysisReport {
+        let valueName = columnName(valueColumn, columnNames: columnNames)
+        let groupName = columnName(groupColumn, columnNames: columnNames)
+        return AnalysisReport(
+            title: AnalysisKind.oneWayAnova.title,
+            summary: "\(valueName) by \(groupName)",
+            provenance: provenance,
+            sections: [
+                .metrics(title: L.t("Statistics", "통계"), rows: [
+                    AnalysisMetric(name: "F", value: formatNumber(result.fStatistic)),
+                    AnalysisMetric(name: "df", value: "\(result.degreesOfFreedomBetween), \(result.degreesOfFreedomWithin)"),
+                    AnalysisMetric(name: "p-value", value: formatPValue(result.pValue)),
+                    AnalysisMetric(name: "Eta-squared", value: formatNumber(result.etaSquared)),
+                    AnalysisMetric(name: L.t("Interpretation", "해석"), value: result.interpretation)
+                ]),
+                .table(AnalysisTable(
+                    title: L.t("Groups", "그룹"),
+                    headers: [L.t("Group", "그룹"), "N", L.t("Mean", "평균"), L.t("Std Dev", "표준편차")],
+                    rows: result.groups.map {
+                        [$0.name, $0.count.formatted(), formatNumber($0.mean), formatNumber($0.standardDeviation)]
+                    },
+                    truncated: false
+                ))
+            ]
+        )
+    }
+
+    private static func normalityReport(_ result: ShapiroWilkResult, column: Int, columnNames: [String], provenance: AnalysisProvenance) -> AnalysisReport {
+        let name = columnName(column, columnNames: columnNames)
+        var metrics = [
+            AnalysisMetric(name: "W", value: String(format: "%.5f", result.wStatistic)),
+            AnalysisMetric(name: "p-value", value: formatPValue(result.pValue)),
+            AnalysisMetric(name: "n", value: result.sampleSize.formatted()),
+            AnalysisMetric(name: L.t("Interpretation", "해석"), value: result.interpretation)
+        ]
+        if result.sampleSize > 5_000 {
+            metrics.append(AnalysisMetric(
+                name: L.t("Note", "참고"),
+                value: L.t("p-value approximation is less accurate above n = 5000.", "n이 5000을 넘으면 p값 근사의 정확도가 떨어집니다.")
+            ))
+        }
+        return AnalysisReport(
+            title: AnalysisKind.normalityTest.title,
+            summary: name,
+            provenance: provenance,
+            sections: [.metrics(title: L.t("Statistics", "통계"), rows: metrics)]
+        )
+    }
+
+    private static func formatPValue(_ value: Double) -> String {
+        guard value.isFinite else { return "-" }
+        if value != 0, value < 0.001 {
+            return String(format: "%.3e", value)
+        }
+        return String(format: "%.4f", value)
     }
 
     private static func columnName(_ column: Int, columnNames: [String]) -> String {

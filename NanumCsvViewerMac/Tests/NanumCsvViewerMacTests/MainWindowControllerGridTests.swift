@@ -1251,6 +1251,59 @@ final class MainWindowControllerGridTests: XCTestCase {
         )
     }
 
+    func testColumnTypeOverrideUpdatesHeaderBadgeAndReverts() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        id,name
+        1,Alice
+        2,Bob
+        3,Cara
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilColumnTypesReady(controller, column: 0)
+        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Integer")
+
+        controller.setColumnTypeOverrideForTesting(column: 0, type: .string)
+        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "String")
+        XCTAssertEqual(controller.columnTypeOverridesForTesting, [0: "String"])
+
+        controller.setColumnTypeOverrideForTesting(column: 0, type: nil)
+        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Integer")
+        XCTAssertTrue(controller.columnTypeOverridesForTesting.isEmpty)
+    }
+
+    func testColumnTypeChangeBlocksLossyFloatToInteger() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        score,name
+        1.5,Alice
+        2.25,Bob
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilColumnTypesReady(controller, column: 0)
+        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Float")
+
+        controller.requestColumnTypeChangeForTesting(column: 0, to: .integer)
+        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Float", "lossy Float→Integer must be blocked")
+        XCTAssertTrue(controller.columnTypeOverridesForTesting.isEmpty)
+    }
+
     private func openWideGridController() throws -> MainWindowController {
         let path = try temporaryCsvPath()
         let header = (0..<8).map { "col\($0)" }.joined(separator: ",")

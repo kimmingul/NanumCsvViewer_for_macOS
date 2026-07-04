@@ -1352,7 +1352,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         setViewMap(nil)
     }
 
-    private func currentDisplayRows(cancellation: CancellationFlag) throws -> [[String]] {
+    func currentDisplayRows(cancellation: CancellationFlag) throws -> [[String]] {
         var rows: [[String]] = []
         rows.reserveCapacity(displayRowCount)
         for viewRow in 0..<displayRowCount {

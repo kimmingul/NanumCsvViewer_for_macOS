@@ -131,6 +131,8 @@ final class MainWindowController: NSWindowController {
     private var columnFilterPopover: NSPopover?
     private var detailUpdateWorkItem: DispatchWorkItem?
     private var columnStatisticsReport: ColumnStatisticsReport?
+    private var baseColumnStatisticsReport: ColumnStatisticsReport?
+    private var columnTypeOverrides: [Int: ColumnValueType] = [:]
     private var columnStatisticsCancellation: CancellationFlag?
     private var analysisCancellation: CancellationFlag?
     private var currentAnalysisReport: AnalysisReport?
@@ -576,6 +578,9 @@ final class MainWindowController: NSWindowController {
         let headerView = CsvTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 28))
         headerView.filterClickHandler = { [weak self] column, frame in
             self?.showColumnFilterPopover(column: column, relativeTo: frame)
+        }
+        headerView.headerMenuProvider = { [weak self] column in
+            self?.makeColumnHeaderMenu(column: column)
         }
         tableView.headerView = headerView
         tableView.delegate = self
@@ -1071,7 +1076,13 @@ extension MainWindowController: NSMenuItemValidation {
 extension MainWindowController {
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.commaSeparatedText, .plainText]
+        var openTypes: [UTType] = [.commaSeparatedText, .plainText]
+        for ext in ["db", "sqlite", "sqlite3"] {
+            if let type = UTType(filenameExtension: ext) {
+                openTypes.append(type)
+            }
+        }
+        panel.allowedContentTypes = openTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.beginSheetModal(for: window!) { [weak self] response in
@@ -1124,6 +1135,8 @@ extension MainWindowController {
         indexingElapsed = nil
         lastKnownRowCount = 0
         columnStatisticsReport = nil
+        baseColumnStatisticsReport = nil
+        columnTypeOverrides = [:]
         currentAnalysisReport = nil
         earlyColumnStatisticsRequested = false
         acceptedColumnStatisticsPriority = 0
@@ -1207,7 +1220,103 @@ extension MainWindowController {
     }
 
     func openFileURL(_ url: URL) {
+        if SqliteWorkbook.hasSqliteExtension(url.path) || SqliteWorkbook.isSqliteFile(path: url.path) {
+            openSqliteDatabase(url)
+            return
+        }
         openFile(url)
+    }
+
+    private func openSqliteDatabase(_ url: URL) {
+        do {
+            let tables = try SqliteWorkbook.tableNames(path: url.path)
+            guard !tables.isEmpty else {
+                statusLabel.stringValue = L.t("No tables found in the database.", "데이터베이스에 테이블이 없습니다.")
+                return
+            }
+            if tables.count == 1 {
+                openSqliteTables(url, tables: tables)
+                return
+            }
+            presentSqliteTablePicker(url: url, tables: tables)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    private func presentSqliteTablePicker(url: URL, tables: [String]) {
+        let alert = NSAlert()
+        alert.messageText = L.t("Open SQLite Table", "SQLite 테이블 열기")
+        alert.informativeText = L.t(
+            "\(url.lastPathComponent) contains \(tables.count) tables/views. The database is opened read-only.",
+            "\(url.lastPathComponent)에 테이블/뷰가 \(tables.count)개 있습니다. 데이터베이스는 읽기 전용으로 열립니다."
+        )
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25))
+        popup.addItems(withTitles: tables)
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L.t("Open", "열기"))
+        alert.addButton(withTitle: L.t("Open All in Tabs", "모두 탭으로 열기"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            openSqliteTables(url, tables: [popup.titleOfSelectedItem ?? tables[0]])
+        case .alertSecondButtonReturn:
+            openSqliteTables(url, tables: tables)
+        default:
+            break
+        }
+    }
+
+    private func openSqliteTables(_ url: URL, tables: [String]) {
+        guard !tables.isEmpty else { return }
+        let base = url.deletingPathExtension().lastPathComponent
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NanumCsvViewerSqlite", isDirectory: true)
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: L.t("Converting SQLite table...", "SQLite 테이블 변환 중..."))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                var destinations: [URL] = []
+                for table in tables {
+                    let safeName = table
+                        .replacingOccurrences(of: "/", with: "_")
+                        .replacingOccurrences(of: ":", with: "_")
+                    let destination = tempDir.appendingPathComponent("\(base).\(safeName).csv")
+                    try SqliteWorkbook.exportTableToCsv(path: url.path, table: table, destination: destination, cancellation: cancellation)
+                    destinations.append(destination)
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    guard let first = destinations.first else { return }
+                    self.openFile(first)
+                    let rest = Array(destinations.dropFirst())
+                    if !rest.isEmpty {
+                        self.openAdditionalFilesHandler?(rest, self.window)
+                    }
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("SQLite conversion cancelled.", "SQLite 변환이 취소되었습니다.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if self.operationCancellation === cancellation {
+                        self.operationCancellation = nil
+                    }
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
     }
 
     private func openURLs(_ urls: [URL]) {
@@ -1254,6 +1363,8 @@ extension MainWindowController {
             currentFilePath = url.path
             indexingElapsed = nil
             columnStatisticsReport = nil
+            baseColumnStatisticsReport = nil
+            columnTypeOverrides = [:]
             currentAnalysisReport = nil
             analysisCancellation?.cancel()
             analysisCancellation = nil
@@ -1879,6 +1990,22 @@ extension MainWindowController {
         beginAnalysis(.documentSummary, sender: nil)
     }
 
+    @objc func showDescriptiveStatistics(_ sender: Any?) {
+        beginAnalysis(.descriptiveStatistics, sender: sender)
+    }
+
+    @objc func showFrequencyAnalysis(_ sender: Any?) {
+        beginAnalysis(.frequencyAnalysis, sender: sender)
+    }
+
+    @objc func showOneWayAnova(_ sender: Any?) {
+        beginAnalysis(.oneWayAnova, sender: sender)
+    }
+
+    @objc func showNormalityTest(_ sender: Any?) {
+        beginAnalysis(.normalityTest, sender: sender)
+    }
+
     private func beginAnalysis(_ kind: AnalysisKind, sender: Any?) {
         guard let doc = csvDocument, doc.indexingComplete, !busy || kind == .documentSummary else { return }
         guard let defaultRequest = defaultAnalysisRequest(for: kind) else {
@@ -1925,6 +2052,23 @@ extension MainWindowController {
             let rowColumn = firstNonNumericColumn(excluding: -1) ?? selected
             let columnColumn = firstNonNumericColumn(excluding: rowColumn) ?? min(rowColumn + 1, max(0, columnNames.count - 1))
             return .chiSquare(rowColumn: rowColumn, columnColumn: columnColumn)
+        case .descriptiveStatistics:
+            let numericColumns = columnNames.indices.filter { isNumericColumn($0) }
+            let fallback = isNumericColumn(selected) ? [selected] : []
+            let columns = numericColumns.isEmpty ? fallback : Array(numericColumns.prefix(6))
+            guard !columns.isEmpty else { return nil }
+            return .descriptiveStatistics(columns: columns)
+        case .frequencyAnalysis:
+            let column = isNumericColumn(selected) ? (firstNonNumericColumn(excluding: -1) ?? selected) : selected
+            return .frequencyAnalysis(column: column)
+        case .oneWayAnova:
+            let groupColumn = firstNonNumericColumn(excluding: -1) ?? selected
+            guard let valueColumn = firstNumericColumn(excluding: groupColumn) else { return nil }
+            return .oneWayAnova(groupColumn: groupColumn, valueColumn: valueColumn)
+        case .normalityTest:
+            let column = isNumericColumn(selected) ? selected : (firstNumericColumn(excluding: -1) ?? selected)
+            guard isNumericColumn(column) else { return nil }
+            return .normalityTest(column: column)
         case .documentSummary:
             return .documentSummary
         }
@@ -2035,6 +2179,38 @@ extension MainWindowController {
             addAnalysisPromptRow(to: stack, label: L.t("Rows", "행"), control: rowPopup)
             addAnalysisPromptRow(to: stack, label: L.t("Columns", "열"), control: columnPopup)
             buildRequest = { .chiSquare(rowColumn: self.selectedColumn(in: rowPopup) ?? rowColumn, columnColumn: self.selectedColumn(in: columnPopup) ?? columnColumn) }
+        case .descriptiveStatistics(let columns):
+            let scopePopup = NSPopUpButton()
+            scopePopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
+            scopePopup.addItem(withTitle: L.t("All numeric columns", "모든 숫자 컬럼"))
+            scopePopup.addItem(withTitle: L.t("Single column", "단일 컬럼"))
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: columns.first ?? clampedCurrentDataColumn())
+            addAnalysisPromptRow(to: stack, label: L.t("Scope", "범위"), control: scopePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = {
+                if scopePopup.indexOfSelectedItem == 0 {
+                    let numericColumns = self.columnNames.indices.filter { self.isNumericColumn($0) }
+                    return .descriptiveStatistics(columns: numericColumns.isEmpty ? columns : numericColumns)
+                }
+                let column = self.selectedColumn(in: columnPopup) ?? columns.first ?? 0
+                return .descriptiveStatistics(columns: [column])
+            }
+        case .frequencyAnalysis(let column):
+            let columnPopup = makeColumnPopup(selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .frequencyAnalysis(column: self.selectedColumn(in: columnPopup) ?? column) }
+        case .oneWayAnova(let groupColumn, let valueColumn):
+            let groupPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: groupColumn)
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
+            addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            buildRequest = {
+                .oneWayAnova(groupColumn: self.selectedColumn(in: groupPopup) ?? groupColumn, valueColumn: self.selectedColumn(in: valuePopup) ?? valueColumn)
+            }
+        case .normalityTest(let column):
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .normalityTest(column: self.selectedColumn(in: columnPopup) ?? column) }
         case .documentSummary:
             buildRequest = { .documentSummary }
         }
@@ -2577,6 +2753,115 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             }
         }
         updateTableDocumentWidthForViewport()
+    }
+
+    private func makeColumnHeaderMenu(column: Int) -> NSMenu? {
+        guard let report = columnStatisticsReport, let summary = report.columns[safe: column] else { return nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let typeItem = NSMenuItem(title: L.t("Change Type", "타입 변경"), action: nil, keyEquivalent: "")
+        let typeMenu = NSMenu()
+        typeMenu.autoenablesItems = false
+        for type in [ColumnValueType.integer, .float, .date, .boolean, .categorical, .string] {
+            let item = NSMenuItem(title: type.rawValue, action: #selector(changeColumnType(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = column
+            item.representedObject = type.rawValue
+            item.state = summary.inferredType == type ? .on : .off
+            typeMenu.addItem(item)
+        }
+        typeMenu.addItem(.separator())
+        let auto = NSMenuItem(title: L.t("Revert to Auto-detected", "자동 감지로 되돌리기"), action: #selector(changeColumnType(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.tag = column
+        auto.representedObject = "auto"
+        auto.isEnabled = columnTypeOverrides[column] != nil
+        typeMenu.addItem(auto)
+        typeItem.submenu = typeMenu
+        menu.addItem(typeItem)
+        return menu
+    }
+
+    @objc private func changeColumnType(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        let column = sender.tag
+        if raw == "auto" {
+            setColumnTypeOverride(column: column, type: nil)
+            return
+        }
+        guard let target = ColumnValueType(rawValue: raw) else { return }
+        requestColumnTypeChange(column: column, to: target)
+    }
+
+    func requestColumnTypeChange(column: Int, to target: ColumnValueType) {
+        guard let current = columnStatisticsReport?.columns[safe: column]?.inferredType else { return }
+        switch ColumnTypeConversion.classify(from: current, to: target) {
+        case .block:
+            statusLabel.stringValue = L.t(
+                "Cannot convert \(current.rawValue) to \(target.rawValue) without data loss.",
+                "\(current.rawValue) 타입은 데이터 손실 없이 \(target.rawValue)(으)로 바꿀 수 없습니다."
+            )
+        case .allow:
+            setColumnTypeOverride(column: column, type: target)
+        case .validateSample:
+            validateAndApplyColumnType(column: column, target: target)
+        }
+    }
+
+    private func validateAndApplyColumnType(column: Int, target: ColumnValueType) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let cancellation = CancellationFlag()
+        statusLabel.stringValue = L.t("Validating type change...", "타입 변경을 검증하는 중...")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, doc] in
+            let sample: [String]
+            do {
+                sample = try doc.distinctValues(column: column, withinCurrentView: false, limit: 2_000, progress: nil, cancellation: cancellation).map(\.value)
+            } catch {
+                DispatchQueue.main.async { self?.presentError(error) }
+                return
+            }
+            let validation = ColumnTypeConversion.validateSample(values: sample, to: target)
+            DispatchQueue.main.async {
+                guard let self, doc === self.csvDocument else { return }
+                if validation.passed {
+                    self.setColumnTypeOverride(column: column, type: target)
+                    return
+                }
+                let alert = NSAlert()
+                alert.messageText = L.t("Some values do not match \(target.rawValue)", "일부 값이 \(target.rawValue) 타입과 맞지 않습니다")
+                alert.informativeText = L.t(
+                    "Examples: \(validation.failures.joined(separator: ", ")). Apply anyway?",
+                    "예시: \(validation.failures.joined(separator: ", ")). 그래도 적용할까요?"
+                )
+                alert.addButton(withTitle: L.t("Apply", "적용"))
+                alert.addButton(withTitle: L.t("Cancel", "취소"))
+                guard let window = self.window else { return }
+                alert.beginSheetModal(for: window) { [weak self] response in
+                    guard let self else { return }
+                    if response == .alertFirstButtonReturn {
+                        self.setColumnTypeOverride(column: column, type: target)
+                    } else {
+                        self.statusLabel.stringValue = L.t("Type change cancelled.", "타입 변경을 취소했습니다.")
+                    }
+                }
+            }
+        }
+    }
+
+    func setColumnTypeOverride(column: Int, type: ColumnValueType?) {
+        if let type {
+            columnTypeOverrides[column] = type
+        } else {
+            columnTypeOverrides.removeValue(forKey: column)
+        }
+        columnStatisticsReport = baseColumnStatisticsReport?.applyingOverrides(columnTypeOverrides)
+        updateSortHeaders()
+        let name = columnNames[safe: column] ?? "\(column + 1)"
+        if let type {
+            statusLabel.stringValue = L.t("\(name) type set to \(type.rawValue).", "\(name) 컬럼 타입을 \(type.rawValue)(으)로 설정했습니다.")
+        } else {
+            statusLabel.stringValue = L.t("\(name) type reverted to auto-detected.", "\(name) 컬럼 타입을 자동 감지로 되돌렸습니다.")
+        }
     }
 
     private func makeCellView(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
@@ -3394,7 +3679,8 @@ extension MainWindowController {
                     guard !cancellation.isCancelled else { return }
                     guard priority >= (self?.acceptedColumnStatisticsPriority ?? 0) else { return }
                     self?.acceptedColumnStatisticsPriority = priority
-                    self?.columnStatisticsReport = report
+                    self?.baseColumnStatisticsReport = report
+                    self?.columnStatisticsReport = report.applyingOverrides(self?.columnTypeOverrides ?? [:])
                     self?.updateSortHeaders()
                 }
             } catch {
@@ -4182,23 +4468,16 @@ extension MainWindowController {
         tableView.intercellSpacing
     }
 
-    func dumpGridDiagnosticsForTesting(label: String) {
-        let clip = scrollView.contentView
-        print("=== GRID DIAG [\(label)] ===")
-        print("scrollView.frame=\(scrollView.frame) contentSize=\(scrollView.contentSize) hasHScroller=\(scrollView.hasHorizontalScroller)")
-        print("tableView.frame=\(tableView.frame) intercellSpacing=\(tableView.intercellSpacing) style=\(tableView.effectiveStyle.rawValue)")
-        print("contentClip.bounds=\(clip.bounds)")
-        if let headerView = tableView.headerView {
-            print("headerView.frame=\(headerView.frame) headerView.superview=\(type(of: headerView.superview as Any)) superview.frame=\(headerView.superview?.frame ?? .zero)")
-            if let headerClip = headerView.superview as? NSClipView {
-                print("headerClip.bounds=\(headerClip.bounds)")
-            }
-        }
-        for index in 0..<tableView.tableColumns.count {
-            let column = tableView.tableColumns[index]
-            print("col[\(index)] id=\(column.identifier.rawValue) width=\(column.width) min=\(column.minWidth) max=\(column.maxWidth) hidden=\(column.isHidden) rect=\(tableView.rect(ofColumn: index))")
-        }
-        print("=== END DIAG ===")
+    func setColumnTypeOverrideForTesting(column: Int, type: ColumnValueType?) {
+        setColumnTypeOverride(column: column, type: type)
+    }
+
+    func requestColumnTypeChangeForTesting(column: Int, to target: ColumnValueType) {
+        requestColumnTypeChange(column: column, to: target)
+    }
+
+    var columnTypeOverridesForTesting: [Int: String] {
+        columnTypeOverrides.mapValues(\.rawValue)
     }
 
     func headerFilterHitDataColumnForTesting(column: Int) -> Int? {

@@ -1,6 +1,24 @@
 # Roadmap Status Audit
 
-Last reviewed: 2026-06-26 KST
+Last reviewed: 2026-07-04 KST
+
+## Windows Twin Parity (v1.15.0 기준, 2026-07-04)
+
+The Windows twin (github.com/kimmingul/NanumCsvViewer) is at v1.15.0. Parity work status on macOS:
+
+| Windows feature | macOS status |
+| --- | --- |
+| Grid scroll geometry correctness | **Fixed 2026-07-04** — deleted the parallel layout layer that ignored `intercellSpacing`; AppKit-native geometry, visually verified |
+| Swift 6 language mode | **Done 2026-07-04** — full strict-concurrency migration, 215+ tests green |
+| v1.13 extended statistics (descriptive/frequency/ANOVA/Shapiro-Wilk) | **Done 2026-07-04** — scipy-verified engine (`CsvExtendedStatistics`), Analysis menu entries |
+| v1.13 manual column type override | **Done 2026-07-04** — header right-click ▸ Change Type, allow/validate/block classification, revert to auto |
+| v1.13 SQLite (.db/.sqlite/.sqlite3) read-only open | **Done 2026-07-04** — system libsqlite3, table/view picker, tabs, temp-CSV bridge into the CSV engine |
+| v1.8 type-aware filtering | Largely present (categorical/date header filter popovers, date ranges); facet panel UI pending |
+| v1.8 facet analysis panel | Pending |
+| v1.9 Excel/SAS multi-sheet open | Pending (needs pure-Swift xlsx reader; SAS formats are a larger effort) |
+| v1.10–1.12 SPSS .sav / SAS labels / declared types / Currency·Percent·Ordinal·Scientific types | Pending |
+| v1.14 visualization menu, 7 statistical charts | Pending (Swift Charts foundation exists in pivot charts) |
+| v1.15 data quality review module | Pending |
 
 This audit checks whether the GitHub v1 roadmap, including the v1.6 issue list, matches the current implementation. The short answer is: v1.6 is usable and includes several workflow improvements, but the full v1 roadmap should not be treated as complete yet.
 
