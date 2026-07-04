@@ -5,22 +5,25 @@ import Foundation
 /// marks it most-recent. Replaces the v1.7 one-view-per-file storage.
 public struct SavedViewStore: Equatable, Codable, Sendable {
     private var viewsByPath: [String: [SavedCsvView]]
-    private var recentNameByPath: [String: String]
+    // Names in most-recent-first order per path, so deleting the current
+    // most-recent bookmark falls back to the next-most-recently-saved one
+    // rather than to display (insertion) order.
+    private var recencyByPath: [String: [String]]
 
     public init() {
         viewsByPath = [:]
-        recentNameByPath = [:]
+        recencyByPath = [:]
     }
 
     private enum CodingKeys: String, CodingKey {
         case viewsByPath
-        case recentNameByPath
+        case recencyByPath
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         viewsByPath = try container.decodeIfPresent([String: [SavedCsvView]].self, forKey: .viewsByPath) ?? [:]
-        recentNameByPath = try container.decodeIfPresent([String: String].self, forKey: .recentNameByPath) ?? [:]
+        recencyByPath = try container.decodeIfPresent([String: [String]].self, forKey: .recencyByPath) ?? [:]
     }
 
     /// Rebuilds the store from the legacy `[path: base64(SavedCsvView)]` map.
@@ -45,7 +48,10 @@ public struct SavedViewStore: Equatable, Codable, Sendable {
             views.append(view)
         }
         viewsByPath[path] = views
-        recentNameByPath[path] = view.name
+        var recency = recencyByPath[path] ?? []
+        recency.removeAll { $0 == view.name }
+        recency.insert(view.name, at: 0)
+        recencyByPath[path] = recency
     }
 
     public mutating func remove(name: String, forPath path: String) {
@@ -53,12 +59,12 @@ public struct SavedViewStore: Equatable, Codable, Sendable {
         views.removeAll { $0.name == name }
         if views.isEmpty {
             viewsByPath[path] = nil
-            recentNameByPath[path] = nil
+            recencyByPath[path] = nil
         } else {
             viewsByPath[path] = views
-            if recentNameByPath[path] == name {
-                recentNameByPath[path] = views.last?.name
-            }
+            var recency = recencyByPath[path] ?? []
+            recency.removeAll { $0 == name }
+            recencyByPath[path] = recency
         }
     }
 
@@ -75,7 +81,7 @@ public struct SavedViewStore: Equatable, Codable, Sendable {
     }
 
     public func mostRecent(forPath path: String) -> SavedCsvView? {
-        guard let name = recentNameByPath[path] else { return nil }
+        guard let name = recencyByPath[path]?.first(where: { view(named: $0, forPath: path) != nil }) else { return nil }
         return view(named: name, forPath: path)
     }
 }

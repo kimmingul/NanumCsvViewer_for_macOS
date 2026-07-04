@@ -23,10 +23,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu.title == L.t("Columns", "컬럼") else { return }
+        // Bind strictly to the front window's controller — the same one the
+        // menu action will target through the responder chain. No arbitrary
+        // fallback that could mutate a background document.
         let controller = (NSApp.keyWindow?.windowController as? MainWindowController)
-            ?? windowControllers.first { $0.window?.isKeyWindow == true }
-            ?? windowControllers.last
-        controller?.populateColumnsMenu(menu)
+            ?? (NSApp.mainWindow?.windowController as? MainWindowController)
+        if let controller {
+            controller.populateColumnsMenu(menu)
+        } else {
+            menu.removeAllItems()
+            let empty = NSMenuItem(title: L.t("No document", "문서 없음"), action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

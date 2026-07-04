@@ -1317,6 +1317,9 @@ extension MainWindowController {
         } else {
             map[currentFilePath] = order
         }
+        // Prune convenience entries for files that no longer exist so the map
+        // cannot grow unbounded across the app's lifetime.
+        map = map.filter { path, _ in path == currentFilePath || FileManager.default.fileExists(atPath: path) }
         UserDefaults.standard.set(map, forKey: Self.columnOrderDefaultsKey)
     }
 
@@ -3608,6 +3611,14 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         handleTableColumnDidResize(notification)
     }
 
+    func tableView(_ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int) -> Bool {
+        // Pin the row-number gutter at visual index 0: it can't move and nothing
+        // can move ahead of it, so applyStoredColumnOrder's "data starts at 1"
+        // assumption always holds.
+        guard columnIndex != 0, newColumnIndex != 0 else { return false }
+        return true
+    }
+
     func tableViewColumnDidMove(_ notification: Notification) {
         updateTableDocumentWidthForViewport()
         guard !isApplyingColumnOrder else { return }
@@ -4361,6 +4372,10 @@ extension MainWindowController {
     @objc func hideCurrentColumn(_ sender: Any?) {
         guard currentDataColumn >= 0,
               let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(currentDataColumn)")) else { return }
+        guard hiddenColumnIndexes.count < columnNames.count - 1 else {
+            statusLabel.stringValue = L.t("At least one column must stay visible.", "최소 한 개의 컬럼은 표시되어야 합니다.")
+            return
+        }
         hiddenColumnIndexes.insert(currentDataColumn)
         column.isHidden = true
         persistColumnVisibility()
@@ -4479,7 +4494,7 @@ extension MainWindowController {
         filterColumnPopup.selectItem(at: textFilterColumn < 0 ? 0 : textFilterColumn + 1)
         sortKeys = saved.sortKeys
         currentDataColumn = min(saved.currentColumn, max(0, columnNames.count - 1))
-        hiddenColumnIndexes = Set(saved.hiddenColumnIndexes)
+        hiddenColumnIndexes = sanitizedHiddenColumns(Set(saved.hiddenColumnIndexes))
         applyColumnVisibility()
         if let query = saved.searchQuery {
             findField.stringValue = Self.displayText(for: query)
@@ -4497,6 +4512,20 @@ extension MainWindowController {
         let keys = sortKeys
         let predicate = hasAnyFilter ? combinedPredicate() : nil
         let bookmarkName = saved.name
+
+        // A bookmark with no filter and no sort needs no background scan; skip
+        // the busy flash (matters most for auto-restore-on-open).
+        guard predicate != nil || !keys.isEmpty else {
+            doc.clearView()
+            refreshRowCount()
+            tableView.reloadData()
+            updateSortHeaders()
+            refreshFilterTokens()
+            updateFilterStatus()
+            statusLabel.stringValue = L.t("Restored view \"\(bookmarkName)\".", "\"\(bookmarkName)\" 보기를 복원했습니다.")
+            return true
+        }
+
         runViewOperation(message: L.t("Restoring view...", "보기 복원 중...")) { flag, progress in
             doc.clearView()
             if let predicate {
@@ -4515,6 +4544,14 @@ extension MainWindowController {
         return true
     }
 
+    /// Never lets a restored/saved hidden set hide every data column.
+    private func sanitizedHiddenColumns(_ hidden: Set<Int>) -> Set<Int> {
+        let valid = hidden.filter { $0 >= 0 && $0 < columnNames.count }
+        guard valid.count >= columnNames.count, columnNames.count > 0 else { return valid }
+        // Keep the lowest-index column visible.
+        return valid.subtracting([valid.min() ?? 0])
+    }
+
     // MARK: - Saved view store (named bookmarks)
 
     private enum SavedViewChoice {
@@ -4523,9 +4560,11 @@ extension MainWindowController {
     }
 
     private func savedViewStore() -> SavedViewStore {
-        if let data = UserDefaults.standard.data(forKey: Self.savedViewStoreDefaultsKey),
-           let store = try? JSONDecoder().decode(SavedViewStore.self, from: data) {
-            return store
+        // Once the new store key exists we never fall back to legacy, so a
+        // decode failure returns an empty store instead of resurrecting the
+        // stale v1.7 single-view data over newer bookmarks.
+        if let data = UserDefaults.standard.data(forKey: Self.savedViewStoreDefaultsKey) {
+            return (try? JSONDecoder().decode(SavedViewStore.self, from: data)) ?? SavedViewStore()
         }
         // One-time migration from the v1.7 [path: base64] single-view map.
         let legacyMap = UserDefaults.standard.dictionary(forKey: Self.savedViewsDefaultsKey) as? [String: String] ?? [:]
@@ -5515,6 +5554,10 @@ extension MainWindowController {
 
     func toggleColumnVisibilityForTesting(_ index: Int) {
         toggleColumnVisibility(index)
+    }
+
+    func canReorderColumnForTesting(from: Int, to: Int) -> Bool {
+        self.tableView(tableView, shouldReorderColumn: from, toColumn: to)
     }
 
     func setRowDensityForTesting(_ density: GridRowDensity) {

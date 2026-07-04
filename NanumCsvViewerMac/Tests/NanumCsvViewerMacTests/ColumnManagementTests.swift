@@ -86,6 +86,33 @@ final class ColumnManagementControllerTests: XCTestCase {
         XCTAssertEqual(second.visualDataColumnOrderForTesting, [2, 0, 1], "reorder restored on reopen")
     }
 
+    func testHideCurrentColumnKeepsAtLeastOneVisible() throws {
+        let controller = try openController(csv: "a,b\n1,2\n")
+        defer { controller.close() }
+
+        controller.selectCellForTesting(row: 0, column: 0)
+        controller.hideCurrentColumn(nil)
+        XCTAssertTrue(controller.isColumnHiddenForTesting(0))
+
+        controller.selectCellForTesting(row: 0, column: 1)
+        controller.hideCurrentColumn(nil)
+        XCTAssertFalse(controller.isColumnHiddenForTesting(1), "the last visible column cannot be hidden")
+    }
+
+    func testGutterColumnCannotBeReordered() throws {
+        let controller = try openController(csv: "a,b,c\n1,2,3\n")
+        defer { controller.close() }
+        XCTAssertFalse(
+            controller.canReorderColumnForTesting(from: 0, to: 2),
+            "the row-number gutter is pinned at visual index 0"
+        )
+        XCTAssertFalse(
+            controller.canReorderColumnForTesting(from: 2, to: 0),
+            "nothing can move ahead of the gutter"
+        )
+        XCTAssertTrue(controller.canReorderColumnForTesting(from: 1, to: 3))
+    }
+
     func testColumnChecklistTogglesVisibility() throws {
         let controller = try openController(csv: "a,b,c\n1,2,3\n")
         defer { controller.close() }

@@ -57,6 +57,18 @@ final class SavedViewStoreTests: XCTestCase {
         XCTAssertEqual(store.mostRecent(forPath: "/a.csv")?.currentColumn, 5)
     }
 
+    func testDeletingRecentFallsBackToNextMostRecentNotInsertionOrder() {
+        var store = SavedViewStore()
+        store.save(view("A"), forPath: "/a.csv")
+        store.save(view("B"), forPath: "/a.csv")
+        store.save(view("A", currentColumn: 3), forPath: "/a.csv") // A now most recent
+        store.save(view("C"), forPath: "/a.csv")                    // C most recent
+
+        store.remove(name: "C", forPath: "/a.csv")
+        XCTAssertEqual(store.mostRecent(forPath: "/a.csv")?.name, "A", "A was saved more recently than B")
+        XCTAssertEqual(store.names(forPath: "/a.csv"), ["A", "B"], "display order still upsert-in-place")
+    }
+
     func testRoundTripsThroughCodable() throws {
         var store = SavedViewStore()
         store.save(view("alpha"), forPath: "/a.csv")
