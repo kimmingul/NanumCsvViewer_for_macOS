@@ -166,12 +166,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let showAllColumns = NSMenuItem(title: L.t("Show All Columns", "모든 컬럼 보기"), action: #selector(MainWindowController.showAllColumns(_:)), keyEquivalent: "")
         viewMenu.addItem(showAllColumns)
         viewMenu.addItem(.separator())
-        let saveView = NSMenuItem(title: L.t("Save Current View", "현재 보기 저장"), action: #selector(MainWindowController.saveCurrentView(_:)), keyEquivalent: "s")
+        let saveView = NSMenuItem(title: L.t("Save View As...", "다른 이름으로 보기 저장..."), action: #selector(MainWindowController.saveCurrentView(_:)), keyEquivalent: "s")
         saveView.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(saveView)
-        let restoreView = NSMenuItem(title: L.t("Restore Saved View", "저장된 보기 복원"), action: #selector(MainWindowController.restoreSavedView(_:)), keyEquivalent: "r")
+        let restoreView = NSMenuItem(title: L.t("Restore Saved View...", "저장된 보기 복원..."), action: #selector(MainWindowController.restoreSavedView(_:)), keyEquivalent: "r")
         restoreView.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(restoreView)
+        let autoRestoreView = NSMenuItem(title: L.t("Restore View on Open", "열 때 보기 복원"), action: #selector(MainWindowController.toggleAutoRestoreView(_:)), keyEquivalent: "")
+        viewMenu.addItem(autoRestoreView)
         viewMenu.addItem(.separator())
         let encodingItem = NSMenuItem(title: L.t("Encoding", "인코딩"), action: nil, keyEquivalent: "")
         let encodingMenu = NSMenu(title: encodingItem.title)
@@ -364,6 +366,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "bookmark"
         case #selector(MainWindowController.restoreSavedView(_:)):
             return "bookmark.fill"
+        case #selector(MainWindowController.toggleAutoRestoreView(_:)):
+            return "arrow.clockwise.circle"
         case #selector(MainWindowController.togglePersistentIndex(_:)):
             return "internaldrive"
         case #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)):

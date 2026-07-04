@@ -52,6 +52,8 @@ final class MainWindowController: NSWindowController {
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
     private static let facetsVisibleDefaultsKey = "NanumCsvViewerMac.FacetsPanelVisible"
     private static let inspectorVisibleDefaultsKey = "NanumCsvViewerMac.InspectorVisible"
+    private static let savedViewStoreDefaultsKey = "NanumCsvViewerMac.SavedViewStore"
+    private static let autoRestoreViewDefaultsKey = "NanumCsvViewerMac.AutoRestoreView"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
     private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
@@ -1097,6 +1099,9 @@ extension MainWindowController: NSMenuItemValidation {
                 return hasDocument && !hiddenColumnIndexes.isEmpty
             case #selector(saveCurrentView(_:)), #selector(restoreSavedView(_:)):
                 return hasDocument && ready
+            case #selector(toggleAutoRestoreView(_:)):
+                menuItem.state = UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey) ? .on : .off
+                return true
             case #selector(hideCurrentColumn(_:)):
                 return hasDocument && currentDataColumn >= 0
             case #selector(togglePersistentIndex(_:)):
@@ -1624,6 +1629,7 @@ extension MainWindowController {
         statusLabel.stringValue = ""
         refreshColumnStatistics(for: doc, final: true)
         scheduleFacetRefresh(delay: 0)
+        autoRestoreSavedViewIfEnabled()
     }
 
     private func startRowTimer() {
@@ -4317,9 +4323,18 @@ extension MainWindowController {
 
     @objc func saveCurrentView(_ sender: Any?) {
         guard csvDocument != nil, let currentFilePath else { return }
+        let existing = savedViewStore().names(forPath: currentFilePath)
+        let suggestion = existing.isEmpty
+            ? L.t("View 1", "보기 1")
+            : L.t("View \(existing.count + 1)", "보기 \(existing.count + 1)")
+        guard let name = promptForBookmarkName(default: suggestion, existing: existing) else { return }
+        saveCurrentView(named: name, forPath: currentFilePath)
+    }
+
+    private func saveCurrentView(named name: String, forPath path: String) {
         let searchQuery = findField.stringValue.isEmpty ? nil : try? SearchFieldParser.parse(findField.stringValue, column: nil)
         let saved = SavedCsvView(
-            name: URL(fileURLWithPath: currentFilePath).lastPathComponent,
+            name: name,
             filterText: textFilterTerm.isEmpty ? nil : textFilterTerm,
             filterColumn: textFilterColumn < 0 ? nil : textFilterColumn,
             sortKeys: sortKeys,
@@ -4328,24 +4343,37 @@ extension MainWindowController {
             currentColumn: currentDataColumn,
             columnFilters: columnFilterState
         )
-        do {
-            let data = try JSONEncoder().encode(saved)
-            var map = savedViewMap()
-            map[currentFilePath] = data.base64EncodedString()
-            UserDefaults.standard.set(map, forKey: Self.savedViewsDefaultsKey)
-            statusLabel.stringValue = L.t("Saved current view.", "현재 보기를 저장했습니다.")
-        } catch {
-            presentError(error)
-        }
+        var store = savedViewStore()
+        store.save(saved, forPath: path)
+        persistSavedViewStore(store)
+        statusLabel.stringValue = L.t("Saved view \"\(name)\".", "\"\(name)\" 보기를 저장했습니다.")
     }
 
     @objc func restoreSavedView(_ sender: Any?) {
-        guard let doc = csvDocument, let currentFilePath, !busy else { return }
-        guard let encoded = savedViewMap()[currentFilePath],
-              let data = Data(base64Encoded: encoded),
-              let saved = try? JSONDecoder().decode(SavedCsvView.self, from: data) else {
-            statusLabel.stringValue = L.t("No saved view for this file.", "이 파일에 저장된 보기가 없습니다.")
+        guard csvDocument != nil, let currentFilePath, !busy else { return }
+        let names = savedViewStore().names(forPath: currentFilePath)
+        guard !names.isEmpty else {
+            statusLabel.stringValue = L.t("No saved views for this file.", "이 파일에 저장된 보기가 없습니다.")
             return
+        }
+        guard let choice = promptForSavedViewChoice(names: names) else { return }
+        switch choice {
+        case .restore(let name):
+            restoreSavedView(named: name, forPath: currentFilePath)
+        case .delete(let name):
+            var store = savedViewStore()
+            store.remove(name: name, forPath: currentFilePath)
+            persistSavedViewStore(store)
+            statusLabel.stringValue = L.t("Deleted view \"\(name)\".", "\"\(name)\" 보기를 삭제했습니다.")
+        }
+    }
+
+    @discardableResult
+    private func restoreSavedView(named name: String, forPath path: String) -> Bool {
+        guard let doc = csvDocument, !busy else { return false }
+        guard let saved = savedViewStore().view(named: name, forPath: path) else {
+            statusLabel.stringValue = L.t("No saved view named \"\(name)\".", "\"\(name)\" 보기가 없습니다.")
+            return false
         }
 
         columnFilterState = saved.columnFilters
@@ -4369,11 +4397,12 @@ extension MainWindowController {
             }
         } catch {
             presentError(error)
-            return
+            return false
         }
 
         let keys = sortKeys
         let predicate = hasAnyFilter ? combinedPredicate() : nil
+        let bookmarkName = saved.name
         runViewOperation(message: L.t("Restoring view...", "보기 복원 중...")) { flag, progress in
             doc.clearView()
             if let predicate {
@@ -4387,12 +4416,89 @@ extension MainWindowController {
             self?.updateSortHeaders()
             self?.refreshFilterTokens()
             self?.updateFilterStatus()
-            self?.statusLabel.stringValue = L.t("Restored saved view.", "저장된 보기를 복원했습니다.")
+            self?.statusLabel.stringValue = L.t("Restored view \"\(bookmarkName)\".", "\"\(bookmarkName)\" 보기를 복원했습니다.")
+        }
+        return true
+    }
+
+    // MARK: - Saved view store (named bookmarks)
+
+    private enum SavedViewChoice {
+        case restore(String)
+        case delete(String)
+    }
+
+    private func savedViewStore() -> SavedViewStore {
+        if let data = UserDefaults.standard.data(forKey: Self.savedViewStoreDefaultsKey),
+           let store = try? JSONDecoder().decode(SavedViewStore.self, from: data) {
+            return store
+        }
+        // One-time migration from the v1.7 [path: base64] single-view map.
+        let legacyMap = UserDefaults.standard.dictionary(forKey: Self.savedViewsDefaultsKey) as? [String: String] ?? [:]
+        let migrated = SavedViewStore(migratingLegacyMap: legacyMap)
+        if !legacyMap.isEmpty {
+            persistSavedViewStore(migrated)
+        }
+        return migrated
+    }
+
+    private func persistSavedViewStore(_ store: SavedViewStore) {
+        if let data = try? JSONEncoder().encode(store) {
+            UserDefaults.standard.set(data, forKey: Self.savedViewStoreDefaultsKey)
         }
     }
 
-    private func savedViewMap() -> [String: String] {
-        UserDefaults.standard.dictionary(forKey: Self.savedViewsDefaultsKey) as? [String: String] ?? [:]
+    private func promptForBookmarkName(default suggestion: String, existing: [String]) -> String? {
+        let alert = NSAlert()
+        alert.messageText = L.t("Save View As", "다른 이름으로 보기 저장")
+        alert.informativeText = L.t(
+            "Name this view. Reusing a name overwrites that view.",
+            "이 보기의 이름을 입력하세요. 같은 이름은 덮어씁니다."
+        )
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = suggestion
+        alert.accessoryView = field
+        alert.addButton(withTitle: L.t("Save", "저장"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? suggestion : name
+    }
+
+    private func promptForSavedViewChoice(names: [String]) -> SavedViewChoice? {
+        let alert = NSAlert()
+        alert.messageText = L.t("Restore Saved View", "저장된 보기 복원")
+        alert.informativeText = L.t("Choose a saved view to restore or delete.", "복원하거나 삭제할 저장된 보기를 선택하세요.")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 25))
+        popup.addItems(withTitles: names)
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L.t("Restore", "복원"))
+        alert.addButton(withTitle: L.t("Delete", "삭제"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .restore(popup.titleOfSelectedItem ?? names[0])
+        case .alertSecondButtonReturn:
+            return .delete(popup.titleOfSelectedItem ?? names[0])
+        default:
+            return nil
+        }
+    }
+
+    @objc func toggleAutoRestoreView(_ sender: Any?) {
+        let enabled = !UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey)
+        UserDefaults.standard.set(enabled, forKey: Self.autoRestoreViewDefaultsKey)
+        statusLabel.stringValue = enabled
+            ? L.t("Saved views will restore on open.", "파일을 열 때 저장된 보기를 복원합니다.")
+            : L.t("Saved views will not restore on open.", "파일을 열 때 저장된 보기를 복원하지 않습니다.")
+    }
+
+    private func autoRestoreSavedViewIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey),
+              let currentFilePath,
+              let recent = savedViewStore().mostRecent(forPath: currentFilePath) else { return }
+        restoreSavedView(named: recent.name, forPath: currentFilePath)
     }
 
     private func applyColumnVisibility() {
@@ -5242,6 +5348,41 @@ extension MainWindowController {
 
     var dataQualityReportForTesting: DataQualityReport? {
         currentDataQualityReport
+    }
+
+    func saveViewForTesting(named name: String) {
+        guard let currentFilePath = currentFilePathForTesting else { return }
+        saveCurrentView(named: name, forPath: currentFilePath)
+    }
+
+    @discardableResult
+    func restoreViewForTesting(named name: String) -> Bool {
+        guard let currentFilePath = currentFilePathForTesting else { return false }
+        return restoreSavedView(named: name, forPath: currentFilePath)
+    }
+
+    func deleteSavedViewForTesting(named name: String) {
+        guard let currentFilePath = currentFilePathForTesting else { return }
+        var store = savedViewStore()
+        store.remove(name: name, forPath: currentFilePath)
+        persistSavedViewStore(store)
+    }
+
+    var savedViewNamesForTesting: [String] {
+        guard let currentFilePath = currentFilePathForTesting else { return [] }
+        return savedViewStore().names(forPath: currentFilePath)
+    }
+
+    func isColumnHiddenForTesting(_ column: Int) -> Bool {
+        hiddenColumnIndexes.contains(column)
+    }
+
+    var currentFilePathForTesting: String? {
+        currentFilePath
+    }
+
+    func setAutoRestoreViewForTesting(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.autoRestoreViewDefaultsKey)
     }
 
     var hasPendingDataQualityScanForTesting: Bool {

@@ -302,7 +302,12 @@ final class MainWindowControllerGridTests: XCTestCase {
 
     func testSavedViewRestoresColumnFilterState() throws {
         _ = NSApplication.shared
-        UserDefaults.standard.removeObject(forKey: "NanumCsvViewerMac.SavedViewsByPath")
+        let storeKey = "NanumCsvViewerMac.SavedViewStore"
+        let legacyKey = "NanumCsvViewerMac.SavedViewsByPath"
+        let previousStore = UserDefaults.standard.object(forKey: storeKey)
+        let previousLegacy = UserDefaults.standard.object(forKey: legacyKey)
+        UserDefaults.standard.removeObject(forKey: storeKey)
+        UserDefaults.standard.removeObject(forKey: legacyKey)
         let path = try temporaryCsvPath()
         try """
         site,value
@@ -313,7 +318,8 @@ final class MainWindowControllerGridTests: XCTestCase {
         """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
         defer {
             try? FileManager.default.removeItem(atPath: path)
-            UserDefaults.standard.removeObject(forKey: "NanumCsvViewerMac.SavedViewsByPath")
+            if let previousStore { UserDefaults.standard.set(previousStore, forKey: storeKey) } else { UserDefaults.standard.removeObject(forKey: storeKey) }
+            if let previousLegacy { UserDefaults.standard.set(previousLegacy, forKey: legacyKey) } else { UserDefaults.standard.removeObject(forKey: legacyKey) }
         }
 
         let controller = MainWindowController()
@@ -325,12 +331,12 @@ final class MainWindowControllerGridTests: XCTestCase {
 
         controller.applyColumnFilterForTesting(.selectedValues(column: 0, values: ["A"], includeBlanks: false))
         try waitUntilNotBusy(controller)
-        controller.saveCurrentView(nil)
+        controller.saveViewForTesting(named: "site A")
 
         controller.clearFilter(nil)
         XCTAssertEqual(controller.renderedRowCountForTesting, 3)
 
-        controller.restoreSavedView(nil)
+        controller.restoreViewForTesting(named: "site A")
         try waitUntilNotBusy(controller)
 
         XCTAssertEqual(controller.renderedRowCountForTesting, 2)

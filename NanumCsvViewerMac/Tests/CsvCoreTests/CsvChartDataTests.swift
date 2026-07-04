@@ -15,16 +15,24 @@ final class CsvChartDataTests: XCTestCase {
     // MARK: - Kernel density
 
     func testKernelDensityIntegratesToApproximatelyOne() {
-        let values = (0..<200).map { _ in Double.random(in: 0...10) }
-        let points = CsvChartMath.kernelDensity(values: values, gridCount: 256)
+        // Deterministic bell-ish sample (LCG) centered inside the range so the
+        // Gaussian kernel's boundary mass loss stays small and the test is
+        // reproducible instead of flaky on random draws.
+        var seed: UInt64 = 0x9E3779B97F4A7C15
+        func next() -> Double {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Double(seed >> 11) / Double(1 << 53)
+        }
+        let values = (0..<400).map { _ in (next() + next() + next()) / 3 * 10 }
+        let points = CsvChartMath.kernelDensity(values: values, gridCount: 512)
 
-        XCTAssertEqual(points.count, 256)
+        XCTAssertEqual(points.count, 512)
         var integral = 0.0
         for index in 1..<points.count {
             let dx = points[index].x - points[index - 1].x
             integral += dx * (points[index].density + points[index - 1].density) / 2
         }
-        XCTAssertEqual(integral, 1.0, accuracy: 0.08, "trapezoid integral of the KDE should be close to 1")
+        XCTAssertEqual(integral, 1.0, accuracy: 0.05, "trapezoid integral of the KDE should be close to 1")
     }
 
     func testKernelDensityOfConstantValuesIsEmpty() {

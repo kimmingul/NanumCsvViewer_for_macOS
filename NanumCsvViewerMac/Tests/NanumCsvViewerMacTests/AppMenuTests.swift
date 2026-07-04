@@ -34,6 +34,18 @@ final class AppMenuTests: XCTestCase {
         XCTAssertFalse(analysisTitles.contains(L.t("Pivot Chart", "피벗 차트")))
     }
 
+    func testViewMenuContainsNamedSavedViewCommands() throws {
+        let mainMenu = try buildMainMenu()
+        let viewItem = try XCTUnwrap(mainMenu.items.first { $0.title == L.t("View", "보기") })
+        let viewMenu = try XCTUnwrap(viewItem.submenu)
+
+        let save = try XCTUnwrap(viewMenu.items.first { $0.action == #selector(MainWindowController.saveCurrentView(_:)) })
+        XCTAssertEqual(save.title, L.t("Save View As...", "다른 이름으로 보기 저장..."))
+        let restore = try XCTUnwrap(viewMenu.items.first { $0.action == #selector(MainWindowController.restoreSavedView(_:)) })
+        XCTAssertEqual(restore.title, L.t("Restore Saved View...", "저장된 보기 복원..."))
+        XCTAssertNotNil(viewMenu.items.first { $0.action == #selector(MainWindowController.toggleAutoRestoreView(_:)) })
+    }
+
     func testViewMenuContainsFacetsPanelToggle() throws {
         let mainMenu = try buildMainMenu()
         let viewItem = try XCTUnwrap(mainMenu.items.first { $0.title == L.t("View", "보기") })
