@@ -8,6 +8,7 @@ final class SortHeaderCell: NSTableHeaderCell {
     var columnIdentifierRawValue: String?
     var filterAvailable = false
     var filterActive = false
+    private(set) var lastDrawnFilterFrame: NSRect?
 
     override init(textCell string: String) {
         super.init(textCell: string)
@@ -38,11 +39,12 @@ final class SortHeaderCell: NSTableHeaderCell {
         copy.columnIdentifierRawValue = columnIdentifierRawValue
         copy.filterAvailable = filterAvailable
         copy.filterActive = filterActive
+        copy.lastDrawnFilterFrame = lastDrawnFilterFrame
         return copy
     }
 
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-        guard let cellFrame = visibleColumnFrame(from: cellFrame, in: controlView) else { return }
+        guard !cellFrame.isNull, cellFrame.width > 0, cellFrame.height > 0 else { return }
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: cellFrame).addClip()
         defer { NSGraphicsContext.restoreGraphicsState() }
@@ -82,7 +84,9 @@ final class SortHeaderCell: NSTableHeaderCell {
             )
         }
 
-        if let filterFrame = filterButtonFrame(withFrame: cellFrame, in: controlView) {
+        let filterFrame = filterButtonFrame(withFrame: cellFrame, in: controlView)
+        lastDrawnFilterFrame = filterFrame
+        if let filterFrame {
             drawFilterIndicator(in: filterFrame)
         }
 
@@ -98,8 +102,18 @@ final class SortHeaderCell: NSTableHeaderCell {
         )
     }
 
+    /// Frame to use for filter-icon hit testing: prefer the frame the icon was
+    /// actually drawn at; fall back to computing from the native header rect.
+    func filterHitFrame(headerFrame: NSRect, in controlView: NSView) -> NSRect? {
+        guard filterAvailable else { return nil }
+        if let lastDrawnFilterFrame, lastDrawnFilterFrame.intersects(headerFrame) {
+            return lastDrawnFilterFrame
+        }
+        return filterButtonFrame(withFrame: headerFrame, in: controlView)
+    }
+
     func filterButtonFrame(withFrame cellFrame: NSRect, in controlView: NSView) -> NSRect? {
-        guard filterAvailable, let cellFrame = visibleColumnFrame(from: cellFrame, in: controlView) else { return nil }
+        guard filterAvailable, !cellFrame.isNull, cellFrame.width > 0, cellFrame.height > 0 else { return nil }
         let titleFont = font ?? NSFont.systemFont(ofSize: 12, weight: .semibold)
         let titleAttributes = Self.titleAttributes(font: titleFont)
         let title = titleText ?? stringValue
@@ -223,62 +237,4 @@ final class SortHeaderCell: NSTableHeaderCell {
         path.fill()
     }
 
-    private func visibleColumnFrame(from cellFrame: NSRect, in controlView: NSView) -> NSRect? {
-        guard let headerView = controlView as? NSTableHeaderView,
-              let tableView = headerView.tableView,
-              let columnIndex = resolvedColumnIndex(in: tableView) else {
-            return cellFrame
-        }
-        let headerFrame = GridTableGeometry.headerFrame(forColumn: columnIndex, in: tableView, headerView: headerView)
-        let proposedHeaderFrame = headerView.headerRect(ofColumn: columnIndex)
-        let columnWidth = tableView.tableColumns[columnIndex].width
-        let actualFrame = NSRect(
-            x: headerFrame.minX,
-            y: headerFrame.minY,
-            width: min(headerFrame.width, columnWidth),
-            height: headerFrame.height
-        )
-        let visibleRect = headerView.visibleRect
-        let clippedFrame: NSRect
-        if visibleRect.width > 0, visibleRect.height > 0 {
-            clippedFrame = actualFrame.intersection(visibleRect)
-            guard !clippedFrame.isNull, clippedFrame.width > 0, clippedFrame.height > 0 else {
-                return nil
-            }
-        } else {
-            clippedFrame = actualFrame
-        }
-
-        let incomingFrameIsStaleHeaderRect = framesMatch(cellFrame, proposedHeaderFrame) &&
-            !framesMatch(proposedHeaderFrame, headerFrame)
-        let frameForIntersection = cellFrame.isNull || cellFrame.width <= 0 || cellFrame.height <= 0 || incomingFrameIsStaleHeaderRect
-            ? headerFrame
-            : cellFrame
-        let visibleFrame = frameForIntersection.intersection(clippedFrame)
-        let documentMaxX = max(tableView.frame.width, headerView.bounds.maxX)
-        let cellFrameOutsideDocument = frameForIntersection.minX < -0.5 || frameForIntersection.maxX > documentMaxX + 0.5
-        let effectiveFrame = visibleFrame.isNull && cellFrameOutsideDocument ? clippedFrame : visibleFrame
-        guard !effectiveFrame.isNull, effectiveFrame.width > 0, effectiveFrame.height > 0 else {
-            return nil
-        }
-        return effectiveFrame
-    }
-
-    private func framesMatch(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
-        guard !lhs.isNull, !rhs.isNull else { return false }
-        return abs(lhs.minX - rhs.minX) <= 0.5 &&
-            abs(lhs.minY - rhs.minY) <= 0.5 &&
-            abs(lhs.width - rhs.width) <= 0.5 &&
-            abs(lhs.height - rhs.height) <= 0.5
-    }
-
-    private func resolvedColumnIndex(in tableView: NSTableView) -> Int? {
-        if let columnIndex = tableView.tableColumns.firstIndex(where: { $0.headerCell === self }) {
-            return columnIndex
-        }
-        guard let columnIdentifierRawValue else { return nil }
-        return tableView.tableColumns.firstIndex {
-            $0.identifier.rawValue == columnIdentifierRawValue
-        }
-    }
 }

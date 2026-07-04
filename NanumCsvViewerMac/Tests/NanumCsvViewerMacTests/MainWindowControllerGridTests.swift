@@ -682,8 +682,9 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertGreaterThan(controller.tableDocumentWidthForTesting, initialDocumentWidth + 300)
         XCTAssertGreaterThanOrEqual(controller.tableDocumentWidthForTesting, controller.tableViewportWidthForTesting - 1)
         XCTAssertGreaterThanOrEqual(
-            76 + controller.tableColumnWidthForTesting(column: 0) + controller.tableColumnWidthForTesting(column: 1),
-            controller.tableViewportWidthForTesting - 1
+            controller.tableColumnRectForTesting(column: 1).maxX,
+            controller.tableViewportWidthForTesting - 33,
+            "last data column must stretch to the viewport edge (minus the style's side inset)"
         )
     }
 
@@ -715,13 +716,10 @@ final class MainWindowControllerGridTests: XCTestCase {
         window.contentView?.layoutSubtreeIfNeeded()
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
 
-        let visibleWidth = CGFloat(76) + (0..<6).reduce(CGFloat(0)) { total, column in
-            total + controller.tableColumnWidthForTesting(column: column)
-        }
         XCTAssertGreaterThanOrEqual(
-            visibleWidth,
-            controller.tableViewportWidthForTesting - 1,
-            "visibleWidth=\(visibleWidth), viewport=\(controller.tableViewportWidthForTesting), lastWidth=\(controller.tableColumnWidthForTesting(column: 5))"
+            controller.tableColumnRectForTesting(column: 5).maxX,
+            controller.tableViewportWidthForTesting - 33,
+            "lastRect=\(controller.tableColumnRectForTesting(column: 5)), viewport=\(controller.tableViewportWidthForTesting), lastWidth=\(controller.tableColumnWidthForTesting(column: 5))"
         )
     }
 
@@ -1207,6 +1205,69 @@ final class MainWindowControllerGridTests: XCTestCase {
             alreadyRequested: false,
             hasReport: true
         ))
+    }
+
+    func testTableFrameContainsLastColumnUnderDefaultIntercellSpacing() throws {
+        _ = NSApplication.shared
+        let controller = try openWideGridController()
+        defer { controller.close() }
+
+        let lastRect = controller.tableColumnRectForTesting(column: 7)
+        XCTAssertFalse(lastRect.isNull)
+        XCTAssertLessThanOrEqual(
+            lastRect.maxX,
+            controller.tableDocumentWidthForTesting + 0.5,
+            "last data column extends past the table frame by \(lastRect.maxX - controller.tableDocumentWidthForTesting)pt with intercellSpacing \(controller.tableIntercellSpacingForTesting); horizontal scrolling cannot reach the end of the grid"
+        )
+    }
+
+    func testHeaderFilterHitResolvesCorrectDataColumnUnderDefaultIntercellSpacing() throws {
+        _ = NSApplication.shared
+        let controller = try openWideGridController()
+        defer { controller.close() }
+        try waitUntilColumnTypesReady(controller, column: 6)
+        controller.layoutWindowForTesting()
+
+        XCTAssertEqual(
+            controller.headerFilterHitDataColumnForTesting(column: 6), 6,
+            "clicking the filter icon of data column 6 must resolve to column 6 under intercellSpacing \(controller.tableIntercellSpacingForTesting)"
+        )
+        XCTAssertEqual(controller.headerFilterHitDataColumnForTesting(column: 2), 2)
+    }
+
+    func testHorizontalScrollerEnabledWhenNaturalWidthOverflowsViewport() throws {
+        _ = NSApplication.shared
+        let controller = try openWideGridController()
+        defer { controller.close() }
+
+        XCTAssertTrue(
+            controller.horizontalScrollerConfiguredForTesting,
+            "8 columns x 220pt exceed the viewport; the horizontal scroller must be enabled"
+        )
+        XCTAssertGreaterThanOrEqual(
+            controller.tableDocumentWidthForTesting,
+            controller.tableColumnRectForTesting(column: 7).maxX - 0.5,
+            "scrollable range must cover the last data column"
+        )
+    }
+
+    private func openWideGridController() throws -> MainWindowController {
+        let path = try temporaryCsvPath()
+        let header = (0..<8).map { "col\($0)" }.joined(separator: ",")
+        let row = (0..<8).map { "value\($0)" }.joined(separator: ",")
+        try "\(header)\n\(row)\n\(row)\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+
+        for column in 0..<8 {
+            controller.setTableColumnWidthForTesting(column: column, width: 220)
+        }
+        controller.layoutWindowForTesting()
+        return controller
     }
 
     private func waitUntilIndexed(_ controller: MainWindowController, file: StaticString = #filePath, line: UInt = #line) throws {

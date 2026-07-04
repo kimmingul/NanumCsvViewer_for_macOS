@@ -2797,78 +2797,84 @@ extension MainWindowController {
     }
 
     @objc func visibleRowsDidChange(_ notification: Notification) {
-        syncTableHeaderWithVisibleContent()
+        syncHeaderClipIfNeeded()
         scheduleVisibleRowPrefetch()
+    }
+
+    /// AppKit normally keeps the header clip view in sync with the content
+    /// clip during interactive scrolling, but programmatic scrolls (and
+    /// headless test runs) can leave it behind. No-op when already in sync.
+    private func syncHeaderClipIfNeeded() {
+        let contentX = scrollView.contentView.bounds.origin.x
+        guard let headerClip = tableView.headerView?.superview as? NSClipView,
+              abs(headerClip.bounds.origin.x - contentX) > 0.01 else { return }
+        headerClip.scroll(to: NSPoint(x: contentX, y: headerClip.bounds.origin.y))
+        scrollView.reflectScrolledClipView(headerClip)
     }
 
     @objc func tableViewportDidResize(_ notification: Notification) {
         updateTableDocumentWidthForViewport()
-        DispatchQueue.main.async { [weak self] in
-            self?.updateTableDocumentWidthForViewport()
-        }
     }
 
+    /// Restores user column widths, lets AppKit tile the table, and decides
+    /// scroller visibility / viewport fill from the MEASURED natural width.
+    /// Never forces table/header frames and never computes geometry from
+    /// summed column widths — AppKit owns intercell spacing and style insets.
     func updateTableDocumentWidthForViewport() {
         guard !tableView.tableColumns.isEmpty, !applyingGridLayout else { return }
-        gridLayoutPassCount += 1
         let viewportWidth = scrollView.contentSize.width
         guard viewportWidth > 0 else { return }
+        gridLayoutPassCount += 1
 
-        let layout = GridTableLayout.compute(
-            columns: tableView.tableColumns.map { column in
-                GridTableLayoutColumn(
-                    identifier: column.identifier,
-                    baseWidth: baseWidth(for: column),
-                    minWidth: column.minWidth,
-                    isHidden: column.isHidden,
-                    isDataColumn: column.identifier.rawValue.hasPrefix("c")
-                )
-            },
-            viewportWidth: viewportWidth
-        )
-        var layoutChanged = false
         applyingGridLayout = true
+        defer { applyingGridLayout = false }
+
         for column in tableView.tableColumns where !column.isHidden {
-            guard let targetWidth = layout.targetWidths[column.identifier] else { continue }
-            if abs(column.width - targetWidth) > 0.5 {
-                column.width = targetWidth
-                layoutChanged = true
+            let base = baseWidth(for: column)
+            if abs(column.width - base) > 0.5 {
+                column.width = base
             }
         }
-        applyingGridLayout = false
+        tableView.tile()
 
-        let needsHorizontalScroller = layout.needsHorizontalScroller
-        if scrollView.hasHorizontalScroller != needsHorizontalScroller {
-            scrollView.hasHorizontalScroller = needsHorizontalScroller
-            scrollView.tile()
-            layoutChanged = true
+        // tile() pads the table frame up to the clip width, so the frame
+        // cannot reveal a shortfall; measure the actual right edge of the
+        // last visible column plus the style's symmetric side inset instead.
+        guard let extent = measuredColumnExtent() else { return }
+        let decision = GridTableLayout.decide(
+            naturalWidth: extent.contentMaxX + extent.leadingInset,
+            viewportWidth: viewportWidth
+        )
+        if decision.fillDelta > 0.5,
+           let fillColumn = tableView.tableColumns.last(where: { !$0.isHidden && $0.identifier.rawValue.hasPrefix("c") }) {
+            fillColumn.width = baseWidth(for: fillColumn) + decision.fillDelta
+            tableView.tile()
         }
-        if !needsHorizontalScroller, abs(scrollView.contentView.bounds.origin.x) > 0.5 {
+
+        if scrollView.hasHorizontalScroller != decision.needsHorizontalScroller {
+            scrollView.hasHorizontalScroller = decision.needsHorizontalScroller
+            scrollView.tile()
+        }
+        if !decision.needsHorizontalScroller, scrollView.contentView.bounds.origin.x > 0.5 {
             let origin = NSPoint(x: 0, y: scrollView.contentView.bounds.origin.y)
             scrollView.contentView.scroll(to: origin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
-            layoutChanged = true
         }
+    }
 
-        let adjustedViewportWidth = scrollView.contentSize.width
-        let documentWidth = max(layout.documentWidth, adjustedViewportWidth)
-        if abs(tableView.frame.width - documentWidth) > 0.5 {
-            tableView.setFrameSize(NSSize(width: documentWidth, height: tableView.frame.height))
-            layoutChanged = true
+    private func measuredColumnExtent() -> (contentMaxX: CGFloat, leadingInset: CGFloat)? {
+        var contentMaxX: CGFloat = 0
+        var leadingInset = CGFloat.greatestFiniteMagnitude
+        var hasVisibleColumn = false
+        for index in 0..<tableView.tableColumns.count where !tableView.tableColumns[index].isHidden {
+            let rect = tableView.rect(ofColumn: index)
+            guard !rect.isNull, rect.width > 0 else { continue }
+            hasVisibleColumn = true
+            contentMaxX = max(contentMaxX, rect.maxX)
+            leadingInset = min(leadingInset, rect.minX)
         }
-        if let headerView = tableView.headerView, abs(headerView.frame.width - documentWidth) > 0.5 {
-            headerView.setFrameSize(NSSize(width: documentWidth, height: headerView.frame.height))
-            layoutChanged = true
-        }
-        if layoutChanged {
-            tableView.tile()
-            tableView.layoutSubtreeIfNeeded()
-        }
-        tableView.needsDisplay = true
-        tableView.setNeedsDisplay(tableView.visibleRect)
-        scrollView.contentView.needsDisplay = true
-        syncTableHeaderWithVisibleContent()
-        tableView.headerView?.needsDisplay = true
+        guard hasVisibleColumn else { return nil }
+        return (contentMaxX, max(0, min(leadingInset, 32)))
     }
 
     private func baseWidth(for column: NSTableColumn) -> CGFloat {
@@ -2877,10 +2883,6 @@ extension MainWindowController {
 
     private func recordBaseWidth(for column: NSTableColumn) {
         gridColumnBaseWidths[column.identifier] = max(column.width, column.minWidth)
-    }
-
-    private func syncTableHeaderWithVisibleContent() {
-        tableView.headerView?.scroll(NSPoint(x: scrollView.contentView.bounds.origin.x, y: 0))
     }
 
     func scheduleVisibleRowPrefetch() {
@@ -4113,7 +4115,6 @@ extension MainWindowController {
             return
         }
         tableView.scrollColumnToVisible(tableColumnIndex)
-        tableView.headerView?.scroll(NSPoint(x: tableView.visibleRect.minX, y: 0))
     }
 
     func headerDisplayTitleForTesting(column: Int) -> String? {
@@ -4171,6 +4172,48 @@ extension MainWindowController {
         tableView
             .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
             .headerToolTip
+    }
+
+    func tableColumnRectForTesting(column: Int) -> NSRect {
+        guard let tableColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)")),
+              let index = tableView.tableColumns.firstIndex(of: tableColumn) else {
+            return .null
+        }
+        return tableView.rect(ofColumn: index)
+    }
+
+    var tableIntercellSpacingForTesting: NSSize {
+        tableView.intercellSpacing
+    }
+
+    func dumpGridDiagnosticsForTesting(label: String) {
+        let clip = scrollView.contentView
+        print("=== GRID DIAG [\(label)] ===")
+        print("scrollView.frame=\(scrollView.frame) contentSize=\(scrollView.contentSize) hasHScroller=\(scrollView.hasHorizontalScroller)")
+        print("tableView.frame=\(tableView.frame) intercellSpacing=\(tableView.intercellSpacing) style=\(tableView.effectiveStyle.rawValue)")
+        print("contentClip.bounds=\(clip.bounds)")
+        if let headerView = tableView.headerView {
+            print("headerView.frame=\(headerView.frame) headerView.superview=\(type(of: headerView.superview as Any)) superview.frame=\(headerView.superview?.frame ?? .zero)")
+            if let headerClip = headerView.superview as? NSClipView {
+                print("headerClip.bounds=\(headerClip.bounds)")
+            }
+        }
+        for index in 0..<tableView.tableColumns.count {
+            let column = tableView.tableColumns[index]
+            print("col[\(index)] id=\(column.identifier.rawValue) width=\(column.width) min=\(column.minWidth) max=\(column.maxWidth) hidden=\(column.isHidden) rect=\(tableView.rect(ofColumn: index))")
+        }
+        print("=== END DIAG ===")
+    }
+
+    func headerFilterHitDataColumnForTesting(column: Int) -> Int? {
+        guard let headerView = tableView.headerView as? CsvTableHeaderView,
+              let tableColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)")),
+              let index = tableView.tableColumns.firstIndex(of: tableColumn),
+              let cell = tableColumn.headerCell as? SortHeaderCell,
+              let frame = cell.filterHitFrame(headerFrame: headerView.headerRect(ofColumn: index), in: headerView) else {
+            return nil
+        }
+        return headerView.filterHit(at: NSPoint(x: frame.midX, y: frame.midY))?.dataColumn
     }
 }
 #endif

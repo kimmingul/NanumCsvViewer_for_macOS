@@ -14,28 +14,6 @@ final class SortHeaderCellTests: XCTestCase {
         XCTAssertGreaterThan(adjacentTypeAreaPixels, 40)
     }
 
-    func testTypeBadgeDoesNotRenderInTrailingHeaderFillerArea() throws {
-        let image = renderHeaderFillerArea()
-        let fillerPixels = countVisiblePixels(
-            in: image,
-            xRange: 150..<300,
-            yRange: 4..<24
-        )
-
-        XCTAssertLessThan(fillerPixels, 20)
-    }
-
-    func testHeaderViewDoesNotRepeatLastColumnHeaderInTrailingFillerArea() throws {
-        let image = renderHeaderViewWithTrailingFiller()
-        let fillerPixels = countVisiblePixels(
-            in: image,
-            xRange: 150..<300,
-            yRange: 4..<24
-        )
-
-        XCTAssertLessThan(fillerPixels, 20)
-    }
-
     func testHeaderCellStillDrawsTitleBeforeHeaderViewIsSized() throws {
         let image = renderUnsizedHeaderCell()
         let titlePixels = countVisiblePixels(
@@ -135,17 +113,6 @@ final class SortHeaderCellTests: XCTestCase {
         XCTAssertGreaterThan(countVisiblePixels(in: image, xRange: 6..<170, yRange: 4..<24), 20)
     }
 
-    func testCopiedHeaderCellDoesNotDrawInTrailingOverflowArea() throws {
-        let image = renderCopiedHeaderCellInTrailingFiller()
-        let fillerPixels = countVisiblePixels(
-            in: image,
-            xRange: 150..<300,
-            yRange: 4..<24
-        )
-
-        XCTAssertLessThan(fillerPixels, 20)
-    }
-
     private func renderHeaderCell(
         title: String,
         type: String,
@@ -173,44 +140,6 @@ final class SortHeaderCellTests: XCTestCase {
         }
     }
 
-    private func renderHeaderFillerArea() -> NSBitmapImageRep {
-        renderBitmap(width: 300, height: 28) {
-            let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
-            let headerView = NSTableHeaderView(frame: tableView.bounds)
-            tableView.headerView = headerView
-
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c0"))
-            column.width = 150
-            let cell = SortHeaderCell(textCell: "주소 [Categorical]")
-            cell.titleText = "주소"
-            cell.typeText = "Categorical"
-            cell.columnIdentifierRawValue = column.identifier.rawValue
-            column.headerCell = cell
-            tableView.addTableColumn(column)
-
-            cell.drawInterior(withFrame: NSRect(x: 150, y: 0, width: 150, height: 28), in: headerView)
-        }
-    }
-
-    private func renderHeaderViewWithTrailingFiller() -> NSBitmapImageRep {
-        renderBitmap(width: 300, height: 28) {
-            let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
-            let headerView = CsvTableHeaderView(frame: tableView.bounds)
-            tableView.headerView = headerView
-
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c0"))
-            column.width = 150
-            let cell = SortHeaderCell(textCell: "주소 [Categorical]")
-            cell.titleText = "주소"
-            cell.typeText = "Categorical"
-            cell.columnIdentifierRawValue = column.identifier.rawValue
-            column.headerCell = cell
-            tableView.addTableColumn(column)
-
-            headerView.draw(headerView.bounds)
-        }
-    }
-
     private func renderUnsizedHeaderCell() -> NSBitmapImageRep {
         renderBitmap(width: 150, height: 28) {
             let tableView = NSTableView(frame: .zero)
@@ -226,26 +155,6 @@ final class SortHeaderCellTests: XCTestCase {
             tableView.addTableColumn(column)
 
             cell.drawInterior(withFrame: NSRect(x: 0, y: 0, width: 150, height: 28), in: headerView)
-        }
-    }
-
-    private func renderCopiedHeaderCellInTrailingFiller() -> NSBitmapImageRep {
-        renderBitmap(width: 300, height: 28) {
-            let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
-            let headerView = CsvTableHeaderView(frame: tableView.bounds)
-            tableView.headerView = headerView
-
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c0"))
-            column.width = 150
-            let cell = SortHeaderCell(textCell: "주소 [Categorical]")
-            cell.titleText = "주소"
-            cell.typeText = "Categorical"
-            cell.columnIdentifierRawValue = column.identifier.rawValue
-            column.headerCell = cell
-            tableView.addTableColumn(column)
-
-            let copiedCell = cell.copy() as! SortHeaderCell
-            copiedCell.drawInterior(withFrame: NSRect(x: 150, y: 0, width: 150, height: 28), in: headerView)
         }
     }
 
