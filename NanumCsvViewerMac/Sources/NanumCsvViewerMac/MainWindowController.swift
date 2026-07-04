@@ -1131,7 +1131,7 @@ extension MainWindowController {
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
         var openTypes: [UTType] = [.commaSeparatedText, .plainText]
-        for ext in ["db", "sqlite", "sqlite3"] {
+        for ext in ["db", "sqlite", "sqlite3", "xlsx", "xlsm"] {
             if let type = UTType(filenameExtension: ext) {
                 openTypes.append(type)
             }
@@ -1290,7 +1290,104 @@ extension MainWindowController {
             openSqliteDatabase(url)
             return
         }
+        if XlsxWorkbook.hasXlsxExtension(url.path), XlsxWorkbook.isXlsxFile(path: url.path) {
+            openXlsxWorkbook(url)
+            return
+        }
         openFile(url)
+    }
+
+    private func openXlsxWorkbook(_ url: URL) {
+        do {
+            let sheets = try XlsxWorkbook.sheetNames(path: url.path)
+            guard !sheets.isEmpty else {
+                statusLabel.stringValue = L.t("No sheets found in the workbook.", "통합 문서에 시트가 없습니다.")
+                return
+            }
+            if sheets.count == 1 {
+                openXlsxSheets(url, sheets: sheets)
+                return
+            }
+            presentXlsxSheetPicker(url: url, sheets: sheets)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    private func presentXlsxSheetPicker(url: URL, sheets: [String]) {
+        let alert = NSAlert()
+        alert.messageText = L.t("Open Excel Sheet", "Excel 시트 열기")
+        alert.informativeText = L.t(
+            "\(url.lastPathComponent) contains \(sheets.count) sheets. The workbook is opened read-only.",
+            "\(url.lastPathComponent)에 시트가 \(sheets.count)개 있습니다. 통합 문서는 읽기 전용으로 열립니다."
+        )
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25))
+        popup.addItems(withTitles: sheets)
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L.t("Open", "열기"))
+        alert.addButton(withTitle: L.t("Open All in Tabs", "모두 탭으로 열기"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            openXlsxSheets(url, sheets: [popup.titleOfSelectedItem ?? sheets[0]])
+        case .alertSecondButtonReturn:
+            openXlsxSheets(url, sheets: sheets)
+        default:
+            break
+        }
+    }
+
+    private func openXlsxSheets(_ url: URL, sheets: [String]) {
+        guard !sheets.isEmpty else { return }
+        let base = url.deletingPathExtension().lastPathComponent
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NanumCsvViewerXlsx", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: L.t("Converting Excel sheet...", "Excel 시트 변환 중..."))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                var destinations: [URL] = []
+                for sheet in sheets {
+                    let safeName = sheet
+                        .replacingOccurrences(of: "/", with: "_")
+                        .replacingOccurrences(of: ":", with: "_")
+                    let destination = tempDir.appendingPathComponent("\(base).\(safeName).csv")
+                    try XlsxWorkbook.exportSheetToCsv(path: url.path, sheet: sheet, destination: destination, cancellation: cancellation)
+                    destinations.append(destination)
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    guard let first = destinations.first else { return }
+                    self.openFile(first)
+                    let rest = Array(destinations.dropFirst())
+                    if !rest.isEmpty {
+                        self.openAdditionalFilesHandler?(rest, self.window)
+                    }
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("Excel conversion cancelled.", "Excel 변환이 취소되었습니다.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if self.operationCancellation === cancellation {
+                        self.operationCancellation = nil
+                    }
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
     }
 
     private func openSqliteDatabase(_ url: URL) {
