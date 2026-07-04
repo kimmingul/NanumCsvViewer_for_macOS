@@ -153,6 +153,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(filterBar)
         let details = NSMenuItem(title: L.t("Toggle Inspector", "인스펙터 토글"), action: #selector(MainWindowController.toggleDetailPanel(_:)), keyEquivalent: "\u{F705}")
         viewMenu.addItem(details)
+        let facets = NSMenuItem(title: L.t("Facets Panel", "패싯 패널"), action: #selector(MainWindowController.toggleFacetsPanel(_:)), keyEquivalent: "\u{F709}")
+        facets.keyEquivalentModifierMask = []
+        viewMenu.addItem(facets)
         let statistics = NSMenuItem(title: L.t("Column Statistics", "컬럼 통계"), action: #selector(MainWindowController.showColumnStatistics(_:)), keyEquivalent: "i")
         statistics.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(statistics)
@@ -314,6 +317,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "line.3.horizontal.decrease"
         case #selector(MainWindowController.toggleDetailPanel(_:)):
             return "sidebar.right"
+        case #selector(MainWindowController.toggleFacetsPanel(_:)):
+            return "chart.bar.xaxis"
         case #selector(MainWindowController.showColumnStatistics(_:)):
             return "chart.bar.doc.horizontal"
         case #selector(MainWindowController.showPerformanceDashboard(_:)):

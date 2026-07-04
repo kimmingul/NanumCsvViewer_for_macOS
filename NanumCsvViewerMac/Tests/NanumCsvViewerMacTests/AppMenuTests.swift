@@ -34,6 +34,18 @@ final class AppMenuTests: XCTestCase {
         XCTAssertFalse(analysisTitles.contains(L.t("Pivot Chart", "피벗 차트")))
     }
 
+    func testViewMenuContainsFacetsPanelToggle() throws {
+        let mainMenu = try buildMainMenu()
+        let viewItem = try XCTUnwrap(mainMenu.items.first { $0.title == L.t("View", "보기") })
+        let viewMenu = try XCTUnwrap(viewItem.submenu)
+        let facetsItem = try XCTUnwrap(viewMenu.items.first { $0.title == L.t("Facets Panel", "패싯 패널") })
+
+        XCTAssertEqual(facetsItem.action, NSSelectorFromString("toggleFacetsPanel:"))
+        XCTAssertEqual(facetsItem.keyEquivalent, "\u{F709}", "F6 matches the Windows twin shortcut")
+        XCTAssertEqual(facetsItem.keyEquivalentModifierMask, [])
+        XCTAssertNotNil(facetsItem.image)
+    }
+
     func testAnalysisMenuContainsResultCopyAndExportActions() throws {
         let mainMenu = try buildMainMenu()
         let analysisItem = try XCTUnwrap(mainMenu.items.first { $0.title == L.t("Analysis", "분석") })

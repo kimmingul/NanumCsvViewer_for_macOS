@@ -50,6 +50,9 @@ final class MainWindowController: NSWindowController {
     private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
     private static let deleteIndexCacheOnCloseDefaultsKey = "NanumCsvViewerMac.DeleteIndexCacheOnClose"
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
+    private static let facetsVisibleDefaultsKey = "NanumCsvViewerMac.FacetsPanelVisible"
+    private static let facetRowCap = 2_000_000
+    private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
     private static let tableCellPreviewLimit = 512
     private static let earlyColumnStatisticsRowThreshold = 200
@@ -129,6 +132,11 @@ final class MainWindowController: NSWindowController {
     private var columnFilterState = ColumnFilterState()
     private var gridSelection = GridSelectionModel()
     private var columnFilterPopover: NSPopover?
+    private let facetsPanel = FacetsPanelView()
+    private var facetsWidthConstraint: NSLayoutConstraint?
+    private var facetsCancellation: CancellationFlag?
+    private var facetRefreshWorkItem: DispatchWorkItem?
+    private var facetGeneration = 0
     private var detailUpdateWorkItem: DispatchWorkItem?
     private var columnStatisticsReport: ColumnStatisticsReport?
     private var baseColumnStatisticsReport: ColumnStatisticsReport?
@@ -214,6 +222,9 @@ final class MainWindowController: NSWindowController {
         configureDropTargets()
         setFilterBarVisible(false)
         setInspectorVisible(false, rememberWidth: false, animated: false)
+        if UserDefaults.standard.bool(forKey: Self.facetsVisibleDefaultsKey) {
+            setFacetsPanelVisible(true, persist: false)
+        }
         updateFeatureState()
         refreshSignal()
         updateEmptyState()
@@ -335,7 +346,7 @@ final class MainWindowController: NSWindowController {
         left.setContentHuggingPriority(.defaultLow, for: .horizontal)
         left.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         left.addArrangedSubview(makeSelectedValueBar())
-        left.addArrangedSubview(scrollView)
+        left.addArrangedSubview(makeGridRowWithFacets())
 
         detailPanel.wantsLayer = true
         detailPanel.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
@@ -352,6 +363,33 @@ final class MainWindowController: NSWindowController {
             self?.setInitialSplitPosition()
         }
         return mainSplit
+    }
+
+    private func makeGridRowWithFacets() -> NSView {
+        let gridRow = NSView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        facetsPanel.translatesAutoresizingMaskIntoConstraints = false
+        gridRow.addSubview(scrollView)
+        gridRow.addSubview(facetsPanel)
+
+        let widthConstraint = facetsPanel.widthAnchor.constraint(equalToConstant: 0)
+        facetsWidthConstraint = widthConstraint
+        facetsPanel.isHidden = true
+        facetsPanel.selectionHandler = { [weak self] column, kind in
+            self?.handleFacetSelection(column: column, kind: kind)
+        }
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: gridRow.leadingAnchor),
+            scrollView.topAnchor.constraint(equalTo: gridRow.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: gridRow.bottomAnchor),
+            facetsPanel.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            facetsPanel.trailingAnchor.constraint(equalTo: gridRow.trailingAnchor),
+            facetsPanel.topAnchor.constraint(equalTo: gridRow.topAnchor),
+            facetsPanel.bottomAnchor.constraint(equalTo: gridRow.bottomAnchor),
+            widthConstraint
+        ])
+        return gridRow
     }
 
     private func setInitialSplitPosition() {
@@ -1041,6 +1079,9 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(toggleDetailPanel(_:)):
                 menuItem.state = isInspectorVisible ? .on : .off
                 return hasDocument
+            case #selector(toggleFacetsPanel(_:)):
+                menuItem.state = isFacetsPanelVisible ? .on : .off
+                return true
             case #selector(showColumnStatistics(_:)):
                 return ready
             case #selector(showPerformanceDashboard(_:)):
@@ -1120,6 +1161,8 @@ extension MainWindowController {
         columnFilterValuesCancellation = nil
         columnStatisticsCancellation = nil
         analysisCancellation = nil
+        facetsCancellation = nil
+        facetRefreshWorkItem = nil
         rowTimer = nil
         detailUpdateWorkItem = nil
 
@@ -1159,6 +1202,9 @@ extension MainWindowController {
         updateAnalysisActionBar(running: false)
         updateEmptyState()
         updateFeatureState()
+        if isFacetsPanelVisible {
+            refreshFacetsNow()
+        }
     }
 
     @objc func exportCurrentView(_ sender: Any?) {
@@ -1387,6 +1433,9 @@ extension MainWindowController {
             updateEmptyState()
             startIndexing(csvDocument: doc)
             updateFeatureState()
+            if isFacetsPanelVisible {
+                refreshFacetsNow()
+            }
         } catch {
             indexingElapsed = nil
             currentFilePath = nil
@@ -1459,6 +1508,7 @@ extension MainWindowController {
         updateFeatureState()
         statusLabel.stringValue = ""
         refreshColumnStatistics(for: doc, final: true)
+        scheduleFacetRefresh(delay: 0)
     }
 
     private func startRowTimer() {
@@ -1733,6 +1783,7 @@ extension MainWindowController {
     private func updateFilterStatus() {
         guard csvDocument != nil else { return }
         refreshFilterTokens()
+        scheduleFacetRefresh()
         if !hasAnyFilter {
             statusLabel.stringValue = ""
             updateFeatureState()
@@ -1883,6 +1934,231 @@ extension MainWindowController {
             show = detailToggleButton.state == .on
         }
         setInspectorVisible(show, animated: true)
+    }
+
+    var isFacetsPanelVisible: Bool {
+        !facetsPanel.isHidden
+    }
+
+    @objc func toggleFacetsPanel(_ sender: Any?) {
+        setFacetsPanelVisible(facetsPanel.isHidden, persist: true)
+    }
+
+    func setFacetsPanelVisible(_ visible: Bool, persist: Bool) {
+        guard visible == facetsPanel.isHidden else { return }
+        facetsPanel.isHidden = !visible
+        facetsWidthConstraint?.constant = visible ? FacetsPanelView.preferredWidth : 0
+        if persist {
+            UserDefaults.standard.set(visible, forKey: Self.facetsVisibleDefaultsKey)
+        }
+        if visible {
+            refreshFacetsNow()
+        } else {
+            facetRefreshWorkItem?.cancel()
+            facetsCancellation?.cancel()
+            facetsCancellation = nil
+        }
+    }
+
+    func scheduleFacetRefresh(delay: TimeInterval = 0.15) {
+        facetRefreshWorkItem?.cancel()
+        guard isFacetsPanelVisible else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.refreshFacetsNow()
+        }
+        facetRefreshWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func refreshFacetsNow() {
+        guard isFacetsPanelVisible else { return }
+        facetGeneration += 1
+        let generation = facetGeneration
+        facetsCancellation?.cancel()
+        facetsCancellation = nil
+
+        guard let doc = csvDocument else {
+            facetsPanel.renderMessage(L.t("Open a document to see facets.", "문서를 열면 패싯이 표시됩니다."))
+            return
+        }
+        guard doc.indexingComplete else {
+            facetsPanel.renderMessage(L.t("Loading...", "불러오는 중..."))
+            return
+        }
+        let requests = facetColumnRequests()
+        guard !requests.isEmpty else {
+            facetsPanel.renderMessage(L.t("No columns to summarize.", "요약할 컬럼이 없습니다."))
+            return
+        }
+
+        let cancellation = CancellationFlag()
+        facetsCancellation = cancellation
+        let basePredicate = textCondition
+        var predicateBuilder: [Int: @Sendable ([String]) -> Bool] = [:]
+        for filter in columnFilterState.filters {
+            predicateBuilder[filter.column] = ColumnFilterState(filters: [filter]).predicate()
+        }
+        let columnPredicates = predicateBuilder
+        let rowCap = Self.facetRowCap
+        let filterSnapshot = columnFilterState
+        let names = columnNames
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let report = try doc.facetSummaries(
+                    columns: requests,
+                    basePredicate: basePredicate,
+                    columnPredicates: columnPredicates,
+                    rowCap: rowCap,
+                    cancellation: cancellation
+                )
+                DispatchQueue.main.async {
+                    guard let self, self.facetGeneration == generation, doc === self.csvDocument else { return }
+                    self.facetsCancellation = nil
+                    let sections = Self.facetSections(
+                        report: report,
+                        columnNames: names,
+                        filterState: filterSnapshot,
+                        blankLabel: L.t("(Blank)", "(빈 값)")
+                    )
+                    let note = report.isRowCapped
+                        ? L.t(
+                            "Showing first \(report.scannedRowCount.formatted()) rows",
+                            "처음 \(report.scannedRowCount.formatted())행 기준"
+                        )
+                        : nil
+                    self.facetsPanel.render(sections: sections, note: note)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.facetGeneration == generation else { return }
+                    self.facetsCancellation = nil
+                }
+            }
+        }
+    }
+
+    private func facetColumnRequests() -> [FacetColumnRequest] {
+        let visible = (0..<columnNames.count).filter { !hiddenColumnIndexes.contains($0) }
+        return visible.prefix(Self.facetColumnLimit).map { column in
+            let type = columnStatisticsReport?.columns[safe: column]?.inferredType
+            return FacetColumnRequest(column: column, wantsHistogram: type == .integer || type == .float)
+        }
+    }
+
+    static func facetSections(
+        report: FacetReport,
+        columnNames: [String],
+        filterState: ColumnFilterState,
+        blankLabel: String
+    ) -> [FacetPanelSection] {
+        report.summaries.compactMap { summary in
+            let title = columnNames.indices.contains(summary.column)
+                ? columnNames[summary.column]
+                : "Column \(summary.column + 1)"
+            let activeFilter = filterState.filter(for: summary.column)
+            switch summary.content {
+            case .topValues(let bins, let otherCount, let distinctTruncated):
+                guard !bins.isEmpty else { return nil }
+                var activeValues: Set<String> = []
+                var activeBlanks = false
+                if case .selectedValues(_, let values, let includeBlanks)? = activeFilter {
+                    activeValues = values
+                    activeBlanks = includeBlanks
+                }
+                let maxCount = bins.map(\.count).max() ?? 0
+                let entries = bins.map { bin in
+                    FacetPanelEntry(
+                        label: bin.value.isEmpty ? blankLabel : bin.value,
+                        count: bin.count,
+                        maxCount: maxCount,
+                        kind: .value(bin.value),
+                        isActive: bin.value.isEmpty ? activeBlanks : activeValues.contains(bin.value)
+                    )
+                }
+                var footnotes: [String] = []
+                if otherCount > 0 {
+                    footnotes.append(L.t("+\(otherCount.formatted()) in other values", "기타 값 \(otherCount.formatted())개"))
+                }
+                if distinctTruncated {
+                    footnotes.append(L.t("approximate", "근사치"))
+                }
+                return FacetPanelSection(
+                    column: summary.column,
+                    title: title,
+                    entries: entries,
+                    footnote: footnotes.isEmpty ? nil : footnotes.joined(separator: " · ")
+                )
+            case .histogram(let bins, _, let nonNumericCount):
+                guard !bins.isEmpty else { return nil }
+                var activeRange: (lower: Double, upper: Double, includesUpperBound: Bool)?
+                if case .numericRange(_, let lower, let upper, let includesUpperBound)? = activeFilter {
+                    activeRange = (lower, upper, includesUpperBound)
+                }
+                let maxCount = bins.map(\.count).max() ?? 0
+                let entries = bins.enumerated().map { index, bin in
+                    let includesUpperBound = index == bins.count - 1
+                    let label = "\(ColumnFilterState.numericBoundLabel(bin.lowerBound)) – \(ColumnFilterState.numericBoundLabel(bin.upperBound))"
+                    let isActive = activeRange.map {
+                        $0.lower == bin.lowerBound && $0.upper == bin.upperBound && $0.includesUpperBound == includesUpperBound
+                    } ?? false
+                    return FacetPanelEntry(
+                        label: label,
+                        count: bin.count,
+                        maxCount: maxCount,
+                        kind: .numericRange(
+                            lower: bin.lowerBound,
+                            upper: bin.upperBound,
+                            includesUpperBound: includesUpperBound
+                        ),
+                        isActive: isActive
+                    )
+                }
+                let footnote = nonNumericCount > 0
+                    ? L.t("\(nonNumericCount.formatted()) non-numeric", "숫자 아님 \(nonNumericCount.formatted())개")
+                    : nil
+                return FacetPanelSection(
+                    column: summary.column,
+                    title: title,
+                    entries: entries,
+                    footnote: footnote
+                )
+            }
+        }
+    }
+
+    func handleFacetSelection(column: Int, kind: FacetPanelEntry.Kind) {
+        guard csvDocument?.indexingComplete == true, !busy else { return }
+        let current = columnFilterState.filter(for: column)
+        switch kind {
+        case .value(let value):
+            var values: Set<String> = []
+            var includeBlanks = false
+            if case .selectedValues(_, let currentValues, let currentBlanks)? = current {
+                values = currentValues
+                includeBlanks = currentBlanks
+            }
+            if value.isEmpty {
+                includeBlanks.toggle()
+            } else if values.contains(value) {
+                values.remove(value)
+            } else {
+                values.insert(value)
+            }
+            if values.isEmpty && !includeBlanks {
+                clearColumnFilter(column: column)
+            } else {
+                applyColumnFilter(.selectedValues(column: column, values: values, includeBlanks: includeBlanks))
+            }
+        case .numericRange(let lower, let upper, let includesUpperBound):
+            if case .numericRange(_, let currentLower, let currentUpper, let currentInclusive)? = current,
+               currentLower == lower, currentUpper == upper, currentInclusive == includesUpperBound {
+                clearColumnFilter(column: column)
+            } else {
+                applyColumnFilter(.numericRange(column: column, lower: lower, upper: upper, includesUpperBound: includesUpperBound))
+            }
+        }
     }
 
     @objc func toggleFilterBar(_ sender: Any?) {
@@ -2868,6 +3144,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         }
         columnStatisticsReport = baseColumnStatisticsReport?.applyingOverrides(columnTypeOverrides)
         updateSortHeaders()
+        scheduleFacetRefresh()
         if case .columnStatistics(let shownColumn) = currentInspectorContentKind, shownColumn == column {
             renderColumnStatistics(column: column)
         }
@@ -3319,6 +3596,8 @@ extension MainWindowController {
             columnFilterState.setValues(column: column, values: values, includeBlanks: includeBlanks)
         case .dateRange(let column, let start, let end):
             columnFilterState.setDateRange(column: column, start: start, end: end)
+        case .numericRange(let column, let lower, let upper, let includesUpperBound):
+            columnFilterState.setNumericRange(column: column, lower: lower, upper: upper, includesUpperBound: includesUpperBound)
         }
         setFilterBarVisible(true)
         updateSortHeaders()
@@ -3492,6 +3771,7 @@ extension MainWindowController {
         column.isHidden = true
         persistColumnVisibility()
         updateTableDocumentWidthForViewport()
+        scheduleFacetRefresh()
         statusLabel.stringValue = L.t("Column hidden.", "컬럼을 숨겼습니다.")
     }
 
@@ -3502,6 +3782,7 @@ extension MainWindowController {
         }
         persistColumnVisibility()
         updateTableDocumentWidthForViewport()
+        scheduleFacetRefresh()
         statusLabel.stringValue = L.t("All columns shown.", "모든 컬럼을 표시했습니다.")
     }
 
@@ -3698,6 +3979,7 @@ extension MainWindowController {
                     self?.baseColumnStatisticsReport = report
                     self?.columnStatisticsReport = report.applyingOverrides(self?.columnTypeOverrides ?? [:])
                     self?.updateSortHeaders()
+                    self?.scheduleFacetRefresh()
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -4014,6 +4296,9 @@ extension MainWindowController {
         columnFilterValuesCancellation = nil
         columnStatisticsCancellation?.cancel()
         analysisCancellation?.cancel()
+        facetsCancellation?.cancel()
+        facetsCancellation = nil
+        facetRefreshWorkItem?.cancel()
         rowTimer?.invalidate()
         detailUpdateWorkItem?.cancel()
         indexing = false
@@ -4431,6 +4716,34 @@ extension MainWindowController {
         window?.contentView?.layoutSubtreeIfNeeded()
         updateTableDocumentWidthForViewport()
         tableView.layoutSubtreeIfNeeded()
+    }
+
+    var facetsPanelVisibleForTesting: Bool {
+        isFacetsPanelVisible
+    }
+
+    func setFacetsPanelVisibleForTesting(_ visible: Bool) {
+        setFacetsPanelVisible(visible, persist: false)
+    }
+
+    var facetSectionsForTesting: [FacetPanelSection] {
+        facetsPanel.renderedSections
+    }
+
+    var facetsPanelWidthForTesting: CGFloat {
+        facetsWidthConstraint?.constant ?? 0
+    }
+
+    var hasPendingFacetLoadForTesting: Bool {
+        facetsCancellation != nil
+    }
+
+    func handleFacetSelectionForTesting(column: Int, kind: FacetPanelEntry.Kind) {
+        handleFacetSelection(column: column, kind: kind)
+    }
+
+    var columnFilterStateForTesting: ColumnFilterState {
+        columnFilterState
     }
 
     var tableDocumentWidthForTesting: CGFloat {

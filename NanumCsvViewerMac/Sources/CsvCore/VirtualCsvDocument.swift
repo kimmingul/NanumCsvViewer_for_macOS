@@ -880,6 +880,218 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return Array(sorted.prefix(limit))
     }
 
+    public func facetSummaries(
+        columns: [FacetColumnRequest],
+        basePredicate: (@Sendable ([String]) -> Bool)? = nil,
+        columnPredicates: [Int: @Sendable ([String]) -> Bool] = [:],
+        histogramBinCount: Int = 6,
+        topValueLimit: Int = 6,
+        distinctCap: Int = 10_000,
+        rowCap: Int? = nil,
+        progress: ((Int) -> Void)? = nil,
+        cancellation: CancellationFlag
+    ) throws -> FacetReport {
+        var seenColumns = Set<Int>()
+        let requests = columns.filter { $0.column >= 0 && $0.column < columnCount && seenColumns.insert($0.column).inserted }
+        let total = dataRowsAvailable
+        let scanned = rowCap.map { min(total, max(0, $0)) } ?? total
+        guard !requests.isEmpty else {
+            return FacetReport(summaries: [], scannedRowCount: scanned, totalRowCount: total)
+        }
+
+        struct FacetAccumulator {
+            var counts: [String: Int] = [:]
+            var overflowCount = 0
+            var distinctTruncated = false
+            var minValue = Double.infinity
+            var maxValue = -Double.infinity
+            var numericCount = 0
+            var nonNumericCount = 0
+        }
+
+        // Each facet is computed excluding its own column's filter so an active
+        // selection stays visible and clicking it again toggles it off.
+        let predicatePairs = columnPredicates.map { (column: $0.key, predicate: $0.value) }
+
+        func contribution(_ fields: [String]) -> (allPass: Bool, soleFailedColumn: Int?)? {
+            if let basePredicate, !basePredicate(fields) { return nil }
+            var failedColumn = -1
+            for pair in predicatePairs where !pair.predicate(fields) {
+                if failedColumn >= 0 { return nil }
+                failedColumn = pair.column
+            }
+            return failedColumn >= 0 ? (false, failedColumn) : (true, nil)
+        }
+
+        var accumulators = [FacetAccumulator](repeating: FacetAccumulator(), count: requests.count)
+        for index in 0..<scanned {
+            if index & 0x3FFF == 0 { try cancellation.check() }
+            let fields = try getDataRowUncached(index)
+            guard let rowContribution = contribution(fields) else { continue }
+            for (slot, request) in requests.enumerated() {
+                if let soleFailed = rowContribution.soleFailedColumn, soleFailed != request.column { continue }
+                let value = request.column < fields.count ? fields[request.column] : ""
+                if accumulators[slot].counts[value] != nil || accumulators[slot].counts.count < distinctCap {
+                    accumulators[slot].counts[value, default: 0] += 1
+                } else {
+                    accumulators[slot].distinctTruncated = true
+                    accumulators[slot].overflowCount += 1
+                }
+                if request.wantsHistogram {
+                    let trimmed = value.trimmingCharacters(in: .whitespaces)
+                    if let number = Double(trimmed), number.isFinite {
+                        accumulators[slot].numericCount += 1
+                        accumulators[slot].minValue = Swift.min(accumulators[slot].minValue, number)
+                        accumulators[slot].maxValue = Swift.max(accumulators[slot].maxValue, number)
+                    } else {
+                        accumulators[slot].nonNumericCount += 1
+                    }
+                }
+            }
+            if index & 0xFFFF == 0, scanned > 0 {
+                progress?(Int(Int64(index) * 100 / Int64(scanned)))
+            }
+        }
+
+        func topValuesContent(_ accumulator: FacetAccumulator) -> FacetSummary.Content {
+            let sorted = accumulator.counts
+                .map { FacetValueBin(value: $0.key, count: $0.value) }
+                .sorted { lhs, rhs in
+                    if lhs.count != rhs.count { return lhs.count > rhs.count }
+                    return lhs.value.localizedCaseInsensitiveCompare(rhs.value) == .orderedAscending
+                }
+            let bins = Array(sorted.prefix(max(0, topValueLimit)))
+            let remainder = sorted.dropFirst(max(0, topValueLimit)).reduce(0) { $0 + $1.count }
+            return .topValues(
+                bins: bins,
+                otherCount: remainder + accumulator.overflowCount,
+                distinctTruncated: accumulator.distinctTruncated
+            )
+        }
+
+        func histogramBounds(_ accumulator: FacetAccumulator) -> (min: Double, max: Double)? {
+            guard accumulator.numericCount > 0, accumulator.minValue < accumulator.maxValue else { return nil }
+            return (accumulator.minValue, accumulator.maxValue)
+        }
+
+        func parsedNumericKeys(_ accumulator: FacetAccumulator) -> [(value: Double, count: Int)]? {
+            guard !accumulator.distinctTruncated else { return nil }
+            var parsed: [(Double, Int)] = []
+            parsed.reserveCapacity(accumulator.counts.count)
+            for (key, count) in accumulator.counts {
+                let trimmed = key.trimmingCharacters(in: .whitespaces)
+                guard let number = Double(trimmed), number.isFinite else { continue }
+                parsed.append((number, count))
+            }
+            return parsed
+        }
+
+        func binIndex(for value: Double, min: Double, width: Double, binCount: Int) -> Int {
+            Swift.min(binCount - 1, Swift.max(0, Int((value - min) / width)))
+        }
+
+        var summaries = [FacetSummary?](repeating: nil, count: requests.count)
+        var rebinSlots: [Int] = []
+        var binStorage: [Int: [Int]] = [:]
+
+        for (slot, request) in requests.enumerated() {
+            let accumulator = accumulators[slot]
+            guard request.wantsHistogram, let bounds = histogramBounds(accumulator) else {
+                summaries[slot] = FacetSummary(column: request.column, content: topValuesContent(accumulator))
+                continue
+            }
+            let binCount = max(1, histogramBinCount)
+            if let parsed = parsedNumericKeys(accumulator) {
+                let distinctNumericCount = Set(parsed.map(\.value)).count
+                if distinctNumericCount <= binCount {
+                    summaries[slot] = FacetSummary(column: request.column, content: topValuesContent(accumulator))
+                    continue
+                }
+                let width = (bounds.max - bounds.min) / Double(binCount)
+                var counts = [Int](repeating: 0, count: binCount)
+                for (value, count) in parsed {
+                    counts[binIndex(for: value, min: bounds.min, width: width, binCount: binCount)] += count
+                }
+                summaries[slot] = FacetSummary(
+                    column: request.column,
+                    content: Self.histogramContent(
+                        counts: counts,
+                        min: bounds.min,
+                        max: bounds.max,
+                        numericCount: accumulator.numericCount,
+                        nonNumericCount: accumulator.nonNumericCount
+                    )
+                )
+            } else {
+                rebinSlots.append(slot)
+                binStorage[slot] = [Int](repeating: 0, count: binCount)
+            }
+        }
+
+        if !rebinSlots.isEmpty {
+            let binCount = max(1, histogramBinCount)
+            for index in 0..<scanned {
+                if index & 0x3FFF == 0 { try cancellation.check() }
+                let fields = try getDataRowUncached(index)
+                guard let rowContribution = contribution(fields) else { continue }
+                for slot in rebinSlots {
+                    if let soleFailed = rowContribution.soleFailedColumn, soleFailed != requests[slot].column { continue }
+                    let request = requests[slot]
+                    let accumulator = accumulators[slot]
+                    guard let bounds = histogramBounds(accumulator) else { continue }
+                    let value = request.column < fields.count ? fields[request.column] : ""
+                    let trimmed = value.trimmingCharacters(in: .whitespaces)
+                    guard let number = Double(trimmed), number.isFinite else { continue }
+                    let width = (bounds.max - bounds.min) / Double(binCount)
+                    binStorage[slot]?[binIndex(for: number, min: bounds.min, width: width, binCount: binCount)] += 1
+                }
+            }
+            for slot in rebinSlots {
+                let request = requests[slot]
+                let accumulator = accumulators[slot]
+                guard let bounds = histogramBounds(accumulator), let counts = binStorage[slot] else {
+                    summaries[slot] = FacetSummary(column: request.column, content: topValuesContent(accumulator))
+                    continue
+                }
+                summaries[slot] = FacetSummary(
+                    column: request.column,
+                    content: Self.histogramContent(
+                        counts: counts,
+                        min: bounds.min,
+                        max: bounds.max,
+                        numericCount: accumulator.numericCount,
+                        nonNumericCount: accumulator.nonNumericCount
+                    )
+                )
+            }
+        }
+
+        progress?(100)
+        return FacetReport(
+            summaries: summaries.compactMap { $0 },
+            scannedRowCount: scanned,
+            totalRowCount: total
+        )
+    }
+
+    private static func histogramContent(
+        counts: [Int],
+        min: Double,
+        max: Double,
+        numericCount: Int,
+        nonNumericCount: Int
+    ) -> FacetSummary.Content {
+        let width = (max - min) / Double(counts.count)
+        let bins = counts.enumerated().map { index, count in
+            FacetHistogramBin(
+                lowerBound: min + Double(index) * width,
+                upperBound: index == counts.count - 1 ? max : min + Double(index + 1) * width,
+                count: count
+            )
+        }
+        return .histogram(bins: bins, numericCount: numericCount, nonNumericCount: nonNumericCount)
+    }
+
     public func exportCurrentView(to outputPath: String, selectedColumns: [Int]? = nil, cancellation: CancellationFlag) throws {
         try exportCurrentView(to: outputPath, format: .csv, selectedColumns: selectedColumns, cancellation: cancellation)
     }
