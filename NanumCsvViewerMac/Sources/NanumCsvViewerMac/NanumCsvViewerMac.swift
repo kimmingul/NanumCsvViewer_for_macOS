@@ -165,6 +165,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(performance)
         let showAllColumns = NSMenuItem(title: L.t("Show All Columns", "모든 컬럼 보기"), action: #selector(MainWindowController.showAllColumns(_:)), keyEquivalent: "")
         viewMenu.addItem(showAllColumns)
+        let rowDensityItem = NSMenuItem(title: L.t("Row Density", "행 밀도"), action: nil, keyEquivalent: "")
+        let rowDensityMenu = NSMenu(title: rowDensityItem.title)
+        rowDensityItem.submenu = rowDensityMenu
+        for density in GridRowDensity.allCases {
+            let item = NSMenuItem(title: density.title, action: #selector(MainWindowController.changeRowDensity(_:)), keyEquivalent: "")
+            item.representedObject = density.rawValue
+            rowDensityMenu.addItem(item)
+        }
+        viewMenu.addItem(rowDensityItem)
         viewMenu.addItem(.separator())
         let saveView = NSMenuItem(title: L.t("Save View As...", "다른 이름으로 보기 저장..."), action: #selector(MainWindowController.saveCurrentView(_:)), keyEquivalent: "s")
         saveView.keyEquivalentModifierMask = [.command, .option]
@@ -362,6 +371,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "speedometer"
         case #selector(MainWindowController.showAllColumns(_:)):
             return "tablecells"
+        case #selector(MainWindowController.changeRowDensity(_:)):
+            return "arrow.up.and.down.text.horizontal"
         case #selector(MainWindowController.saveCurrentView(_:)):
             return "bookmark"
         case #selector(MainWindowController.restoreSavedView(_:)):
@@ -445,6 +456,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "gearshape"
         case L.t("Encoding", "인코딩"):
             return "textformat"
+        case L.t("Row Density", "행 밀도"):
+            return "arrow.up.and.down.text.horizontal"
         case L.t("Analysis", "분석"):
             return "chart.xyaxis.line"
         case L.t("Visualization", "시각화"):

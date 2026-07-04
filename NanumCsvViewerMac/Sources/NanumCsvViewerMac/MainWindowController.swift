@@ -54,6 +54,7 @@ final class MainWindowController: NSWindowController {
     private static let inspectorVisibleDefaultsKey = "NanumCsvViewerMac.InspectorVisible"
     private static let savedViewStoreDefaultsKey = "NanumCsvViewerMac.SavedViewStore"
     private static let autoRestoreViewDefaultsKey = "NanumCsvViewerMac.AutoRestoreView"
+    private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
     private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
@@ -634,7 +635,8 @@ final class MainWindowController: NSWindowController {
         tableView.dataSource = self
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
-        tableView.rowSizeStyle = .medium
+        tableView.rowSizeStyle = .custom
+        tableView.rowHeight = currentRowDensity.rowHeight
         tableView.allowsMultipleSelection = false
         tableView.allowsColumnResizing = true
         tableView.allowsColumnReordering = true
@@ -1101,6 +1103,9 @@ extension MainWindowController: NSMenuItemValidation {
                 return hasDocument && ready
             case #selector(toggleAutoRestoreView(_:)):
                 menuItem.state = UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey) ? .on : .off
+                return true
+            case #selector(changeRowDensity(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == currentRowDensity.rawValue ? .on : .off
                 return true
             case #selector(hideCurrentColumn(_:)):
                 return hasDocument && currentDataColumn >= 0
@@ -4486,6 +4491,24 @@ extension MainWindowController {
         }
     }
 
+    private var currentRowDensity: GridRowDensity {
+        GridRowDensity(rawValue: UserDefaults.standard.string(forKey: Self.rowDensityDefaultsKey) ?? "") ?? .regular
+    }
+
+    @objc func changeRowDensity(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let density = item.representedObject as? String,
+              let value = GridRowDensity(rawValue: density) else { return }
+        UserDefaults.standard.set(value.rawValue, forKey: Self.rowDensityDefaultsKey)
+        applyRowDensity()
+    }
+
+    private func applyRowDensity() {
+        tableView.rowHeight = currentRowDensity.rowHeight
+        tableView.reloadData()
+        updateTableDocumentWidthForViewport()
+    }
+
     @objc func toggleAutoRestoreView(_ sender: Any?) {
         let enabled = !UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey)
         UserDefaults.standard.set(enabled, forKey: Self.autoRestoreViewDefaultsKey)
@@ -4999,7 +5022,8 @@ extension MainWindowController {
             columnCount: doc.columnCount,
             storageMode: storageMode,
             indexingElapsed: indexingElapsed,
-            indexingComplete: doc.indexingComplete
+            indexingComplete: doc.indexingComplete,
+            memoryFootprintBytes: MemoryMetrics.currentFootprintBytes()
         )
     }
 
@@ -5375,6 +5399,19 @@ extension MainWindowController {
 
     func isColumnHiddenForTesting(_ column: Int) -> Bool {
         hiddenColumnIndexes.contains(column)
+    }
+
+    var tableRowHeightForTesting: CGFloat {
+        tableView.rowHeight
+    }
+
+    func setRowDensityForTesting(_ density: GridRowDensity) {
+        UserDefaults.standard.set(density.rawValue, forKey: Self.rowDensityDefaultsKey)
+        applyRowDensity()
+    }
+
+    func performanceSnapshotForTesting() -> PerformanceSnapshot? {
+        performanceSnapshot()
     }
 
     var currentFilePathForTesting: String? {

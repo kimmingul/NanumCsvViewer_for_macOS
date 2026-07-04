@@ -2,6 +2,40 @@ import XCTest
 @testable import NanumCsvViewerMac
 
 final class PerformanceSnapshotTests: XCTestCase {
+    func testFormatsMemoryLineWhenFootprintKnown() {
+        let snapshot = PerformanceSnapshot(
+            fileBytes: 1024,
+            totalRows: 10,
+            visibleRows: 10,
+            columnCount: 2,
+            storageMode: "RAM",
+            indexingElapsed: nil,
+            indexingComplete: true,
+            memoryFootprintBytes: 47_185_920
+        )
+        XCTAssertTrue(snapshot.formattedLines().contains("Memory: 45.0 MB"))
+    }
+
+    func testOmitsMemoryLineWhenFootprintUnknown() {
+        let snapshot = PerformanceSnapshot(
+            fileBytes: 1024,
+            totalRows: 10,
+            visibleRows: 10,
+            columnCount: 2,
+            storageMode: "RAM",
+            indexingElapsed: nil,
+            indexingComplete: true,
+            memoryFootprintBytes: nil
+        )
+        XCTAssertFalse(snapshot.formattedLines().contains { $0.hasPrefix("Memory:") })
+    }
+
+    func testCurrentMemoryFootprintIsPositive() {
+        let footprint = MemoryMetrics.currentFootprintBytes()
+        XCTAssertNotNil(footprint)
+        XCTAssertGreaterThan(footprint ?? 0, 0)
+    }
+
     func testFormatsPerformanceDashboardWithIndexingAndViewMetrics() {
         let snapshot = PerformanceSnapshot(
             fileBytes: 2_097_152,
