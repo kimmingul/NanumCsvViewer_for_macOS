@@ -48,9 +48,15 @@ public struct DensityGrid: Equatable, Sendable {
 
 public enum CsvChartMath {
     /// Gaussian KDE with Silverman's rule-of-thumb bandwidth, evaluated on an
-    /// evenly spaced grid over the sample range.
-    public static func kernelDensity(values: [Double], gridCount: Int = 128) -> [KernelDensityPoint] {
-        let sample = values.filter(\.isFinite)
+    /// evenly spaced grid over the sample range. Large inputs are
+    /// stride-sampled: the naive evaluation is O(values x grid) and a full
+    /// 2M-row column would otherwise stall for minutes.
+    public static func kernelDensity(values: [Double], gridCount: Int = 128, sampleCap: Int = 20_000) -> [KernelDensityPoint] {
+        var sample = values.filter(\.isFinite)
+        if sample.count > sampleCap, sampleCap >= 2 {
+            let stride = Double(sample.count - 1) / Double(sampleCap - 1)
+            sample = (0..<sampleCap).map { sample[Int((Double($0) * stride).rounded())] }
+        }
         guard sample.count >= 2, gridCount >= 2 else { return [] }
         guard let minValue = sample.min(), let maxValue = sample.max(), minValue < maxValue else { return [] }
 
@@ -228,7 +234,16 @@ extension VirtualCsvDocument {
     public func histogramChartData(column: Int, binCount: Int = 20, cancellation: CancellationFlag) throws -> HistogramChartData {
         let distribution = try numericDistribution(column: column, binCount: binCount, cancellation: cancellation)
         let values = try numericColumnValues(column: column, cancellation: cancellation)
-        let normality = values.count >= 3 ? CsvStatistics.shapiroWilk(values: values) : nil
+        // Royston's Shapiro-Wilk is only calibrated up to n = 5000, so larger
+        // columns are tested on a deterministic stride sample.
+        let normalityInput: [Double]
+        if values.count > 5_000 {
+            let stride = Double(values.count - 1) / Double(4_999)
+            normalityInput = (0..<5_000).map { values[Int((Double($0) * stride).rounded())] }
+        } else {
+            normalityInput = values
+        }
+        let normality = normalityInput.count >= 3 ? CsvStatistics.shapiroWilk(values: normalityInput) : nil
         return HistogramChartData(
             distribution: distribution,
             density: CsvChartMath.kernelDensity(values: values),

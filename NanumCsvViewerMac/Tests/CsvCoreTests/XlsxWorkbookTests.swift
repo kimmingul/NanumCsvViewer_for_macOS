@@ -125,6 +125,45 @@ final class XlsxWorkbookTests: XCTestCase {
         XCTAssertTrue(csv.hasPrefix("hello,world\n"))
     }
 
+    func testExcelDateEpochEdges() {
+        // 1900 system: epoch 1899-12-30 absorbs the phantom Feb 29, 1900.
+        XCTAssertEqual(XlsxWorkbook.dateString(fromSerial: 1, date1904: false), "1899-12-31")
+        XCTAssertEqual(XlsxWorkbook.dateString(fromSerial: 60, date1904: false), "1900-02-28")
+        XCTAssertEqual(XlsxWorkbook.dateString(fromSerial: 61, date1904: false), "1900-03-01")
+        XCTAssertEqual(XlsxWorkbook.dateString(fromSerial: 45292, date1904: false), "2024-01-01")
+        XCTAssertEqual(
+            XlsxWorkbook.dateString(fromSerial: 45292.5, date1904: false),
+            "2024-01-01 12:00:00",
+            "fractional serials carry the time of day"
+        )
+        // 1904 system starts at 1904-01-01.
+        XCTAssertEqual(XlsxWorkbook.dateString(fromSerial: 0, date1904: true), "1904-01-01")
+        XCTAssertEqual(XlsxWorkbook.dateString(fromSerial: 1, date1904: true), "1904-01-02")
+    }
+
+    func testZipRejectsAbsurdEntryClaims() throws {
+        // Corrupt a valid archive's central directory to claim a multi-GB
+        // uncompressed size for the workbook entry.
+        let path = try writeFixtureXlsx(sheets: [("S", sheetXml(rows: [["x"]]))])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var bytes = try Data(contentsOf: URL(fileURLWithPath: path))
+
+        let signature: [UInt8] = [0x50, 0x4B, 0x01, 0x02]
+        guard let headerIndex = bytes.firstRange(of: Data(signature))?.lowerBound else {
+            return XCTFail("central directory not found")
+        }
+        let sizeOffset = headerIndex + 24
+        let huge = UInt32(2_000_000_000)
+        withUnsafeBytes(of: huge.littleEndian) { buffer in
+            bytes.replaceSubrange(sizeOffset..<(sizeOffset + 4), with: buffer)
+        }
+        let corruptedPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("corrupt-\(UUID().uuidString).xlsx")
+        try bytes.write(to: URL(fileURLWithPath: corruptedPath))
+        defer { try? FileManager.default.removeItem(atPath: corruptedPath) }
+
+        XCTAssertThrowsError(try XlsxWorkbook.sheetNames(path: corruptedPath))
+    }
+
     // MARK: - Fixture construction
 
     private func sheetXml(rows: [[String]]) -> String {

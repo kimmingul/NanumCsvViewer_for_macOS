@@ -118,7 +118,9 @@ extension VirtualCsvDocument {
         var accumulators = [ColumnAccumulator](repeating: ColumnAccumulator(), count: columns)
         var raggedRowCount = 0
         var raggedExamples: [String] = []
-        var rowSignatures = Set<String>()
+        // 64-bit FNV-1a signatures keep the duplicate scan at 8 bytes per row
+        // instead of retaining every row's full text.
+        var rowSignatures = Set<UInt64>()
         var duplicateRowCount = 0
         var duplicateScanTruncated = false
 
@@ -134,7 +136,13 @@ extension VirtualCsvDocument {
             }
 
             if rowSignatures.count < duplicateScanCap {
-                let signature = fields.joined(separator: "\u{1F}")
+                var signature: UInt64 = 0xcbf29ce484222325
+                for field in fields {
+                    for byte in field.utf8 {
+                        signature = (signature ^ UInt64(byte)) &* 0x100000001b3
+                    }
+                    signature = (signature ^ 0x1F) &* 0x100000001b3
+                }
                 if !rowSignatures.insert(signature).inserted {
                     duplicateRowCount += 1
                 }

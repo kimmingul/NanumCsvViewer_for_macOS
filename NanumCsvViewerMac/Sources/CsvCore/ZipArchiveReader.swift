@@ -11,6 +11,12 @@ enum ZipArchiveError: Error, Equatable {
 /// Minimal read-only ZIP support: enough to open .xlsx packages (stored and
 /// deflate entries, no ZIP64, no encryption).
 struct ZipArchiveReader {
+    /// Guards against crafted archives: a workbook part larger than this or
+    /// an archive with an absurd entry count is rejected instead of being
+    /// inflated into memory.
+    static let maxEntryUncompressedSize = 1 << 30
+    static let maxEntryCount = 10_000
+
     struct Entry {
         let name: String
         let compressionMethod: UInt16
@@ -41,6 +47,9 @@ struct ZipArchiveReader {
         guard eocdOffset >= 0 else { throw ZipArchiveError.notAZipFile }
 
         let entryCount = Int(Self.readUInt16(data, at: eocdOffset + 10))
+        guard entryCount <= Self.maxEntryCount else {
+            throw ZipArchiveError.corruptArchive("too many entries (\(entryCount))")
+        }
         let centralDirectoryOffset = Int(Self.readUInt32(data, at: eocdOffset + 16))
         guard centralDirectoryOffset < data.count else {
             throw ZipArchiveError.corruptArchive("central directory offset out of range")
@@ -83,6 +92,9 @@ struct ZipArchiveReader {
     func read(_ name: String) throws -> Data {
         guard let entry = entries.first(where: { $0.name == name }) else {
             throw ZipArchiveError.entryNotFound(name)
+        }
+        guard entry.uncompressedSize <= Self.maxEntryUncompressedSize else {
+            throw ZipArchiveError.corruptArchive("entry \(name) claims \(entry.uncompressedSize) bytes")
         }
         let headerOffset = entry.localHeaderOffset
         guard headerOffset + 30 <= data.count, Self.readUInt32(data, at: headerOffset) == 0x04034b50 else {

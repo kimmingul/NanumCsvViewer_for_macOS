@@ -258,7 +258,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(dataQualityItem)
         let dataQualityMenu = NSMenu(title: dataQualityItem.title)
         dataQualityItem.submenu = dataQualityMenu
-        let qualityProfile = NSMenuItem(title: L.t("Run Quality Profile", "품질 프로파일 실행"), action: #selector(MainWindowController.runDataQualityProfile(_:)), keyEquivalent: "Q")
+        // The Windows twin uses Ctrl+Shift+Q, but Cmd+Shift+Q is the macOS
+        // logout chord, so the profile lives on Cmd+Shift+P instead.
+        let qualityProfile = NSMenuItem(title: L.t("Run Quality Profile", "품질 프로파일 실행"), action: #selector(MainWindowController.runDataQualityProfile(_:)), keyEquivalent: "P")
         qualityProfile.keyEquivalentModifierMask = [.command, .shift]
         dataQualityMenu.addItem(qualityProfile)
         dataQualityMenu.addItem(.separator())

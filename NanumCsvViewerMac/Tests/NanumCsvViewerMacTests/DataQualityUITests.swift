@@ -23,7 +23,7 @@ final class DataQualityUITests: XCTestCase {
         let menu = try XCTUnwrap(item.submenu)
 
         let profile = try XCTUnwrap(menu.items.first { $0.action == #selector(MainWindowController.runDataQualityProfile(_:)) })
-        XCTAssertEqual(profile.keyEquivalent, "Q")
+        XCTAssertEqual(profile.keyEquivalent, "P", "Cmd+Shift+Q is the macOS logout chord, so quality uses Cmd+Shift+P")
         XCTAssertEqual(profile.keyEquivalentModifierMask, [.command, .shift])
 
         XCTAssertNotNil(menu.items.first { $0.action == #selector(MainWindowController.exportDataQualityMarkdown(_:)) })

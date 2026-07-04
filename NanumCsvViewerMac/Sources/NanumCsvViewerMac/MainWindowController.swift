@@ -52,7 +52,7 @@ final class MainWindowController: NSWindowController {
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
     private static let facetsVisibleDefaultsKey = "NanumCsvViewerMac.FacetsPanelVisible"
     private static let inspectorVisibleDefaultsKey = "NanumCsvViewerMac.InspectorVisible"
-    private static let facetRowCap = 2_000_000
+    private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
     private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
     private static let tableCellPreviewLimit = 512
