@@ -1949,19 +1949,15 @@ extension PivotBuilderWindowController: NSTableViewDataSource, NSTableViewDelega
         }
     }
 
-    nonisolated func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        MainActor.assumeIsolated {
-            guard tableView === fieldTable,
-                  let field = fieldForVisibleRow(row) else { return nil }
-            return PivotFieldDragPayload.pasteboardItem(fieldIndex: field.index)
-        }
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard tableView === fieldTable,
+              let field = fieldForVisibleRow(row) else { return nil }
+        return PivotFieldDragPayload.pasteboardItem(fieldIndex: field.index)
     }
 
-    nonisolated func tableViewSelectionDidChange(_ notification: Notification) {
-        MainActor.assumeIsolated {
-            guard notification.object as? NSTableView === fieldTable else { return }
-            updateFieldActionButtons()
-        }
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard notification.object as? NSTableView === fieldTable else { return }
+        updateFieldActionButtons()
     }
 
     private func makeFieldCell(tableView: NSTableView, field: PivotField) -> PivotFieldCellView {

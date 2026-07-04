@@ -11,9 +11,25 @@ public struct DistinctColumnValue: Equatable, Sendable {
 }
 
 public final class VirtualCsvDocument: @unchecked Sendable {
-    public static var persistentIndexEnabled = true
-    public static var deletePersistentIndexOnClose = false
-    public static var persistentIndexDirectoryOverride: URL?
+    private static let configLock = NSLock()
+    nonisolated(unsafe) private static var persistentIndexEnabledStorage = true
+    nonisolated(unsafe) private static var deletePersistentIndexOnCloseStorage = false
+    nonisolated(unsafe) private static var persistentIndexDirectoryOverrideStorage: URL?
+
+    public static var persistentIndexEnabled: Bool {
+        get { configLock.withLock { persistentIndexEnabledStorage } }
+        set { configLock.withLock { persistentIndexEnabledStorage = newValue } }
+    }
+
+    public static var deletePersistentIndexOnClose: Bool {
+        get { configLock.withLock { deletePersistentIndexOnCloseStorage } }
+        set { configLock.withLock { deletePersistentIndexOnCloseStorage = newValue } }
+    }
+
+    public static var persistentIndexDirectoryOverride: URL? {
+        get { configLock.withLock { persistentIndexDirectoryOverrideStorage } }
+        set { configLock.withLock { persistentIndexDirectoryOverrideStorage = newValue } }
+    }
 
     public static var ramBufferBudgetBytes: Int64 {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
@@ -328,6 +344,22 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         return fields
     }
 
+    /// Lock-protected shared state for the concurrent chunk scan; Swift 6
+    /// forbids capturing mutable locals in concurrently-executing closures.
+    private final class ParallelScanState: @unchecked Sendable {
+        let lock = NSLock()
+        var chunkOffsets: [[Int64]?]
+        var chunkData: [Data?]
+        var foundQuote = false
+        var firstError: Error?
+        var completed = 0
+
+        init(chunkCount: Int, collectData: Bool) {
+            chunkOffsets = Array(repeating: nil, count: chunkCount)
+            chunkData = collectData ? Array(repeating: nil, count: chunkCount) : []
+        }
+    }
+
     private func runParallelSimpleIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws -> Bool {
         guard fileLength > Int64(preamble) else {
             markIndexingComplete()
@@ -343,20 +375,15 @@ public final class VirtualCsvDocument: @unchecked Sendable {
 
         let chunkSize = Int64(Self.readUnit)
         let chunkCount = Int((fileLength + chunkSize - 1) / chunkSize)
-        var chunkOffsets = Array<[Int64]?>(repeating: nil, count: chunkCount)
-        var chunkData: [Data?] = ramBufferPending == nil ? [] : Array<Data?>(repeating: nil, count: chunkCount)
-        var foundQuote = false
-        var firstError: Error?
-        var completed = 0
-        let lock = NSLock()
+        let state = ParallelScanState(chunkCount: chunkCount, collectData: ramBufferPending != nil)
         let quote = UInt8(ascii: "\"")
         let cr: UInt8 = 0x0D
         let lf: UInt8 = 0x0A
 
         DispatchQueue.concurrentPerform(iterations: chunkCount) { chunkIndex in
-            lock.lock()
-            let shouldStop = foundQuote || firstError != nil
-            lock.unlock()
+            state.lock.lock()
+            let shouldStop = state.foundQuote || state.firstError != nil
+            state.lock.unlock()
             if shouldStop { return }
 
             do {
@@ -400,17 +427,17 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                     }
                 }
 
-                lock.lock()
+                state.lock.lock()
                 if localFoundQuote {
-                    foundQuote = true
+                    state.foundQuote = true
                 }
-                chunkOffsets[chunkIndex] = offsets
-                if !chunkData.isEmpty {
-                    chunkData[chunkIndex] = data.count == Int(chunkLength) ? data : data.prefix(Int(chunkLength))
+                state.chunkOffsets[chunkIndex] = offsets
+                if !state.chunkData.isEmpty {
+                    state.chunkData[chunkIndex] = data.count == Int(chunkLength) ? data : data.prefix(Int(chunkLength))
                 }
-                completed += 1
-                let done = completed
-                lock.unlock()
+                state.completed += 1
+                let done = state.completed
+                state.lock.unlock()
 
                 if done & 0x3 == 0 || done == chunkCount {
                     let processed = min(fileLength, Int64(done) * chunkSize)
@@ -418,27 +445,27 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                     progress(IndexProgress(bytesProcessed: processed, fileLength: fileLength, rowsSoFar: 0, percentOverride: scanPercent))
                 }
             } catch {
-                lock.lock()
-                if firstError == nil { firstError = error }
-                lock.unlock()
+                state.lock.lock()
+                if state.firstError == nil { state.firstError = error }
+                state.lock.unlock()
             }
         }
 
-        if let firstError { throw firstError }
-        if foundQuote {
+        if let firstError = state.firstError { throw firstError }
+        if state.foundQuote {
             progress(IndexProgress(bytesProcessed: 0, fileLength: fileLength, rowsSoFar: 0, percentOverride: 0))
             return false
         }
 
         index.add(Int64(preamble))
-        for chunkIndex in chunkOffsets.indices {
-            let offsets = chunkOffsets[chunkIndex]
+        for chunkIndex in state.chunkOffsets.indices {
+            let offsets = state.chunkOffsets[chunkIndex]
             for offset in offsets ?? [] {
                 index.add(offset)
             }
-            if chunkIndex & 0x3 == 0 || chunkIndex == chunkOffsets.count - 1 {
+            if chunkIndex & 0x3 == 0 || chunkIndex == state.chunkOffsets.count - 1 {
                 index.publish()
-                let mergePercent = 70 + Int(Int64(chunkIndex + 1) * 29 / Int64(max(1, chunkOffsets.count)))
+                let mergePercent = 70 + Int(Int64(chunkIndex + 1) * 29 / Int64(max(1, state.chunkOffsets.count)))
                 progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count, percentOverride: mergePercent))
             }
         }
@@ -446,8 +473,8 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         markIndexingComplete()
 
         if let pending = ramBufferPending {
-            for index in chunkData.indices {
-                if let data = chunkData[index] {
+            for index in state.chunkData.indices {
+                if let data = state.chunkData[index] {
                     pending.setChunk(data, at: index)
                 }
             }

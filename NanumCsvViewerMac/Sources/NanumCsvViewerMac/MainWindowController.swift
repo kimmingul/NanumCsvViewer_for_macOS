@@ -122,7 +122,7 @@ final class MainWindowController: NSWindowController {
     private var currentDataColumn = 0
     private var columnNames: [String] = []
     private var sortKeys: [SortKey] = []
-    private var textCondition: (([String]) -> Bool)?
+    private var textCondition: (@Sendable ([String]) -> Bool)?
     private var textConditionDescription = ""
     private var textFilterTerm = ""
     private var textFilterColumn = -1
@@ -996,8 +996,8 @@ extension MainWindowController: NSSplitViewDelegate {
 }
 
 extension MainWindowController: NSMenuItemValidation {
-    nonisolated func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        MainActor.assumeIsolated {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        do {
             let hasDocument = csvDocument != nil
             let ready = csvDocument?.indexingComplete == true && !busy
             let hasSelection = tableView.selectedRow >= 0
@@ -1480,7 +1480,7 @@ extension MainWindowController {
 
         let selected = filterColumnPopup.indexOfSelectedItem
         let column = selected <= 0 ? -1 : selected - 1
-        let configured: (predicate: ([String]) -> Bool, usesExpression: Bool)
+        let configured: (predicate: @Sendable ([String]) -> Bool, usesExpression: Bool)
         do {
             configured = try configureTextCondition(term: term, column: column, document: doc)
         } catch {
@@ -1510,7 +1510,7 @@ extension MainWindowController {
         }
     }
 
-    private func configureTextCondition(term: String, column: Int, document: VirtualCsvDocument) throws -> (predicate: ([String]) -> Bool, usesExpression: Bool) {
+    private func configureTextCondition(term: String, column: Int, document: VirtualCsvDocument) throws -> (predicate: @Sendable ([String]) -> Bool, usesExpression: Bool) {
         if Self.looksLikeExpression(term) {
             let compiled = try AdvancedFilterExpression.compile(term, headers: document.header)
             textCondition = compiled.predicate
@@ -1581,7 +1581,7 @@ extension MainWindowController {
         }
     }
 
-    private func combinedPredicate() -> ([String]) -> Bool {
+    private func combinedPredicate() -> @Sendable ([String]) -> Bool {
         let text = textCondition
         let columnPredicate = columnFilterState.predicate()
         let hasColumnFilters = !columnFilterState.isEmpty
@@ -1592,7 +1592,7 @@ extension MainWindowController {
         }
     }
 
-    private nonisolated static func containsPredicate(term: String, column: Int) -> ([String]) -> Bool {
+    private nonisolated static func containsPredicate(term: String, column: Int) -> @Sendable ([String]) -> Bool {
         if column < 0 {
             return { row in row.contains { $0.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil } }
         }
@@ -2448,8 +2448,8 @@ extension MainWindowController {
 
     private func runViewOperation(
         message: String,
-        operation: @escaping (_ cancellation: CancellationFlag, _ progress: @escaping (Int) -> Void) throws -> Void,
-        completion: @escaping () -> Void
+        operation: @escaping @Sendable (_ cancellation: CancellationFlag, _ progress: @escaping @Sendable (Int) -> Void) throws -> Void,
+        completion: @escaping @MainActor () -> Void
     ) {
         operationCancellation?.cancel()
         let cancellation = CancellationFlag()
@@ -2548,16 +2548,12 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
-    nonisolated func tableViewColumnDidResize(_ notification: Notification) {
-        MainActor.assumeIsolated {
-            handleTableColumnDidResize(notification)
-        }
+    func tableViewColumnDidResize(_ notification: Notification) {
+        handleTableColumnDidResize(notification)
     }
 
-    nonisolated func tableViewColumnDidMove(_ notification: Notification) {
-        MainActor.assumeIsolated {
-            updateTableDocumentWidthForViewport()
-        }
+    func tableViewColumnDidMove(_ notification: Notification) {
+        updateTableDocumentWidthForViewport()
     }
 
     nonisolated func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {

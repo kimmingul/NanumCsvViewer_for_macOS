@@ -4,9 +4,9 @@ import AppKit
 @main
 struct NanumCsvViewerMacApp {
     static let displayName = "Nanum CSV Viewer"
-    private static var retainedDelegate: AppDelegate?
+    @MainActor private static var retainedDelegate: AppDelegate?
 
-    static func main() {
+    @MainActor static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         retainedDelegate = delegate

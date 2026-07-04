@@ -47,7 +47,7 @@ public struct ColumnFilterState: Equatable, Codable, Sendable {
         filters.first { $0.column == column }
     }
 
-    public func predicate() -> ([String]) -> Bool {
+    public func predicate() -> @Sendable ([String]) -> Bool {
         let filters = filters
         return { row in
             filters.allSatisfy { filter in
