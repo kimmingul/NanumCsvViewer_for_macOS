@@ -23,9 +23,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        let controller = makeWindowController()
+        let controller = makeWindowController(opening: Self.fileURLFromCommandLine())
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private static func fileURLFromCommandLine() -> URL? {
+        for argument in CommandLine.arguments.dropFirst() where !argument.hasPrefix("-") {
+            if FileManager.default.fileExists(atPath: argument) {
+                return URL(fileURLWithPath: argument)
+            }
+        }
+        return nil
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
