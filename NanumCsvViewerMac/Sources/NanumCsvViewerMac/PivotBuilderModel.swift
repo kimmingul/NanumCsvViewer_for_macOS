@@ -100,6 +100,133 @@ struct PivotBuilderLayout: Equatable {
     }
 }
 
+enum PivotResultExportFormat {
+    case tsv
+    case csv
+}
+
+struct PivotResultTableSort: Equatable {
+    let column: Int
+    let ascending: Bool
+}
+
+struct PivotResultTableState: Equatable {
+    var sort: PivotResultTableSort?
+    var filterColumn: Int?
+    var filterQuery: String = ""
+}
+
+struct PivotResultTableModel: Equatable {
+    let headers: [String]
+    let rows: [[String]]
+    var state = PivotResultTableState()
+
+    var visibleRows: [[String]] {
+        let filtered = filteredRows()
+        guard let sort = state.sort else { return filtered }
+        return sortedRows(filtered, by: sort)
+    }
+
+    mutating func sort(column: Int, ascending: Bool) {
+        guard column >= 0 else { return }
+        state.sort = PivotResultTableSort(column: column, ascending: ascending)
+    }
+
+    mutating func toggleSort(column: Int) {
+        guard column >= 0 else { return }
+        if let sort = state.sort, sort.column == column {
+            state.sort = PivotResultTableSort(column: column, ascending: !sort.ascending)
+        } else {
+            state.sort = PivotResultTableSort(column: column, ascending: true)
+        }
+    }
+
+    mutating func setFilter(column: Int?, query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.filterColumn = column
+        state.filterQuery = trimmed
+    }
+
+    func exportString(format: PivotResultExportFormat) -> String {
+        let rows = [headers] + visibleRows
+        let lines = rows.map { row in
+            switch format {
+            case .tsv:
+                return row.joined(separator: "\t")
+            case .csv:
+                return row.map(Self.csvEscaped).joined(separator: ",")
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func filteredRows() -> [[String]] {
+        guard !state.filterQuery.isEmpty else { return rows }
+        return rows.filter { row in
+            if let column = state.filterColumn {
+                return row[safe: column]?.range(
+                    of: state.filterQuery,
+                    options: [.caseInsensitive, .diacriticInsensitive]
+                ) != nil
+            }
+            return row.contains { value in
+                value.range(
+                    of: state.filterQuery,
+                    options: [.caseInsensitive, .diacriticInsensitive]
+                ) != nil
+            }
+        }
+    }
+
+    private func sortedRows(_ rows: [[String]], by sort: PivotResultTableSort) -> [[String]] {
+        let pinnedTotal: [[String]]
+        let sortableRows: [[String]]
+        if let last = rows.last, isTotalRow(last) {
+            pinnedTotal = [last]
+            sortableRows = Array(rows.dropLast())
+        } else {
+            pinnedTotal = []
+            sortableRows = rows
+        }
+
+        let sorted = sortableRows.enumerated().sorted { lhs, rhs in
+            let comparison = compare(
+                lhs.element[safe: sort.column] ?? "",
+                rhs.element[safe: sort.column] ?? ""
+            )
+            if comparison == .orderedSame {
+                return lhs.offset < rhs.offset
+            }
+            return sort.ascending ? comparison == .orderedAscending : comparison == .orderedDescending
+        }.map(\.element)
+        return sorted + pinnedTotal
+    }
+
+    private func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
+        if let lhsNumber = Self.numberValue(lhs), let rhsNumber = Self.numberValue(rhs) {
+            if lhsNumber < rhsNumber { return .orderedAscending }
+            if lhsNumber > rhsNumber { return .orderedDescending }
+            return .orderedSame
+        }
+        return lhs.localizedCaseInsensitiveCompare(rhs)
+    }
+
+    private func isTotalRow(_ row: [String]) -> Bool {
+        row.first == L.t("Total", "합계")
+    }
+
+    private static func numberValue(_ text: String) -> Double? {
+        Double(text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ""))
+    }
+
+    private static func csvEscaped(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        }
+        return value
+    }
+}
+
 struct PivotFieldDragPayload: Codable, Equatable {
     let fieldIndex: Int
     let sourceZone: PivotDropZone?

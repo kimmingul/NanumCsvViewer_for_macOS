@@ -1,6 +1,36 @@
 # Roadmap Status Audit
 
-Last reviewed: 2026-06-26 KST
+Last reviewed: 2026-07-04 KST (evening parity session)
+
+## Windows Twin Parity (v1.15.0 기준, 2026-07-04)
+
+The Windows twin (github.com/kimmingul/NanumCsvViewer) is at v1.15.0. Parity work status on macOS:
+
+| Windows feature | macOS status |
+| --- | --- |
+| Grid scroll geometry correctness | **Fixed 2026-07-04** — deleted the parallel layout layer that ignored `intercellSpacing`; AppKit-native geometry, visually verified |
+| Swift 6 language mode | **Done 2026-07-04** — full strict-concurrency migration, 215+ tests green |
+| v1.13 extended statistics (descriptive/frequency/ANOVA/Shapiro-Wilk) | **Done 2026-07-04** — scipy-verified engine (`CsvExtendedStatistics`), Analysis menu entries |
+| v1.13 manual column type override | **Done 2026-07-04** — header right-click ▸ Change Type, allow/validate/block classification, revert to auto |
+| v1.13 SQLite (.db/.sqlite/.sqlite3) read-only open | **Done 2026-07-04** — system libsqlite3, table/view picker, tabs, temp-CSV bridge into the CSV engine |
+| v1.8 type-aware filtering | **Done** — categorical/date header filter popovers, date ranges, plus numeric range filters via facets |
+| v1.8 facet analysis panel | **Done 2026-07-04** — 232pt right dock (F6), 6-bin histograms / top-6 value bars, cross-filtering with own-filter exclusion, 2M row cap |
+| v1.9 Excel multi-sheet open | **Done 2026-07-04** — pure-Swift xlsx/xlsm reader (internal ZIP + SAX XML), sheet picker, temp-CSV bridge; legacy .xls (BIFF) out of scope |
+| v1.10–1.12 SPSS .sav / SAS .sas7bdat / field·value labels / declared types | **Scoped out 2026-07-04** — see "SPSS/SAS scope decision" below |
+| v1.14 visualization menu, 7 statistical charts | **Done 2026-07-04** — Visualization menu, Swift Charts windows: histogram+KDE+SW badge, boxplot+ANOVA, scatter+OLS (density grid >20k pts), correlation heatmap, Q-Q, timeseries, Pareto; modeless, auto-close on document switch |
+| v1.15 data quality review module | **Done 2026-07-04** — full-file profiler (sentinels, type validity, key uniqueness, ragged/duplicate rows, codebook, 0–100 score), Cmd+Shift+Q, Markdown/HTML/JSON export |
+
+### SPSS/SAS scope decision (2026-07-04)
+
+The Windows twin reads SPSS `.sav` via Curiosity.SPSS and SAS `.sas7bdat`/`.sas7bcat`
+via a managed ReadStat port. No Swift equivalents exist, the repo has a
+no-third-party-dependency constraint, and both formats (especially sas7bdat,
+which is reverse-engineered) carry a correctness risk that outweighs the value
+of a hand-rolled reader. Decision: **document as a known gap** rather than port.
+The dependent features (field/value labels, declared-type matching,
+Currency/Percent/Ordinal/Scientific declared types) are deferred with it.
+If demand materializes, the plan is to wrap ReadStat as a C target in a
+follow-up release rather than reimplementing the formats.
 
 This audit checks whether the GitHub v1 roadmap, including the v1.6 issue list, matches the current implementation. The short answer is: v1.6 is usable and includes several workflow improvements, but the full v1 roadmap should not be treated as complete yet.
 

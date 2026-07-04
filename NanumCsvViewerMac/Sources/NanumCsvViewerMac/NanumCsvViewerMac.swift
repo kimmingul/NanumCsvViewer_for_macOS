@@ -4,9 +4,9 @@ import AppKit
 @main
 struct NanumCsvViewerMacApp {
     static let displayName = "Nanum CSV Viewer"
-    private static var retainedDelegate: AppDelegate?
+    @MainActor private static var retainedDelegate: AppDelegate?
 
-    static func main() {
+    @MainActor static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         retainedDelegate = delegate
@@ -23,8 +23,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        let controller = makeWindowController()
-        controller.showWindow(nil)
+        // application(_:openFile:) runs BEFORE this for command-line and
+        // Finder-open launches and may already have created a document
+        // window; only add the empty window when nothing exists yet.
+        if windowControllers.isEmpty {
+            let controller = makeWindowController()
+            controller.showWindow(nil)
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -33,7 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
-        openAdditionalDocuments([URL(fileURLWithPath: filename)], tabbedTo: NSApp.keyWindow)
+        let url = URL(fileURLWithPath: filename)
+        if windowControllers.count == 1,
+           let only = windowControllers.first,
+           !only.hasOpenDocument {
+            only.openFileURL(url)
+            return true
+        }
+        openAdditionalDocuments([url], tabbedTo: NSApp.keyWindow)
         return true
     }
 
@@ -139,8 +151,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let filterBar = NSMenuItem(title: L.t("Show Filter Bar", "필터 바 보기"), action: #selector(MainWindowController.toggleFilterBar(_:)), keyEquivalent: "F")
         filterBar.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(filterBar)
-        let details = NSMenuItem(title: L.t("Toggle Inspector", "인스펙터 토글"), action: #selector(MainWindowController.toggleDetailPanel(_:)), keyEquivalent: "\u{F705}")
+        let details = NSMenuItem(title: L.t("Toggle Inspector", "인스펙터 토글"), action: #selector(MainWindowController.toggleDetailPanel(_:)), keyEquivalent: "\u{F707}")
+        details.keyEquivalentModifierMask = []
         viewMenu.addItem(details)
+        let facets = NSMenuItem(title: L.t("Facets Panel", "패싯 패널"), action: #selector(MainWindowController.toggleFacetsPanel(_:)), keyEquivalent: "\u{F709}")
+        facets.keyEquivalentModifierMask = []
+        viewMenu.addItem(facets)
         let statistics = NSMenuItem(title: L.t("Column Statistics", "컬럼 통계"), action: #selector(MainWindowController.showColumnStatistics(_:)), keyEquivalent: "i")
         statistics.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(statistics)
@@ -200,6 +216,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         analysisMenu.addItem(tTest)
         let chiSquare = NSMenuItem(title: L.t("Chi-square Test", "카이제곱 검정"), action: #selector(MainWindowController.showChiSquare(_:)), keyEquivalent: "")
         analysisMenu.addItem(chiSquare)
+        analysisMenu.addItem(.separator())
+        let descriptive = NSMenuItem(title: L.t("Descriptive Statistics", "기술통계"), action: #selector(MainWindowController.showDescriptiveStatistics(_:)), keyEquivalent: "")
+        analysisMenu.addItem(descriptive)
+        let frequency = NSMenuItem(title: L.t("Frequency Analysis", "빈도분석"), action: #selector(MainWindowController.showFrequencyAnalysis(_:)), keyEquivalent: "")
+        analysisMenu.addItem(frequency)
+        let anova = NSMenuItem(title: L.t("One-way ANOVA", "일원배치 분산분석"), action: #selector(MainWindowController.showOneWayAnova(_:)), keyEquivalent: "")
+        analysisMenu.addItem(anova)
+        let normality = NSMenuItem(title: L.t("Normality Test (Shapiro-Wilk)", "정규성 검정 (Shapiro-Wilk)"), action: #selector(MainWindowController.showNormalityTest(_:)), keyEquivalent: "")
+        analysisMenu.addItem(normality)
         let quickStats = NSMenuItem(title: L.t("Quick Stats", "빠른 통계"), action: #selector(MainWindowController.showQuickStats(_:)), keyEquivalent: "")
         analysisMenu.addItem(quickStats)
         analysisMenu.addItem(.separator())
@@ -211,6 +236,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let cancelAnalysis = NSMenuItem(title: L.t("Cancel Analysis", "분석 취소"), action: #selector(MainWindowController.cancelAnalysis(_:)), keyEquivalent: ".")
         cancelAnalysis.keyEquivalentModifierMask = [.command]
         analysisMenu.addItem(cancelAnalysis)
+
+        let visualizationItem = NSMenuItem(title: L.t("Visualization", "시각화"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(visualizationItem)
+        let visualizationMenu = NSMenu(title: visualizationItem.title)
+        visualizationItem.submenu = visualizationMenu
+        let chartActions: [(ChartKind, Selector)] = [
+            (.histogram, #selector(MainWindowController.showHistogramChartWindow(_:))),
+            (.boxplot, #selector(MainWindowController.showBoxplotChartWindow(_:))),
+            (.scatter, #selector(MainWindowController.showScatterChartWindow(_:))),
+            (.correlationHeatmap, #selector(MainWindowController.showCorrelationHeatmapWindow(_:))),
+            (.qqPlot, #selector(MainWindowController.showQQPlotChartWindow(_:))),
+            (.timeseries, #selector(MainWindowController.showTimeseriesChartWindow(_:))),
+            (.pareto, #selector(MainWindowController.showParetoChartWindow(_:)))
+        ]
+        for (kind, action) in chartActions {
+            visualizationMenu.addItem(NSMenuItem(title: kind.title, action: action, keyEquivalent: ""))
+        }
+
+        let dataQualityItem = NSMenuItem(title: L.t("Data Quality", "데이터 품질"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(dataQualityItem)
+        let dataQualityMenu = NSMenu(title: dataQualityItem.title)
+        dataQualityItem.submenu = dataQualityMenu
+        // The Windows twin uses Ctrl+Shift+Q, but Cmd+Shift+Q is the macOS
+        // logout chord, so the profile lives on Cmd+Shift+P instead.
+        let qualityProfile = NSMenuItem(title: L.t("Run Quality Profile", "품질 프로파일 실행"), action: #selector(MainWindowController.runDataQualityProfile(_:)), keyEquivalent: "P")
+        qualityProfile.keyEquivalentModifierMask = [.command, .shift]
+        dataQualityMenu.addItem(qualityProfile)
+        dataQualityMenu.addItem(.separator())
+        let qualityMarkdown = NSMenuItem(title: L.t("Export Report as Markdown...", "리포트를 Markdown으로 내보내기..."), action: #selector(MainWindowController.exportDataQualityMarkdown(_:)), keyEquivalent: "")
+        dataQualityMenu.addItem(qualityMarkdown)
+        let qualityHtml = NSMenuItem(title: L.t("Export Report as HTML...", "리포트를 HTML로 내보내기..."), action: #selector(MainWindowController.exportDataQualityHtml(_:)), keyEquivalent: "")
+        dataQualityMenu.addItem(qualityHtml)
+        let qualityJson = NSMenuItem(title: L.t("Export Report as JSON...", "리포트를 JSON으로 내보내기..."), action: #selector(MainWindowController.exportDataQualityJson(_:)), keyEquivalent: "")
+        dataQualityMenu.addItem(qualityJson)
 
         let pivotItem = NSMenuItem(title: L.t("Pivot", "피벗"), action: nil, keyEquivalent: "")
         mainMenu.addItem(pivotItem)
@@ -293,6 +352,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "line.3.horizontal.decrease"
         case #selector(MainWindowController.toggleDetailPanel(_:)):
             return "sidebar.right"
+        case #selector(MainWindowController.toggleFacetsPanel(_:)):
+            return "chart.bar.xaxis"
         case #selector(MainWindowController.showColumnStatistics(_:)):
             return "chart.bar.doc.horizontal"
         case #selector(MainWindowController.showPerformanceDashboard(_:)):
@@ -339,6 +400,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "tablecells"
         case #selector(MainWindowController.showPivotChart(_:)):
             return "chart.bar.xaxis"
+        case #selector(MainWindowController.showHistogramChartWindow(_:)):
+            return "chart.bar"
+        case #selector(MainWindowController.showBoxplotChartWindow(_:)):
+            return "square.split.2x1"
+        case #selector(MainWindowController.showScatterChartWindow(_:)):
+            return "chart.dots.scatter"
+        case #selector(MainWindowController.showCorrelationHeatmapWindow(_:)):
+            return "square.grid.3x3.fill"
+        case #selector(MainWindowController.showQQPlotChartWindow(_:)):
+            return "line.diagonal"
+        case #selector(MainWindowController.showTimeseriesChartWindow(_:)):
+            return "chart.xyaxis.line"
+        case #selector(MainWindowController.showParetoChartWindow(_:)):
+            return "chart.bar.doc.horizontal"
+        case #selector(MainWindowController.runDataQualityProfile(_:)):
+            return "checkmark.seal"
+        case #selector(MainWindowController.exportDataQualityMarkdown(_:)):
+            return "doc.plaintext"
+        case #selector(MainWindowController.exportDataQualityHtml(_:)):
+            return "chevron.left.forwardslash.chevron.right"
+        case #selector(MainWindowController.exportDataQualityJson(_:)):
+            return "curlybraces"
         case #selector(MainWindowController.showUsage(_:)):
             return "book"
         default:
@@ -360,6 +443,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "textformat"
         case L.t("Analysis", "분석"):
             return "chart.xyaxis.line"
+        case L.t("Visualization", "시각화"):
+            return "chart.bar.xaxis"
+        case L.t("Data Quality", "데이터 품질"):
+            return "checkmark.seal"
         case L.t("Pivot", "피벗"):
             return "tablecells"
         case L.t("Help", "도움말"):

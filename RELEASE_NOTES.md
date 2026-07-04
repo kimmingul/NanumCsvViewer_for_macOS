@@ -4,6 +4,79 @@
 
 No unreleased changes.
 
+## v1.8.0 - 2026-07-04
+
+This release brings the macOS app to feature parity with the Windows twin
+v1.15: facet analysis, a statistical chart suite, a data quality module, and
+Excel workbook import, on top of the Swift 6 migration and grid scroll fixes.
+
+### Features
+
+- Facets panel (View ▸ Facets Panel, F6): a 232pt dock beside the grid showing
+  a 6-bin histogram for numeric columns and top-6 value bars for other
+  columns. Clicking a bar cross-filters the grid (AND across columns, OR
+  within a column); each column's facet excludes its own filter so active
+  selections stay visible and toggle off. Numeric range filters persist in
+  saved views.
+- Visualization menu with seven modeless statistical chart windows built on
+  Swift Charts: histogram with KDE overlay and a Shapiro-Wilk badge, grouped
+  boxplot with ANOVA, scatter with OLS fit (switching to a density grid past
+  20,000 points), correlation heatmap, normal Q-Q plot, date-binned time
+  series, and Pareto with cumulative percent. Charts snapshot the current
+  view and close automatically when the document changes.
+- Data Quality menu (Run Quality Profile, Cmd+Shift+P): a full-file profiler
+  that ignores active filters, flags sentinel/missing tokens, mixed-type
+  columns with counterexamples, duplicated key-column values, ragged rows,
+  and exact duplicate rows, summarizes small categorical domains as a
+  codebook, and produces a 0-100 score. Reports export as Markdown, HTML, or
+  JSON. (The Windows twin uses Ctrl+Shift+Q; Cmd+Shift+Q is the macOS logout
+  chord, so the profile lives on Cmd+Shift+P.)
+- Excel workbook import: .xlsx/.xlsm files open through a dependency-free ZIP
+  and XML reader with a sheet picker (open one sheet or all sheets in tabs),
+  shared strings, cached formula values, booleans, and date-styled serials
+  (1900 and 1904 systems) rendered as ISO dates. Legacy .xls remains
+  unsupported.
+- The detail panel (inspector) is now visible by default on first launch and
+  remembers its visibility; Toggle Inspector moved to F4 to match the twin.
+- Analysis, chart, and pivot scans cap at 2,000,000 rows and reports state
+  "showing first N rows" when the cap applies. Exports and filtering still
+  process the full view; Data Quality always scans the whole file.
+
+### Scope Notes
+
+- SPSS .sav and SAS .sas7bdat import (Windows v1.10-1.12) are documented as a
+  known gap; see ROADMAP_STATUS.md for the decision record.
+
+### Validation
+
+- `swift test`: 304 tests passing.
+- Adversarial review by Codex and Grok advisors; findings adjudicated and
+  hardened: Excel header rows now pad to the sheet's true width (columns
+  wider than the header were previously inaccessible), ZIP entry guards,
+  KDE/Shapiro-Wilk sampling caps, collision-safe duplicate-row hashing,
+  facet scan failures surface in the panel, logout-shortcut collision fix.
+- Visual smoke tests: facet cross-filtering, all seven chart windows, Excel
+  multi-sheet open, and grid interaction verified with screenshots.
+- `git diff --check`: passed.
+- `Scripts/release-app.sh`: release build and Developer ID app signing passed.
+- `Scripts/create-dmg.sh`: DMG creation and signing passed.
+- App bundle and DMG Gatekeeper checks: accepted as Notarized Developer ID.
+- DMG verification (`hdiutil verify`): passed.
+- Apple notarization:
+  - App ZIP submission `47f1f06c-a96b-4118-8394-383df2432542`: Accepted.
+  - DMG submission `ac1141d5-e132-4d21-ae60-f98fe1c33f5d`: Accepted.
+- Bumped bundle metadata to version `1.8.0(180)`.
+
+### Distribution
+
+- Bundle version: `1.8.0`
+- Bundle build: `180`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application, notarized and stapled
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.8.0.dmg`: `a51d79454b25dd4eadc25f18b512c08dd5d349dd848a97b0d2a2fb77e5fa8066`
+  - `Nanum-CSV-Viewer-v1.8.0.zip`: `e83966787d6d975909f499786411719c0a7070a25de087ffb8cb49ecf37a884a`
+
 ## v1.7.6 - 2026-06-28
 
 This patch release fixes Pivot Builder chart hover tooltips so bar and line values are readable without covering the chart.

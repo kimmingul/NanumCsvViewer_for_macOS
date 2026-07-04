@@ -33,5 +33,5 @@ let package = Package(
             dependencies: ["NanumCsvViewerMac"]
         ),
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

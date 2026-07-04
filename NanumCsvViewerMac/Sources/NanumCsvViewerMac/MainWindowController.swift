@@ -50,6 +50,10 @@ final class MainWindowController: NSWindowController {
     private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
     private static let deleteIndexCacheOnCloseDefaultsKey = "NanumCsvViewerMac.DeleteIndexCacheOnClose"
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
+    private static let facetsVisibleDefaultsKey = "NanumCsvViewerMac.FacetsPanelVisible"
+    private static let inspectorVisibleDefaultsKey = "NanumCsvViewerMac.InspectorVisible"
+    private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
+    private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
     private static let tableCellPreviewLimit = 512
     private static let earlyColumnStatisticsRowThreshold = 200
@@ -68,6 +72,9 @@ final class MainWindowController: NSWindowController {
     private let selectedValueScrollView = NSScrollView()
     private let detailHeaderLabel = NSTextField(labelWithString: L.t("Inspector", "인스펙터"))
     private let detailTextView = NSTextView()
+    private let inspectorActionBar = NSStackView()
+    private let inspectorCopyTextButton = NSButton()
+    private let inspectorCopyJsonButton = NSButton()
     private let analysisActionBar = NSStackView()
     private let analysisCopyButton = NSButton()
     private let analysisExportButton = NSButton()
@@ -109,35 +116,53 @@ final class MainWindowController: NSWindowController {
     private var operationCancellation: CancellationFlag?
     private var findCancellation: CancellationFlag?
     private var prefetchCancellation: CancellationFlag?
+    private var columnFilterValuesCancellation: CancellationFlag?
     private var rowTimer: Timer?
     private var lastKnownRowCount = 0
-    private var lastHighlightedRow: Int?
+    private var lastHighlightedRows = IndexSet()
     private var busy = false
     private var indexing = false
     private var indexingElapsed: TimeInterval?
     private var currentDataColumn = 0
     private var columnNames: [String] = []
     private var sortKeys: [SortKey] = []
-    private var textCondition: (([String]) -> Bool)?
+    private var textCondition: (@Sendable ([String]) -> Bool)?
     private var textConditionDescription = ""
     private var textFilterTerm = ""
     private var textFilterColumn = -1
-    private var valueConditions: [(description: String, predicate: ([String]) -> Bool)] = []
+    private var columnFilterState = ColumnFilterState()
+    private var gridSelection = GridSelectionModel()
+    private var columnFilterPopover: NSPopover?
+    private let facetsPanel = FacetsPanelView()
+    private var facetsWidthConstraint: NSLayoutConstraint?
+    private var facetsCancellation: CancellationFlag?
+    private var facetRefreshWorkItem: DispatchWorkItem?
+    private var facetGeneration = 0
     private var detailUpdateWorkItem: DispatchWorkItem?
     private var columnStatisticsReport: ColumnStatisticsReport?
+    private var baseColumnStatisticsReport: ColumnStatisticsReport?
+    private var columnTypeOverrides: [Int: ColumnValueType] = [:]
     private var columnStatisticsCancellation: CancellationFlag?
     private var analysisCancellation: CancellationFlag?
     private var currentAnalysisReport: AnalysisReport?
+    private var currentInspectorContentKind: InspectorContentKind = .empty
+    private var gridColumnBaseWidths: [NSUserInterfaceItemIdentifier: CGFloat] = [:]
+    private var applyingGridLayout = false
+    private var gridLayoutPassCount = 0
     private var earlyColumnStatisticsRequested = false
     private var acceptedColumnStatisticsPriority = 0
     private var hiddenColumnIndexes: Set<Int> = []
     private var currentFilePath: String?
     private var pivotBuilderWindow: PivotBuilderWindowController?
+    private var chartWindows: [ChartWindowController] = []
+    private var chartCancellation: CancellationFlag?
+    private var currentDataQualityReport: DataQualityReport?
+    private var dataQualityCancellation: CancellationFlag?
     var openAdditionalFilesHandler: (([URL], NSWindow?) -> Void)?
     var closeHandler: ((MainWindowController) -> Void)?
 
     private var hasAnyFilter: Bool {
-        textCondition != nil || !valueConditions.isEmpty
+        textCondition != nil || !columnFilterState.isEmpty
     }
 
     init() {
@@ -201,7 +226,12 @@ final class MainWindowController: NSWindowController {
         configureEmptyState()
         configureDropTargets()
         setFilterBarVisible(false)
-        setInspectorVisible(false, rememberWidth: false, animated: false)
+        // The Windows twin shows the detail panel by default on first launch.
+        let inspectorVisible = UserDefaults.standard.object(forKey: Self.inspectorVisibleDefaultsKey) as? Bool ?? true
+        setInspectorVisible(inspectorVisible, rememberWidth: false, animated: false)
+        if UserDefaults.standard.bool(forKey: Self.facetsVisibleDefaultsKey) {
+            setFacetsPanelVisible(true, persist: false)
+        }
         updateFeatureState()
         refreshSignal()
         updateEmptyState()
@@ -323,7 +353,7 @@ final class MainWindowController: NSWindowController {
         left.setContentHuggingPriority(.defaultLow, for: .horizontal)
         left.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         left.addArrangedSubview(makeSelectedValueBar())
-        left.addArrangedSubview(scrollView)
+        left.addArrangedSubview(makeGridRowWithFacets())
 
         detailPanel.wantsLayer = true
         detailPanel.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
@@ -340,6 +370,33 @@ final class MainWindowController: NSWindowController {
             self?.setInitialSplitPosition()
         }
         return mainSplit
+    }
+
+    private func makeGridRowWithFacets() -> NSView {
+        let gridRow = NSView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        facetsPanel.translatesAutoresizingMaskIntoConstraints = false
+        gridRow.addSubview(scrollView)
+        gridRow.addSubview(facetsPanel)
+
+        let widthConstraint = facetsPanel.widthAnchor.constraint(equalToConstant: 0)
+        facetsWidthConstraint = widthConstraint
+        facetsPanel.isHidden = true
+        facetsPanel.selectionHandler = { [weak self] column, kind in
+            self?.handleFacetSelection(column: column, kind: kind)
+        }
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: gridRow.leadingAnchor),
+            scrollView.topAnchor.constraint(equalTo: gridRow.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: gridRow.bottomAnchor),
+            facetsPanel.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            facetsPanel.trailingAnchor.constraint(equalTo: gridRow.trailingAnchor),
+            facetsPanel.topAnchor.constraint(equalTo: gridRow.topAnchor),
+            facetsPanel.bottomAnchor.constraint(equalTo: gridRow.bottomAnchor),
+            widthConstraint
+        ])
+        return gridRow
     }
 
     private func setInitialSplitPosition() {
@@ -560,9 +617,17 @@ final class MainWindowController: NSWindowController {
     private func configureTable() {
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = false
-        tableView.headerView = CsvTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 28))
+        scrollView.scrollerStyle = .legacy
+        let headerView = CsvTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 28))
+        headerView.filterClickHandler = { [weak self] column, frame in
+            self?.showColumnFilterPopover(column: column, relativeTo: frame)
+        }
+        headerView.headerMenuProvider = { [weak self] column in
+            self?.makeColumnHeaderMenu(column: column)
+        }
+        tableView.headerView = headerView
         tableView.delegate = self
         tableView.dataSource = self
         tableView.usesAlternatingRowBackgroundColors = true
@@ -574,24 +639,23 @@ final class MainWindowController: NSWindowController {
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.doubleAction = #selector(copySelectedCellToPasteboard(_:))
         tableView.target = self
+        scrollView.postsFrameChangedNotifications = true
         scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(tableViewportDidResize(_:)),
+            name: NSView.frameDidChangeNotification,
+            object: scrollView
+        )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(visibleRowsDidChange(_:)),
             name: NSView.boundsDidChangeNotification,
             object: scrollView.contentView
         )
-        tableView.cellClickHandler = { [weak self] row, column in
+        tableView.cellHitHandler = { [weak self] hit in
             guard let self else { return }
-            if column > 0 {
-                currentDataColumn = column - 1
-            }
-            if row >= 0 {
-                tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            }
-            updateSelectedValue()
-            scheduleDetailPanelUpdate()
-            reloadSelectedRowHighlight()
+            handleTableCellHit(hit)
         }
         configureContextMenu()
     }
@@ -607,6 +671,12 @@ final class MainWindowController: NSWindowController {
         let copyJson = NSMenuItem(title: L.t("Copy as JSON", "JSON으로 복사"), action: #selector(copySelectedCellAsJson(_:)), keyEquivalent: "")
         copyJson.target = self
         menu.addItem(copyJson)
+        let copyRow = NSMenuItem(title: L.t("Copy Entire Row", "행 전체 복사"), action: #selector(copyEntireCurrentRow(_:)), keyEquivalent: "")
+        copyRow.target = self
+        menu.addItem(copyRow)
+        let copyColumn = NSMenuItem(title: L.t("Copy Entire Column", "열 전체 복사"), action: #selector(copyEntireCurrentColumn(_:)), keyEquivalent: "")
+        copyColumn.target = self
+        menu.addItem(copyColumn)
         let filter = NSMenuItem(title: L.t("Filter by This Cell", "이 셀 값으로 필터"), action: #selector(filterBySelectedCell(_:)), keyEquivalent: "")
         filter.target = self
         menu.addItem(filter)
@@ -644,6 +714,19 @@ final class MainWindowController: NSWindowController {
         detailHeaderLabel.lineBreakMode = .byTruncatingTail
         detailHeaderLabel.heightAnchor.constraint(equalToConstant: 34).isActive = true
         stack.addArrangedSubview(detailHeaderLabel)
+
+        inspectorActionBar.orientation = .horizontal
+        inspectorActionBar.alignment = .centerY
+        inspectorActionBar.spacing = 8
+        inspectorActionBar.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        configureAnalysisActionButton(inspectorCopyTextButton, title: L.t("Copy (TEXT)", "복사(TEXT)"), symbol: "doc.on.doc", action: #selector(copyInspectorText(_:)))
+        configureAnalysisActionButton(inspectorCopyJsonButton, title: L.t("Copy (JSON)", "복사(JSON)"), symbol: "curlybraces", action: #selector(copyInspectorJson(_:)))
+        inspectorActionBar.addArrangedSubview(inspectorCopyTextButton)
+        inspectorActionBar.addArrangedSubview(inspectorCopyJsonButton)
+        let inspectorSpacer = NSView()
+        inspectorSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        inspectorActionBar.addArrangedSubview(inspectorSpacer)
+        stack.addArrangedSubview(inspectorActionBar)
 
         analysisActionBar.orientation = .horizontal
         analysisActionBar.alignment = .centerY
@@ -963,8 +1046,8 @@ extension MainWindowController: NSSplitViewDelegate {
 }
 
 extension MainWindowController: NSMenuItemValidation {
-    nonisolated func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        MainActor.assumeIsolated {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        do {
             let hasDocument = csvDocument != nil
             let ready = csvDocument?.indexingComplete == true && !busy
             let hasSelection = tableView.selectedRow >= 0
@@ -984,8 +1067,13 @@ extension MainWindowController: NSMenuItemValidation {
                 return hasDocument && !busy
             case #selector(goToRow(_:)):
                 return hasDocument && !busy
-            case #selector(copySelectedCellToPasteboard(_:)), #selector(copySelectedCellAsCsv(_:)), #selector(copySelectedCellAsJson(_:)):
+            case #selector(copySelectedCellToPasteboard(_:)), #selector(copySelectedCellAsCsv(_:)), #selector(copySelectedCellAsJson(_:)), #selector(copyEntireCurrentRow(_:)), #selector(copyEntireCurrentColumn(_:)):
                 return hasDocument && hasSelection
+            case #selector(copyInspectorText(_:)):
+                return !detailTextView.string.isEmpty
+            case #selector(copyInspectorJson(_:)):
+                if case .row = currentInspectorContentKind { return true }
+                return false
             case #selector(applyTextFilter(_:)), #selector(filterBySelectedCell(_:)), #selector(sortAscending(_:)), #selector(sortDescending(_:)):
                 return ready
             case #selector(clearFilter(_:)):
@@ -998,6 +1086,9 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(toggleDetailPanel(_:)):
                 menuItem.state = isInspectorVisible ? .on : .off
                 return hasDocument
+            case #selector(toggleFacetsPanel(_:)):
+                menuItem.state = isFacetsPanelVisible ? .on : .off
+                return true
             case #selector(showColumnStatistics(_:)):
                 return ready
             case #selector(showPerformanceDashboard(_:)):
@@ -1016,8 +1107,14 @@ extension MainWindowController: NSMenuItemValidation {
                 return true
             case #selector(showIndexFolder(_:)), #selector(clearIndexFolder(_:)):
                 return true
-            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showPivotChart(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)):
+            case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showPivotChart(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)), #selector(showDescriptiveStatistics(_:)), #selector(showFrequencyAnalysis(_:)), #selector(showOneWayAnova(_:)), #selector(showNormalityTest(_:)):
                 return ready
+            case #selector(showHistogramChartWindow(_:)), #selector(showBoxplotChartWindow(_:)), #selector(showScatterChartWindow(_:)), #selector(showCorrelationHeatmapWindow(_:)), #selector(showQQPlotChartWindow(_:)), #selector(showTimeseriesChartWindow(_:)), #selector(showParetoChartWindow(_:)):
+                return ready
+            case #selector(runDataQualityProfile(_:)):
+                return ready
+            case #selector(exportDataQualityMarkdown(_:)), #selector(exportDataQualityHtml(_:)), #selector(exportDataQualityJson(_:)):
+                return currentDataQualityReport != nil && !busy
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
                     menuItem.state = name == csvDocument?.encodingName ? .on : .off
@@ -1033,7 +1130,13 @@ extension MainWindowController: NSMenuItemValidation {
 extension MainWindowController {
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.commaSeparatedText, .plainText]
+        var openTypes: [UTType] = [.commaSeparatedText, .plainText]
+        for ext in ["db", "sqlite", "sqlite3", "xlsx", "xlsm"] {
+            if let type = UTType(filenameExtension: ext) {
+                openTypes.append(type)
+            }
+        }
+        panel.allowedContentTypes = openTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.beginSheetModal(for: window!) { [weak self] response in
@@ -1068,13 +1171,18 @@ extension MainWindowController {
         operationCancellation = nil
         findCancellation = nil
         prefetchCancellation = nil
+        columnFilterValuesCancellation = nil
         columnStatisticsCancellation = nil
         analysisCancellation = nil
+        facetsCancellation = nil
+        facetRefreshWorkItem = nil
         rowTimer = nil
         detailUpdateWorkItem = nil
 
         pivotBuilderWindow?.close()
         pivotBuilderWindow = nil
+        closeAllChartWindows()
+        chartCancellation = nil
 
         if VirtualCsvDocument.deletePersistentIndexOnClose {
             closingDocument.deletePersistentIndex()
@@ -1085,7 +1193,10 @@ extension MainWindowController {
         indexingElapsed = nil
         lastKnownRowCount = 0
         columnStatisticsReport = nil
+        baseColumnStatisticsReport = nil
+        columnTypeOverrides = [:]
         currentAnalysisReport = nil
+        currentDataQualityReport = nil
         earlyColumnStatisticsRequested = false
         acceptedColumnStatisticsPriority = 0
 
@@ -1107,6 +1218,9 @@ extension MainWindowController {
         updateAnalysisActionBar(running: false)
         updateEmptyState()
         updateFeatureState()
+        if isFacetsPanelVisible {
+            refreshFacetsNow()
+        }
     }
 
     @objc func exportCurrentView(_ sender: Any?) {
@@ -1167,8 +1281,206 @@ extension MainWindowController {
         return visible.count == columnNames.count ? nil : visible
     }
 
+    var hasOpenDocument: Bool {
+        csvDocument != nil
+    }
+
     func openFileURL(_ url: URL) {
+        if SqliteWorkbook.hasSqliteExtension(url.path) || SqliteWorkbook.isSqliteFile(path: url.path) {
+            openSqliteDatabase(url)
+            return
+        }
+        if XlsxWorkbook.hasXlsxExtension(url.path), XlsxWorkbook.isXlsxFile(path: url.path) {
+            openXlsxWorkbook(url)
+            return
+        }
         openFile(url)
+    }
+
+    private func openXlsxWorkbook(_ url: URL) {
+        do {
+            let sheets = try XlsxWorkbook.sheetNames(path: url.path)
+            guard !sheets.isEmpty else {
+                statusLabel.stringValue = L.t("No sheets found in the workbook.", "통합 문서에 시트가 없습니다.")
+                return
+            }
+            if sheets.count == 1 {
+                openXlsxSheets(url, sheets: sheets)
+                return
+            }
+            presentXlsxSheetPicker(url: url, sheets: sheets)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    private func presentXlsxSheetPicker(url: URL, sheets: [String]) {
+        let alert = NSAlert()
+        alert.messageText = L.t("Open Excel Sheet", "Excel 시트 열기")
+        alert.informativeText = L.t(
+            "\(url.lastPathComponent) contains \(sheets.count) sheets. The workbook is opened read-only.",
+            "\(url.lastPathComponent)에 시트가 \(sheets.count)개 있습니다. 통합 문서는 읽기 전용으로 열립니다."
+        )
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25))
+        popup.addItems(withTitles: sheets)
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L.t("Open", "열기"))
+        alert.addButton(withTitle: L.t("Open All in Tabs", "모두 탭으로 열기"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            openXlsxSheets(url, sheets: [popup.titleOfSelectedItem ?? sheets[0]])
+        case .alertSecondButtonReturn:
+            openXlsxSheets(url, sheets: sheets)
+        default:
+            break
+        }
+    }
+
+    private func openXlsxSheets(_ url: URL, sheets: [String]) {
+        guard !sheets.isEmpty else { return }
+        let base = url.deletingPathExtension().lastPathComponent
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NanumCsvViewerXlsx", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: L.t("Converting Excel sheet...", "Excel 시트 변환 중..."))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                var destinations: [URL] = []
+                for sheet in sheets {
+                    let safeName = sheet
+                        .replacingOccurrences(of: "/", with: "_")
+                        .replacingOccurrences(of: ":", with: "_")
+                    let destination = tempDir.appendingPathComponent("\(base).\(safeName).csv")
+                    try XlsxWorkbook.exportSheetToCsv(path: url.path, sheet: sheet, destination: destination, cancellation: cancellation)
+                    destinations.append(destination)
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    guard let first = destinations.first else { return }
+                    self.openFile(first)
+                    let rest = Array(destinations.dropFirst())
+                    if !rest.isEmpty {
+                        self.openAdditionalFilesHandler?(rest, self.window)
+                    }
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("Excel conversion cancelled.", "Excel 변환이 취소되었습니다.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if self.operationCancellation === cancellation {
+                        self.operationCancellation = nil
+                    }
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
+    private func openSqliteDatabase(_ url: URL) {
+        do {
+            let tables = try SqliteWorkbook.tableNames(path: url.path)
+            guard !tables.isEmpty else {
+                statusLabel.stringValue = L.t("No tables found in the database.", "데이터베이스에 테이블이 없습니다.")
+                return
+            }
+            if tables.count == 1 {
+                openSqliteTables(url, tables: tables)
+                return
+            }
+            presentSqliteTablePicker(url: url, tables: tables)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    private func presentSqliteTablePicker(url: URL, tables: [String]) {
+        let alert = NSAlert()
+        alert.messageText = L.t("Open SQLite Table", "SQLite 테이블 열기")
+        alert.informativeText = L.t(
+            "\(url.lastPathComponent) contains \(tables.count) tables/views. The database is opened read-only.",
+            "\(url.lastPathComponent)에 테이블/뷰가 \(tables.count)개 있습니다. 데이터베이스는 읽기 전용으로 열립니다."
+        )
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25))
+        popup.addItems(withTitles: tables)
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L.t("Open", "열기"))
+        alert.addButton(withTitle: L.t("Open All in Tabs", "모두 탭으로 열기"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            openSqliteTables(url, tables: [popup.titleOfSelectedItem ?? tables[0]])
+        case .alertSecondButtonReturn:
+            openSqliteTables(url, tables: tables)
+        default:
+            break
+        }
+    }
+
+    private func openSqliteTables(_ url: URL, tables: [String]) {
+        guard !tables.isEmpty else { return }
+        let base = url.deletingPathExtension().lastPathComponent
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NanumCsvViewerSqlite", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: L.t("Converting SQLite table...", "SQLite 테이블 변환 중..."))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                var destinations: [URL] = []
+                for table in tables {
+                    let safeName = table
+                        .replacingOccurrences(of: "/", with: "_")
+                        .replacingOccurrences(of: ":", with: "_")
+                    let destination = tempDir.appendingPathComponent("\(base).\(safeName).csv")
+                    try SqliteWorkbook.exportTableToCsv(path: url.path, table: table, destination: destination, cancellation: cancellation)
+                    destinations.append(destination)
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    guard let first = destinations.first else { return }
+                    self.openFile(first)
+                    let rest = Array(destinations.dropFirst())
+                    if !rest.isEmpty {
+                        self.openAdditionalFilesHandler?(rest, self.window)
+                    }
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("SQLite conversion cancelled.", "SQLite 변환이 취소되었습니다.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if self.operationCancellation === cancellation {
+                        self.operationCancellation = nil
+                    }
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
     }
 
     private func openURLs(_ urls: [URL]) {
@@ -1209,13 +1521,17 @@ extension MainWindowController {
 
     private func openFile(_ url: URL) {
         cancelAll()
+        closeAllChartWindows()
         do {
             let doc = try VirtualCsvDocument.open(path: url.path)
             csvDocument = doc
             currentFilePath = url.path
             indexingElapsed = nil
             columnStatisticsReport = nil
+            baseColumnStatisticsReport = nil
+            columnTypeOverrides = [:]
             currentAnalysisReport = nil
+            currentDataQualityReport = nil
             analysisCancellation?.cancel()
             analysisCancellation = nil
             columnStatisticsCancellation?.cancel()
@@ -1232,6 +1548,9 @@ extension MainWindowController {
             updateEmptyState()
             startIndexing(csvDocument: doc)
             updateFeatureState()
+            if isFacetsPanelVisible {
+                refreshFacetsNow()
+            }
         } catch {
             indexingElapsed = nil
             currentFilePath = nil
@@ -1304,6 +1623,7 @@ extension MainWindowController {
         updateFeatureState()
         statusLabel.stringValue = ""
         refreshColumnStatistics(for: doc, final: true)
+        scheduleFacetRefresh(delay: 0)
     }
 
     private func startRowTimer() {
@@ -1332,6 +1652,7 @@ extension MainWindowController {
         while tableView.tableColumns.count > 0 {
             tableView.removeTableColumn(tableView.tableColumns[0])
         }
+        gridColumnBaseWidths.removeAll()
 
         columnNames = header.enumerated().map { index, name in
             name.isEmpty ? L.t("Column \(index + 1)", "\(index + 1)열") : name
@@ -1343,15 +1664,19 @@ extension MainWindowController {
         rowColumn.width = 76
         rowColumn.minWidth = 56
         tableView.addTableColumn(rowColumn)
+        gridColumnBaseWidths[rowColumn.identifier] = rowColumn.width
 
         for (index, name) in columnNames.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c\(index)"))
             column.title = name
-            column.headerCell = SortHeaderCell(textCell: name)
+            let headerCell = SortHeaderCell(textCell: name)
+            headerCell.columnIdentifierRawValue = column.identifier.rawValue
+            column.headerCell = headerCell
             column.width = 150
             column.minWidth = 60
             column.isHidden = hiddenColumnIndexes.contains(index)
             tableView.addTableColumn(column)
+            gridColumnBaseWidths[column.identifier] = column.width
         }
 
         filterColumnPopup.removeAllItems()
@@ -1359,6 +1684,9 @@ extension MainWindowController {
         filterColumnPopup.addItems(withTitles: columnNames)
         filterColumnPopup.selectItem(at: 0)
         updateSortHeaders()
+        DispatchQueue.main.async { [weak self] in
+            self?.updateTableDocumentWidthForViewport()
+        }
     }
 
     @objc func focusFindField(_ sender: Any?) {
@@ -1433,7 +1761,7 @@ extension MainWindowController {
 
         let selected = filterColumnPopup.indexOfSelectedItem
         let column = selected <= 0 ? -1 : selected - 1
-        let configured: (predicate: ([String]) -> Bool, usesExpression: Bool)
+        let configured: (predicate: @Sendable ([String]) -> Bool, usesExpression: Bool)
         do {
             configured = try configureTextCondition(term: term, column: column, document: doc)
         } catch {
@@ -1444,9 +1772,9 @@ extension MainWindowController {
         textFilterTerm = term
         textFilterColumn = column
         setFilterBarVisible(true)
-        let canUseColumnFastPath = !configured.usesExpression && column >= 0 && (!hadTextCondition || valueConditions.isEmpty)
+        let canUseColumnFastPath = !configured.usesExpression && column >= 0 && (!hadTextCondition || columnFilterState.isEmpty)
         if canUseColumnFastPath {
-            let withinCurrentView = !hadTextCondition && !valueConditions.isEmpty
+            let withinCurrentView = !hadTextCondition && !columnFilterState.isEmpty
             runViewOperation(message: L.t("Applying filter...", "필터 적용 중...")) { flag, progress in
                 try doc.filterColumnContains(column: column, term: term, withinCurrentView: withinCurrentView, progress: progress, cancellation: flag)
             } completion: { [weak self] in
@@ -1463,7 +1791,7 @@ extension MainWindowController {
         }
     }
 
-    private func configureTextCondition(term: String, column: Int, document: VirtualCsvDocument) throws -> (predicate: ([String]) -> Bool, usesExpression: Bool) {
+    private func configureTextCondition(term: String, column: Int, document: VirtualCsvDocument) throws -> (predicate: @Sendable ([String]) -> Bool, usesExpression: Bool) {
         if Self.looksLikeExpression(term) {
             let compiled = try AdvancedFilterExpression.compile(term, headers: document.header)
             textCondition = compiled.predicate
@@ -1490,17 +1818,9 @@ extension MainWindowController {
             let row = try doc.getDisplayRow(rowIndex)
             let column = currentDataColumn
             let value = column < row.count ? row[column] : ""
-            let name = columnNames[safe: column] ?? L.t("column \(column + 1)", "\(column + 1)열")
-            valueConditions.append((
-                description: L.t("\(name) = \"\(truncated(value))\"", "\(name) = \"\(truncated(value))\""),
-                predicate: { fields in column < fields.count && fields[column] == value }
-            ))
+            columnFilterState.setValues(column: column, values: value.isEmpty ? [] : [value], includeBlanks: value.isEmpty)
             setFilterBarVisible(true)
-            runViewOperation(message: L.t("Applying cell filter...", "셀값 필터 적용 중...")) { flag, progress in
-                try doc.filterColumnEquals(column: column, value: value, withinCurrentView: true, progress: progress, cancellation: flag)
-            } completion: { [weak self] in
-                self?.updateFilterStatus()
-            }
+            rebuildFilter(message: L.t("Applying cell filter...", "셀값 필터 적용 중..."))
         } catch {
             presentError(error)
         }
@@ -1512,7 +1832,7 @@ extension MainWindowController {
         textConditionDescription = ""
         textFilterTerm = ""
         textFilterColumn = -1
-        valueConditions.removeAll()
+        columnFilterState = ColumnFilterState()
         sortKeys.removeAll()
         doc.clearView()
         updateSortHeaders()
@@ -1542,16 +1862,18 @@ extension MainWindowController {
         }
     }
 
-    private func combinedPredicate() -> ([String]) -> Bool {
+    private func combinedPredicate() -> @Sendable ([String]) -> Bool {
         let text = textCondition
-        let predicates = valueConditions.map(\.predicate)
+        let columnPredicate = columnFilterState.predicate()
+        let hasColumnFilters = !columnFilterState.isEmpty
         return { row in
             if let text, !text(row) { return false }
-            return predicates.allSatisfy { $0(row) }
+            if hasColumnFilters, !columnPredicate(row) { return false }
+            return true
         }
     }
 
-    private nonisolated static func containsPredicate(term: String, column: Int) -> ([String]) -> Bool {
+    private nonisolated static func containsPredicate(term: String, column: Int) -> @Sendable ([String]) -> Bool {
         if column < 0 {
             return { row in row.contains { $0.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil } }
         }
@@ -1576,6 +1898,7 @@ extension MainWindowController {
     private func updateFilterStatus() {
         guard csvDocument != nil else { return }
         refreshFilterTokens()
+        scheduleFacetRefresh()
         if !hasAnyFilter {
             statusLabel.stringValue = ""
             updateFeatureState()
@@ -1583,7 +1906,7 @@ extension MainWindowController {
         }
         var parts: [String] = []
         if textCondition != nil { parts.append(textConditionDescription) }
-        parts.append(contentsOf: valueConditions.map(\.description))
+        parts.append(contentsOf: columnFilterDescriptions())
         statusLabel.stringValue = L.t(
             "Filter: \(parts.joined(separator: " AND "))",
             "필터: \(parts.joined(separator: " AND "))"
@@ -1655,6 +1978,8 @@ extension MainWindowController {
             let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))
             let typeText = columnTypeText(index)
             let displayTitle = headerDisplayTitle(columnName: name, typeText: typeText)
+            let filterAvailable = isColumnFilterAvailable(column: index)
+            let filterActive = columnFilterState.filter(for: index) != nil
             column?.title = displayTitle
             if let sortIndex = sortKeys.firstIndex(where: { $0.column == index }) {
                 let key = sortKeys[sortIndex]
@@ -1665,6 +1990,9 @@ extension MainWindowController {
                     header.sortPriority = priority
                     header.ascending = key.ascending
                     header.typeText = typeText
+                    header.columnIdentifierRawValue = column?.identifier.rawValue
+                    header.filterAvailable = filterAvailable
+                    header.filterActive = filterActive
                 }
                 column?.headerToolTip = headerTooltip(columnName: name, typeText: typeText, sortKey: key, priority: priority)
             } else {
@@ -1674,6 +2002,9 @@ extension MainWindowController {
                     header.sortPriority = nil
                     header.ascending = nil
                     header.typeText = typeText
+                    header.columnIdentifierRawValue = column?.identifier.rawValue
+                    header.filterAvailable = filterAvailable
+                    header.filterActive = filterActive
                 }
                 column?.headerToolTip = headerTooltip(columnName: name, typeText: typeText, sortKey: nil, priority: nil)
             }
@@ -1683,6 +2014,11 @@ extension MainWindowController {
 
     private func columnTypeText(_ index: Int) -> String? {
         columnStatisticsReport?.columns[safe: index]?.inferredType.rawValue
+    }
+
+    private func isColumnFilterAvailable(column: Int) -> Bool {
+        guard let type = columnStatisticsReport?.columns[safe: column]?.inferredType else { return false }
+        return type == .categorical || type == .date
     }
 
     private func headerDisplayTitle(columnName: String, typeText: String?) -> String {
@@ -1713,6 +2049,238 @@ extension MainWindowController {
             show = detailToggleButton.state == .on
         }
         setInspectorVisible(show, animated: true)
+        UserDefaults.standard.set(show, forKey: Self.inspectorVisibleDefaultsKey)
+    }
+
+    var isFacetsPanelVisible: Bool {
+        !facetsPanel.isHidden
+    }
+
+    @objc func toggleFacetsPanel(_ sender: Any?) {
+        setFacetsPanelVisible(facetsPanel.isHidden, persist: true)
+    }
+
+    func setFacetsPanelVisible(_ visible: Bool, persist: Bool) {
+        guard visible == facetsPanel.isHidden else { return }
+        facetsPanel.isHidden = !visible
+        facetsWidthConstraint?.constant = visible ? FacetsPanelView.preferredWidth : 0
+        if persist {
+            UserDefaults.standard.set(visible, forKey: Self.facetsVisibleDefaultsKey)
+        }
+        if visible {
+            refreshFacetsNow()
+        } else {
+            facetRefreshWorkItem?.cancel()
+            facetsCancellation?.cancel()
+            facetsCancellation = nil
+        }
+    }
+
+    func scheduleFacetRefresh(delay: TimeInterval = 0.15) {
+        facetRefreshWorkItem?.cancel()
+        guard isFacetsPanelVisible else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.refreshFacetsNow()
+        }
+        facetRefreshWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func refreshFacetsNow() {
+        guard isFacetsPanelVisible else { return }
+        facetGeneration += 1
+        let generation = facetGeneration
+        facetsCancellation?.cancel()
+        facetsCancellation = nil
+
+        guard let doc = csvDocument else {
+            facetsPanel.renderMessage(L.t("Open a document to see facets.", "문서를 열면 패싯이 표시됩니다."))
+            return
+        }
+        guard doc.indexingComplete else {
+            facetsPanel.renderMessage(L.t("Loading...", "불러오는 중..."))
+            return
+        }
+        let requests = facetColumnRequests()
+        guard !requests.isEmpty else {
+            facetsPanel.renderMessage(L.t("No columns to summarize.", "요약할 컬럼이 없습니다."))
+            return
+        }
+
+        let cancellation = CancellationFlag()
+        facetsCancellation = cancellation
+        let basePredicate = textCondition
+        var predicateBuilder: [Int: @Sendable ([String]) -> Bool] = [:]
+        for filter in columnFilterState.filters {
+            predicateBuilder[filter.column] = ColumnFilterState(filters: [filter]).predicate()
+        }
+        let columnPredicates = predicateBuilder
+        let rowCap = Self.facetRowCap
+        let filterSnapshot = columnFilterState
+        let names = columnNames
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let report = try doc.facetSummaries(
+                    columns: requests,
+                    basePredicate: basePredicate,
+                    columnPredicates: columnPredicates,
+                    rowCap: rowCap,
+                    cancellation: cancellation
+                )
+                DispatchQueue.main.async {
+                    guard let self, self.facetGeneration == generation, doc === self.csvDocument else { return }
+                    self.facetsCancellation = nil
+                    let sections = Self.facetSections(
+                        report: report,
+                        columnNames: names,
+                        filterState: filterSnapshot,
+                        blankLabel: L.t("(Blank)", "(빈 값)")
+                    )
+                    let note = report.isRowCapped
+                        ? L.t(
+                            "Showing first \(report.scannedRowCount.formatted()) rows",
+                            "처음 \(report.scannedRowCount.formatted())행 기준"
+                        )
+                        : nil
+                    self.facetsPanel.render(sections: sections, note: note)
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.facetGeneration == generation else { return }
+                    self.facetsCancellation = nil
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.facetGeneration == generation else { return }
+                    self.facetsCancellation = nil
+                    self.facetsPanel.renderMessage(L.t("Facet scan failed.", "패싯 스캔에 실패했습니다."))
+                }
+            }
+        }
+    }
+
+    private func facetColumnRequests() -> [FacetColumnRequest] {
+        let visible = (0..<columnNames.count).filter { !hiddenColumnIndexes.contains($0) }
+        return visible.prefix(Self.facetColumnLimit).map { column in
+            let type = columnStatisticsReport?.columns[safe: column]?.inferredType
+            return FacetColumnRequest(column: column, wantsHistogram: type == .integer || type == .float)
+        }
+    }
+
+    static func facetSections(
+        report: FacetReport,
+        columnNames: [String],
+        filterState: ColumnFilterState,
+        blankLabel: String
+    ) -> [FacetPanelSection] {
+        report.summaries.compactMap { summary in
+            let title = columnNames.indices.contains(summary.column)
+                ? columnNames[summary.column]
+                : "Column \(summary.column + 1)"
+            let activeFilter = filterState.filter(for: summary.column)
+            switch summary.content {
+            case .topValues(let bins, let otherCount, let distinctTruncated):
+                guard !bins.isEmpty else { return nil }
+                var activeValues: Set<String> = []
+                var activeBlanks = false
+                if case .selectedValues(_, let values, let includeBlanks)? = activeFilter {
+                    activeValues = values
+                    activeBlanks = includeBlanks
+                }
+                let maxCount = bins.map(\.count).max() ?? 0
+                let entries = bins.map { bin in
+                    FacetPanelEntry(
+                        label: bin.value.isEmpty ? blankLabel : bin.value,
+                        count: bin.count,
+                        maxCount: maxCount,
+                        kind: .value(bin.value),
+                        isActive: bin.value.isEmpty ? activeBlanks : activeValues.contains(bin.value)
+                    )
+                }
+                var footnotes: [String] = []
+                if otherCount > 0 {
+                    footnotes.append(L.t("+\(otherCount.formatted()) in other values", "기타 값 \(otherCount.formatted())개"))
+                }
+                if distinctTruncated {
+                    footnotes.append(L.t("approximate", "근사치"))
+                }
+                return FacetPanelSection(
+                    column: summary.column,
+                    title: title,
+                    entries: entries,
+                    footnote: footnotes.isEmpty ? nil : footnotes.joined(separator: " · ")
+                )
+            case .histogram(let bins, _, let nonNumericCount):
+                guard !bins.isEmpty else { return nil }
+                var activeRange: (lower: Double, upper: Double, includesUpperBound: Bool)?
+                if case .numericRange(_, let lower, let upper, let includesUpperBound)? = activeFilter {
+                    activeRange = (lower, upper, includesUpperBound)
+                }
+                let maxCount = bins.map(\.count).max() ?? 0
+                let entries = bins.enumerated().map { index, bin in
+                    let includesUpperBound = index == bins.count - 1
+                    let label = "\(ColumnFilterState.numericBoundLabel(bin.lowerBound)) – \(ColumnFilterState.numericBoundLabel(bin.upperBound))"
+                    let isActive = activeRange.map {
+                        $0.lower == bin.lowerBound && $0.upper == bin.upperBound && $0.includesUpperBound == includesUpperBound
+                    } ?? false
+                    return FacetPanelEntry(
+                        label: label,
+                        count: bin.count,
+                        maxCount: maxCount,
+                        kind: .numericRange(
+                            lower: bin.lowerBound,
+                            upper: bin.upperBound,
+                            includesUpperBound: includesUpperBound
+                        ),
+                        isActive: isActive
+                    )
+                }
+                let footnote = nonNumericCount > 0
+                    ? L.t("\(nonNumericCount.formatted()) non-numeric", "숫자 아님 \(nonNumericCount.formatted())개")
+                    : nil
+                return FacetPanelSection(
+                    column: summary.column,
+                    title: title,
+                    entries: entries,
+                    footnote: footnote
+                )
+            }
+        }
+    }
+
+    func handleFacetSelection(column: Int, kind: FacetPanelEntry.Kind) {
+        guard csvDocument?.indexingComplete == true, !busy else { return }
+        let current = columnFilterState.filter(for: column)
+        switch kind {
+        case .value(let value):
+            var values: Set<String> = []
+            var includeBlanks = false
+            if case .selectedValues(_, let currentValues, let currentBlanks)? = current {
+                values = currentValues
+                includeBlanks = currentBlanks
+            }
+            if value.isEmpty {
+                includeBlanks.toggle()
+            } else if values.contains(value) {
+                values.remove(value)
+            } else {
+                values.insert(value)
+            }
+            if values.isEmpty && !includeBlanks {
+                clearColumnFilter(column: column)
+            } else {
+                applyColumnFilter(.selectedValues(column: column, values: values, includeBlanks: includeBlanks))
+            }
+        case .numericRange(let lower, let upper, let includesUpperBound):
+            if case .numericRange(_, let currentLower, let currentUpper, let currentInclusive)? = current,
+               currentLower == lower, currentUpper == upper, currentInclusive == includesUpperBound {
+                clearColumnFilter(column: column)
+            } else {
+                applyColumnFilter(.numericRange(column: column, lower: lower, upper: upper, includesUpperBound: includesUpperBound))
+            }
+        }
     }
 
     @objc func toggleFilterBar(_ sender: Any?) {
@@ -1765,6 +2333,8 @@ extension MainWindowController {
         setInspectorVisible(true, animated: true)
         detailHeaderLabel.stringValue = L.t("Performance", "성능")
         detailTextView.string = snapshot.formattedLines().joined(separator: "\n")
+        currentInspectorContentKind = .performance
+        updateInspectorCopyButtons()
     }
 
     @objc func showNumericDistribution(_ sender: Any?) {
@@ -1823,6 +2393,22 @@ extension MainWindowController {
         beginAnalysis(.documentSummary, sender: nil)
     }
 
+    @objc func showDescriptiveStatistics(_ sender: Any?) {
+        beginAnalysis(.descriptiveStatistics, sender: sender)
+    }
+
+    @objc func showFrequencyAnalysis(_ sender: Any?) {
+        beginAnalysis(.frequencyAnalysis, sender: sender)
+    }
+
+    @objc func showOneWayAnova(_ sender: Any?) {
+        beginAnalysis(.oneWayAnova, sender: sender)
+    }
+
+    @objc func showNormalityTest(_ sender: Any?) {
+        beginAnalysis(.normalityTest, sender: sender)
+    }
+
     private func beginAnalysis(_ kind: AnalysisKind, sender: Any?) {
         guard let doc = csvDocument, doc.indexingComplete, !busy || kind == .documentSummary else { return }
         guard let defaultRequest = defaultAnalysisRequest(for: kind) else {
@@ -1869,6 +2455,23 @@ extension MainWindowController {
             let rowColumn = firstNonNumericColumn(excluding: -1) ?? selected
             let columnColumn = firstNonNumericColumn(excluding: rowColumn) ?? min(rowColumn + 1, max(0, columnNames.count - 1))
             return .chiSquare(rowColumn: rowColumn, columnColumn: columnColumn)
+        case .descriptiveStatistics:
+            let numericColumns = columnNames.indices.filter { isNumericColumn($0) }
+            let fallback = isNumericColumn(selected) ? [selected] : []
+            let columns = numericColumns.isEmpty ? fallback : Array(numericColumns.prefix(6))
+            guard !columns.isEmpty else { return nil }
+            return .descriptiveStatistics(columns: columns)
+        case .frequencyAnalysis:
+            let column = isNumericColumn(selected) ? (firstNonNumericColumn(excluding: -1) ?? selected) : selected
+            return .frequencyAnalysis(column: column)
+        case .oneWayAnova:
+            let groupColumn = firstNonNumericColumn(excluding: -1) ?? selected
+            guard let valueColumn = firstNumericColumn(excluding: groupColumn) else { return nil }
+            return .oneWayAnova(groupColumn: groupColumn, valueColumn: valueColumn)
+        case .normalityTest:
+            let column = isNumericColumn(selected) ? selected : (firstNumericColumn(excluding: -1) ?? selected)
+            guard isNumericColumn(column) else { return nil }
+            return .normalityTest(column: column)
         case .documentSummary:
             return .documentSummary
         }
@@ -1979,6 +2582,38 @@ extension MainWindowController {
             addAnalysisPromptRow(to: stack, label: L.t("Rows", "행"), control: rowPopup)
             addAnalysisPromptRow(to: stack, label: L.t("Columns", "열"), control: columnPopup)
             buildRequest = { .chiSquare(rowColumn: self.selectedColumn(in: rowPopup) ?? rowColumn, columnColumn: self.selectedColumn(in: columnPopup) ?? columnColumn) }
+        case .descriptiveStatistics(let columns):
+            let scopePopup = NSPopUpButton()
+            scopePopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
+            scopePopup.addItem(withTitle: L.t("All numeric columns", "모든 숫자 컬럼"))
+            scopePopup.addItem(withTitle: L.t("Single column", "단일 컬럼"))
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: columns.first ?? clampedCurrentDataColumn())
+            addAnalysisPromptRow(to: stack, label: L.t("Scope", "범위"), control: scopePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = {
+                if scopePopup.indexOfSelectedItem == 0 {
+                    let numericColumns = self.columnNames.indices.filter { self.isNumericColumn($0) }
+                    return .descriptiveStatistics(columns: numericColumns.isEmpty ? columns : numericColumns)
+                }
+                let column = self.selectedColumn(in: columnPopup) ?? columns.first ?? 0
+                return .descriptiveStatistics(columns: [column])
+            }
+        case .frequencyAnalysis(let column):
+            let columnPopup = makeColumnPopup(selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .frequencyAnalysis(column: self.selectedColumn(in: columnPopup) ?? column) }
+        case .oneWayAnova(let groupColumn, let valueColumn):
+            let groupPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: groupColumn)
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
+            addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            buildRequest = {
+                .oneWayAnova(groupColumn: self.selectedColumn(in: groupPopup) ?? groupColumn, valueColumn: self.selectedColumn(in: valuePopup) ?? valueColumn)
+            }
+        case .normalityTest(let column):
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .normalityTest(column: self.selectedColumn(in: columnPopup) ?? column) }
         case .documentSummary:
             buildRequest = { .documentSummary }
         }
@@ -2072,6 +2707,377 @@ extension MainWindowController {
         return AnalysisPromptSheet(panel: panel, buildRequest: buildRequest)
     }
 
+    // MARK: - Visualization chart windows
+
+    @objc func showHistogramChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .histogram, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showBoxplotChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .boxplot, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showScatterChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .scatter, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showCorrelationHeatmapWindow(_ sender: Any?) {
+        startChartFlow(kind: .correlationHeatmap, prompt: false)
+    }
+
+    @objc func showQQPlotChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .qqPlot, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showTimeseriesChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .timeseries, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showParetoChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .pareto, prompt: sender is NSMenuItem)
+    }
+
+    private func startChartFlow(kind: ChartKind, prompt: Bool) {
+        guard csvDocument?.indexingComplete == true, !busy else { return }
+        guard let defaultRequest = defaultChartRequest(for: kind) else {
+            statusLabel.stringValue = L.t("No suitable columns for this chart.", "이 차트에 적합한 컬럼이 없습니다.")
+            return
+        }
+        if prompt {
+            promptChartRequest(kind: kind, defaultRequest: defaultRequest)
+        } else {
+            openChartWindow(request: defaultRequest)
+        }
+    }
+
+    func defaultChartRequest(for kind: ChartKind) -> ChartRequest? {
+        guard csvDocument != nil else { return nil }
+        let selected = clampedCurrentDataColumn()
+        switch kind {
+        case .histogram:
+            let column = isNumericColumn(selected) ? selected : (firstNumericColumn(excluding: -1) ?? selected)
+            guard isNumericColumn(column) || columnStatisticsReport == nil else { return nil }
+            return .histogram(column: column, binCount: 20)
+        case .boxplot:
+            guard let valueColumn = isNumericColumn(selected) ? selected : firstNumericColumn(excluding: -1) else { return nil }
+            return .boxplot(groupColumn: firstNonNumericColumn(excluding: -1), valueColumn: valueColumn)
+        case .scatter:
+            guard let x = firstNumericColumn(excluding: -1), let y = firstNumericColumn(excluding: x) else { return nil }
+            return .scatter(xColumn: x, yColumn: y)
+        case .correlationHeatmap:
+            let numericColumns = columnNames.indices.filter { isNumericColumn($0) }
+            guard numericColumns.count >= 2 else { return nil }
+            return .correlationHeatmap(columns: Array(numericColumns.prefix(12)))
+        case .qqPlot:
+            let column = isNumericColumn(selected) ? selected : (firstNumericColumn(excluding: -1) ?? selected)
+            guard isNumericColumn(column) || columnStatisticsReport == nil else { return nil }
+            return .qqPlot(column: column)
+        case .timeseries:
+            let dateColumn = isDateColumn(selected) ? selected : (firstDateColumn(excluding: -1) ?? selected)
+            return .timeseries(dateColumn: dateColumn, valueColumn: nil, period: .month)
+        case .pareto:
+            let column = isNumericColumn(selected) ? (firstNonNumericColumn(excluding: -1) ?? selected) : selected
+            return .pareto(column: column)
+        }
+    }
+
+    private func promptChartRequest(kind: ChartKind, defaultRequest: ChartRequest) {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: Self.analysisPromptContentWidth).isActive = true
+
+        var buildRequest: () -> ChartRequest? = { nil }
+        switch defaultRequest {
+        case .histogram(let column, let binCount):
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
+            let binsField = NSTextField(string: "\(binCount)")
+            binsField.widthAnchor.constraint(equalToConstant: 120).isActive = true
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Bins", "구간"), control: binsField)
+            buildRequest = {
+                .histogram(column: self.selectedColumn(in: columnPopup) ?? column, binCount: max(2, Int(binsField.stringValue) ?? binCount))
+            }
+        case .boxplot(let groupColumn, let valueColumn):
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
+            let groupPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: groupColumn ?? -1, includeNone: true)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
+            buildRequest = {
+                .boxplot(groupColumn: self.selectedColumn(in: groupPopup), valueColumn: self.selectedColumn(in: valuePopup) ?? valueColumn)
+            }
+        case .scatter(let xColumn, let yColumn):
+            let xPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: xColumn)
+            let yPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: yColumn)
+            addAnalysisPromptRow(to: stack, label: "X", control: xPopup)
+            addAnalysisPromptRow(to: stack, label: "Y", control: yPopup)
+            buildRequest = {
+                .scatter(xColumn: self.selectedColumn(in: xPopup) ?? xColumn, yColumn: self.selectedColumn(in: yPopup) ?? yColumn)
+            }
+        case .correlationHeatmap(let columns):
+            buildRequest = { .correlationHeatmap(columns: columns) }
+        case .qqPlot(let column):
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .qqPlot(column: self.selectedColumn(in: columnPopup) ?? column) }
+        case .timeseries(let dateColumn, let valueColumn, let period):
+            let datePopup = makeColumnPopup(preferredTypes: [.date], selected: dateColumn)
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn ?? -1, includeNone: true)
+            let periodPopup = NSPopUpButton()
+            periodPopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
+            for item in DateBinPeriod.allCases {
+                periodPopup.addItem(withTitle: item.rawValue)
+            }
+            periodPopup.selectItem(withTitle: period.rawValue)
+            addAnalysisPromptRow(to: stack, label: L.t("Date column", "날짜 컬럼"), control: datePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Period", "단위"), control: periodPopup)
+            buildRequest = {
+                let period = DateBinPeriod(rawValue: periodPopup.titleOfSelectedItem ?? DateBinPeriod.month.rawValue) ?? .month
+                return .timeseries(
+                    dateColumn: self.selectedColumn(in: datePopup) ?? dateColumn,
+                    valueColumn: self.selectedColumn(in: valuePopup),
+                    period: period
+                )
+            }
+        case .pareto(let column):
+            let columnPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .pareto(column: self.selectedColumn(in: columnPopup) ?? column) }
+        }
+
+        let sheet = makeAnalysisPromptSheet(
+            title: kind.title,
+            informativeText: L.t("Choose chart parameters, then run.", "차트 조건을 선택한 뒤 실행하세요."),
+            form: stack,
+            buildRequest: { nil }
+        )
+        sheet.panel.runHandler = { [weak self, weak panel = sheet.panel] in
+            guard let self, let panel, let request = buildRequest() else { return }
+            panel.sheetParent?.endSheet(panel, returnCode: .OK)
+            panel.orderOut(nil)
+            self.openChartWindow(request: request)
+        }
+        window?.beginSheet(sheet.panel)
+    }
+
+    func openChartWindow(request: ChartRequest) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        chartCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        chartCancellation = cancellation
+        let names = columnNames
+        let documentName = (currentFilePath as NSString?)?.lastPathComponent ?? "CSV"
+        let scopeNote = doc.analysisRowsTruncated
+            ? L.t(
+                "Showing first \(VirtualCsvDocument.analysisRowLimit.formatted()) rows",
+                "처음 \(VirtualCsvDocument.analysisRowLimit.formatted())행 기준"
+            )
+            : nil
+        setBusy(true, message: L.t("Preparing chart...", "차트 준비 중..."))
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let render = try Self.buildChartRender(request: request, document: doc, columnNames: names, cancellation: cancellation)
+                DispatchQueue.main.async {
+                    guard let self, doc === self.csvDocument, self.chartCancellation === cancellation else { return }
+                    self.chartCancellation = nil
+                    self.setBusy(false)
+                    guard let render else {
+                        self.statusLabel.stringValue = L.t("Not enough data for this chart.", "차트를 그릴 데이터가 부족합니다.")
+                        return
+                    }
+                    self.statusLabel.stringValue = ""
+                    self.presentChartWindow(ChartWindowModel(
+                        kind: request.kind,
+                        documentName: documentName,
+                        render: render,
+                        scopeNote: scopeNote
+                    ))
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.chartCancellation === cancellation else { return }
+                    self.chartCancellation = nil
+                    self.setBusy(false)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.chartCancellation === cancellation else { return }
+                    self.chartCancellation = nil
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func buildChartRender(
+        request: ChartRequest,
+        document: VirtualCsvDocument,
+        columnNames: [String],
+        cancellation: CancellationFlag
+    ) throws -> ChartRenderModel? {
+        func name(_ index: Int) -> String {
+            columnNames.indices.contains(index) ? columnNames[index] : "Column \(index + 1)"
+        }
+        switch request {
+        case .histogram(let column, let binCount):
+            let data = try document.histogramChartData(column: column, binCount: binCount, cancellation: cancellation)
+            guard data.distribution.count > 0 else { return nil }
+            return .histogram(data, columnName: name(column))
+        case .boxplot(let groupColumn, let valueColumn):
+            let data = try document.boxplotChartData(groupColumn: groupColumn, valueColumn: valueColumn, cancellation: cancellation)
+            guard !data.groups.isEmpty else { return nil }
+            return .boxplot(data, groupName: groupColumn.map(name), valueName: name(valueColumn))
+        case .scatter(let xColumn, let yColumn):
+            let data = try document.scatterChartData(xColumn: xColumn, yColumn: yColumn, cancellation: cancellation)
+            guard data.totalPairCount > 0 else { return nil }
+            return .scatter(data, xName: name(xColumn), yName: name(yColumn))
+        case .correlationHeatmap(let columns):
+            guard columns.count >= 2 else { return nil }
+            let data = try document.correlationMatrixChartData(columns: columns, cancellation: cancellation)
+            return .correlationHeatmap(data, names: data.columns.map(name))
+        case .qqPlot(let column):
+            let points = try document.qqChartData(column: column, cancellation: cancellation)
+            guard !points.isEmpty else { return nil }
+            return .qqPlot(points, columnName: name(column))
+        case .timeseries(let dateColumn, let valueColumn, let period):
+            let histogram = try document.dateHistogram(dateColumn: dateColumn, valueColumn: valueColumn, period: period, cancellation: cancellation)
+            guard !histogram.bins.isEmpty else { return nil }
+            return .timeseries(histogram, dateName: name(dateColumn), valueName: valueColumn.map(name))
+        case .pareto(let column):
+            let data = try document.paretoChartData(column: column, cancellation: cancellation)
+            guard !data.entries.isEmpty else { return nil }
+            return .pareto(data, columnName: name(column))
+        }
+    }
+
+    // MARK: - Data quality
+
+    @objc func runDataQualityProfile(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        dataQualityCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        dataQualityCancellation = cancellation
+        let fileName = (currentFilePath as NSString?)?.lastPathComponent ?? "CSV"
+
+        setInspectorVisible(true, animated: true)
+        detailHeaderLabel.stringValue = L.t("Data Quality", "데이터 품질")
+        detailTextView.string = L.t("Profiling full file...", "전체 파일을 프로파일링 중...")
+        currentInspectorContentKind = .dataQuality
+        updateInspectorCopyButtons()
+        setBusy(true, message: L.t("Profiling data quality...", "데이터 품질 프로파일링 중..."))
+        setProgressVisible(true)
+        updateProgress(0)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let report = try doc.dataQualityReport(
+                    progress: { pct in
+                        DispatchQueue.main.async {
+                            guard let self, self.dataQualityCancellation === cancellation else { return }
+                            self.updateProgress(pct)
+                        }
+                    },
+                    cancellation: cancellation
+                )
+                DispatchQueue.main.async {
+                    guard let self, doc === self.csvDocument, self.dataQualityCancellation === cancellation else { return }
+                    self.dataQualityCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.currentDataQualityReport = report
+                    self.detailHeaderLabel.stringValue = L.t("Data Quality", "데이터 품질")
+                    self.detailTextView.string = DataQualityReportFormatter.markdown(report: report, fileName: fileName)
+                    self.currentInspectorContentKind = .dataQuality
+                    self.updateInspectorCopyButtons()
+                    self.statusLabel.stringValue = L.t(
+                        "Data quality score: \(report.score)/100",
+                        "데이터 품질 점수: \(report.score)/100"
+                    )
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.dataQualityCancellation === cancellation else { return }
+                    self.dataQualityCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("Data quality scan cancelled.", "데이터 품질 스캔이 취소되었습니다.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.dataQualityCancellation === cancellation else { return }
+                    self.dataQualityCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
+    @objc func exportDataQualityMarkdown(_ sender: Any?) {
+        exportDataQualityReport(fileExtension: "md") { report, fileName in
+            Data(DataQualityReportFormatter.markdown(report: report, fileName: fileName).utf8)
+        }
+    }
+
+    @objc func exportDataQualityHtml(_ sender: Any?) {
+        exportDataQualityReport(fileExtension: "html") { report, fileName in
+            Data(DataQualityReportFormatter.html(report: report, fileName: fileName).utf8)
+        }
+    }
+
+    @objc func exportDataQualityJson(_ sender: Any?) {
+        exportDataQualityReport(fileExtension: "json") { report, _ in
+            try DataQualityReportFormatter.json(report: report)
+        }
+    }
+
+    private func exportDataQualityReport(
+        fileExtension: String,
+        encode: @escaping (DataQualityReport, String) throws -> Data
+    ) {
+        guard let report = currentDataQualityReport, let window else { return }
+        let fileName = (currentFilePath as NSString?)?.lastPathComponent ?? "CSV"
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\((fileName as NSString).deletingPathExtension)-quality.\(fileExtension)"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try encode(report, fileName).write(to: url, options: .atomic)
+                self?.statusLabel.stringValue = L.t("Report exported.", "리포트를 내보냈습니다.")
+            } catch {
+                self?.presentError(error)
+            }
+        }
+    }
+
+    private func presentChartWindow(_ model: ChartWindowModel) {
+        let controller = ChartWindowController(model: model)
+        controller.onClose = { [weak self] closed in
+            self?.chartWindows.removeAll { $0 === closed }
+        }
+        chartWindows.append(controller)
+        controller.showWindow(nil)
+    }
+
+    // Chart windows show a snapshot of one document's data; switching or
+    // closing the document invalidates them, matching the Windows twin.
+    func closeAllChartWindows() {
+        let windows = chartWindows
+        chartWindows.removeAll()
+        for controller in windows {
+            controller.onClose = nil
+            controller.close()
+        }
+    }
+
     private func addAnalysisPromptRow(to stack: NSStackView, label: String, control: NSView) {
         let row = NSStackView()
         row.orientation = .horizontal
@@ -2145,6 +3151,8 @@ extension MainWindowController {
         setInspectorVisible(true, animated: true)
         detailHeaderLabel.stringValue = header
         detailTextView.string = L.t("Calculating analysis...", "분석을 계산 중입니다...")
+        currentInspectorContentKind = .analysis
+        updateInspectorCopyButtons()
         currentAnalysisReport = nil
         updateAnalysisActionBar(running: true)
         setBusy(true, message: L.t("Analyzing...", "분석 중..."))
@@ -2175,6 +3183,8 @@ extension MainWindowController {
                     self.currentAnalysisReport = finalReport
                     self.detailHeaderLabel.stringValue = finalReport.title
                     self.detailTextView.string = finalReport.markdown
+                    self.currentInspectorContentKind = .analysis
+                    self.updateInspectorCopyButtons()
                     self.updateAnalysisActionBar(running: false)
                     self.setProgressVisible(false)
                     self.setBusy(false)
@@ -2217,7 +3227,8 @@ extension MainWindowController {
                 : request.selectedColumns().compactMap { columnNames[safe: $0] },
             parameterLines: request.parameterLines(columnNames: columnNames),
             generatedAt: Date(),
-            elapsedMilliseconds: nil
+            elapsedMilliseconds: nil,
+            scannedRows: csvDocument.map { min($0.displayRowCount, VirtualCsvDocument.analysisRowLimit) }
         )
     }
 
@@ -2333,10 +3344,12 @@ extension MainWindowController {
     }
 
     @objc func copySelectedCellToPasteboard(_ sender: Any?) {
-        guard let value = selectedCellValue() else { return }
+        guard let value = selectedGridCopyString() else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
-        statusLabel.stringValue = L.t("Copied selected cell.", "선택 셀을 복사했습니다.")
+        statusLabel.stringValue = gridSelection.selectedCells.count > 1
+            ? L.t("Copied selected cells.", "선택 셀들을 복사했습니다.")
+            : L.t("Copied selected cell.", "선택 셀을 복사했습니다.")
     }
 
     @objc func copySelectedCellAsCsv(_ sender: Any?) {
@@ -2355,10 +3368,39 @@ extension MainWindowController {
         statusLabel.stringValue = L.t("Copied selected cell as JSON.", "선택 셀을 JSON으로 복사했습니다.")
     }
 
+    @objc func copyEntireCurrentRow(_ sender: Any?) {
+        guard let text = rowCopyString(row: tableView.selectedRow) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        statusLabel.stringValue = L.t("Copied entire row.", "행 전체를 복사했습니다.")
+    }
+
+    @objc func copyEntireCurrentColumn(_ sender: Any?) {
+        guard let text = columnCopyString(column: currentDataColumn, includeHeader: true) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        statusLabel.stringValue = L.t("Copied entire column.", "열 전체를 복사했습니다.")
+    }
+
+    @objc func copyInspectorText(_ sender: Any?) {
+        let text = inspectorTextCopyString()
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        statusLabel.stringValue = L.t("Copied inspector text.", "인스펙터 텍스트를 복사했습니다.")
+    }
+
+    @objc func copyInspectorJson(_ sender: Any?) {
+        guard let json = inspectorJsonCopyString() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(json, forType: .string)
+        statusLabel.stringValue = L.t("Copied inspector JSON.", "인스펙터 JSON을 복사했습니다.")
+    }
+
     private func runViewOperation(
         message: String,
-        operation: @escaping (_ cancellation: CancellationFlag, _ progress: @escaping (Int) -> Void) throws -> Void,
-        completion: @escaping () -> Void
+        operation: @escaping @Sendable (_ cancellation: CancellationFlag, _ progress: @escaping @Sendable (Int) -> Void) throws -> Void,
+        completion: @escaping @MainActor () -> Void
     ) {
         operationCancellation?.cancel()
         let cancellation = CancellationFlag()
@@ -2371,27 +3413,34 @@ extension MainWindowController {
             do {
                 try operation(cancellation) { pct in
                     DispatchQueue.main.async {
-                        self?.updateProgress(pct)
+                        guard let self, self.operationCancellation === cancellation else { return }
+                        self.updateProgress(pct)
                     }
                 }
                 DispatchQueue.main.async {
-                    self?.setProgressVisible(false)
-                    self?.setBusy(false)
-                    self?.refreshRowCount()
-                    self?.tableView.reloadData()
-                    self?.scheduleVisibleRowPrefetch()
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.refreshRowCount()
+                    self.tableView.reloadData()
+                    self.scheduleVisibleRowPrefetch()
                     completion()
                 }
             } catch CsvError.cancelled {
                 DispatchQueue.main.async {
-                    self?.setProgressVisible(false)
-                    self?.setBusy(false)
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self?.setProgressVisible(false)
-                    self?.setBusy(false)
-                    self?.presentError(error)
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.presentError(error)
                 }
             }
         }
@@ -2436,7 +3485,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             cell.textField?.font = .systemFont(ofSize: 13)
             cell.textField?.textColor = .labelColor
             cell.wantsLayer = true
-            if row == tableView.selectedRow && column == currentDataColumn {
+            if isGridCellSelected(row: row, column: column) {
                 cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor
                 cell.layer?.cornerRadius = 3
             } else {
@@ -2448,10 +3497,21 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     nonisolated func tableViewSelectionDidChange(_ notification: Notification) {
         MainActor.assumeIsolated {
+            if gridSelection.isEmpty, tableView.selectedRow >= 0 {
+                gridSelection.replace(with: GridCellCoordinate(row: tableView.selectedRow, column: currentDataColumn))
+            }
             updateSelectedValue()
             scheduleDetailPanelUpdate()
             reloadSelectedRowHighlight()
         }
+    }
+
+    func tableViewColumnDidResize(_ notification: Notification) {
+        handleTableColumnDidResize(notification)
+    }
+
+    func tableViewColumnDidMove(_ notification: Notification) {
+        updateTableDocumentWidthForViewport()
     }
 
     nonisolated func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
@@ -2462,6 +3522,131 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             currentDataColumn = column
             let additive = NSEvent.modifierFlags.contains(.shift)
             toggleSort(column: column, additive: additive)
+        }
+    }
+
+    private func handleTableColumnDidResize(_ notification: Notification) {
+        guard !applyingGridLayout else { return }
+        if let column = notification.userInfo?["NSTableColumn"] as? NSTableColumn {
+            recordBaseWidth(for: column)
+        } else {
+            for column in tableView.tableColumns {
+                recordBaseWidth(for: column)
+            }
+        }
+        updateTableDocumentWidthForViewport()
+    }
+
+    private func makeColumnHeaderMenu(column: Int) -> NSMenu? {
+        guard let report = columnStatisticsReport, let summary = report.columns[safe: column] else { return nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let typeItem = NSMenuItem(title: L.t("Change Type", "타입 변경"), action: nil, keyEquivalent: "")
+        let typeMenu = NSMenu()
+        typeMenu.autoenablesItems = false
+        for type in [ColumnValueType.integer, .float, .date, .boolean, .categorical, .string] {
+            let item = NSMenuItem(title: type.rawValue, action: #selector(changeColumnType(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = column
+            item.representedObject = type.rawValue
+            item.state = summary.inferredType == type ? .on : .off
+            typeMenu.addItem(item)
+        }
+        typeMenu.addItem(.separator())
+        let auto = NSMenuItem(title: L.t("Revert to Auto-detected", "자동 감지로 되돌리기"), action: #selector(changeColumnType(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.tag = column
+        auto.representedObject = "auto"
+        auto.isEnabled = columnTypeOverrides[column] != nil
+        typeMenu.addItem(auto)
+        typeItem.submenu = typeMenu
+        menu.addItem(typeItem)
+        return menu
+    }
+
+    @objc private func changeColumnType(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        let column = sender.tag
+        if raw == "auto" {
+            setColumnTypeOverride(column: column, type: nil)
+            return
+        }
+        guard let target = ColumnValueType(rawValue: raw) else { return }
+        requestColumnTypeChange(column: column, to: target)
+    }
+
+    func requestColumnTypeChange(column: Int, to target: ColumnValueType) {
+        guard let current = columnStatisticsReport?.columns[safe: column]?.inferredType else { return }
+        switch ColumnTypeConversion.classify(from: current, to: target) {
+        case .block:
+            statusLabel.stringValue = L.t(
+                "Cannot convert \(current.rawValue) to \(target.rawValue) without data loss.",
+                "\(current.rawValue) 타입은 데이터 손실 없이 \(target.rawValue)(으)로 바꿀 수 없습니다."
+            )
+        case .allow:
+            setColumnTypeOverride(column: column, type: target)
+        case .validateSample:
+            validateAndApplyColumnType(column: column, target: target)
+        }
+    }
+
+    private func validateAndApplyColumnType(column: Int, target: ColumnValueType) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        let cancellation = CancellationFlag()
+        statusLabel.stringValue = L.t("Validating type change...", "타입 변경을 검증하는 중...")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, doc] in
+            let sample: [String]
+            do {
+                sample = try doc.distinctValues(column: column, withinCurrentView: false, limit: 2_000, progress: nil, cancellation: cancellation).map(\.value)
+            } catch {
+                DispatchQueue.main.async { self?.presentError(error) }
+                return
+            }
+            let validation = ColumnTypeConversion.validateSample(values: sample, to: target)
+            DispatchQueue.main.async {
+                guard let self, doc === self.csvDocument else { return }
+                if validation.passed {
+                    self.setColumnTypeOverride(column: column, type: target)
+                    return
+                }
+                let alert = NSAlert()
+                alert.messageText = L.t("Some values do not match \(target.rawValue)", "일부 값이 \(target.rawValue) 타입과 맞지 않습니다")
+                alert.informativeText = L.t(
+                    "Examples: \(validation.failures.joined(separator: ", ")). Apply anyway?",
+                    "예시: \(validation.failures.joined(separator: ", ")). 그래도 적용할까요?"
+                )
+                alert.addButton(withTitle: L.t("Apply", "적용"))
+                alert.addButton(withTitle: L.t("Cancel", "취소"))
+                guard let window = self.window else { return }
+                alert.beginSheetModal(for: window) { [weak self] response in
+                    guard let self else { return }
+                    if response == .alertFirstButtonReturn {
+                        self.setColumnTypeOverride(column: column, type: target)
+                    } else {
+                        self.statusLabel.stringValue = L.t("Type change cancelled.", "타입 변경을 취소했습니다.")
+                    }
+                }
+            }
+        }
+    }
+
+    func setColumnTypeOverride(column: Int, type: ColumnValueType?) {
+        if let type {
+            columnTypeOverrides[column] = type
+        } else {
+            columnTypeOverrides.removeValue(forKey: column)
+        }
+        columnStatisticsReport = baseColumnStatisticsReport?.applyingOverrides(columnTypeOverrides)
+        updateSortHeaders()
+        scheduleFacetRefresh()
+        if case .columnStatistics(let shownColumn) = currentInspectorContentKind, shownColumn == column {
+            renderColumnStatistics(column: column)
+        }
+        let name = columnNames[safe: column] ?? "\(column + 1)"
+        if let type {
+            statusLabel.stringValue = L.t("\(name) type set to \(type.rawValue).", "\(name) 컬럼 타입을 \(type.rawValue)(으)로 설정했습니다.")
+        } else {
+            statusLabel.stringValue = L.t("\(name) type reverted to auto-detected.", "\(name) 컬럼 타입을 자동 감지로 되돌렸습니다.")
         }
     }
 
@@ -2509,22 +3694,145 @@ extension MainWindowController {
         Int(identifier.rawValue.dropFirst()) ?? 0
     }
 
+    func handleTableCellHit(_ hit: CsvTableCellHit) {
+        guard hit.row >= 0, hit.column >= 0, hit.column < tableView.tableColumns.count else { return }
+        let identifier = tableView.tableColumns[hit.column].identifier.rawValue
+        guard identifier.hasPrefix("c"), let dataColumn = Int(identifier.dropFirst()) else { return }
+        switch hit.phase {
+        case .mouseDown, .rightMouseDown:
+            selectGridCell(
+                row: hit.row,
+                column: dataColumn,
+                extending: hit.modifiers.contains(.shift),
+                toggling: hit.modifiers.contains(.command)
+            )
+        case .mouseDragged:
+            extendGridSelection(toRow: hit.row, column: dataColumn)
+        case .mouseUp:
+            break
+        }
+    }
+
+    func selectGridCell(row: Int, column: Int, extending: Bool = false, toggling: Bool = false) {
+        guard row >= 0, column >= 0 else { return }
+        let cell = GridCellCoordinate(row: row, column: column)
+        currentDataColumn = column
+        if extending {
+            gridSelection.extend(to: cell)
+        } else if toggling {
+            gridSelection.toggle(cell)
+        } else {
+            gridSelection.replace(with: cell)
+        }
+        if gridSelection.isEmpty {
+            tableView.deselectAll(nil)
+        } else {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        updateSelectedValue()
+        scheduleDetailPanelUpdate()
+        reloadSelectedRowHighlight()
+    }
+
+    func extendGridSelection(toRow row: Int, column: Int) {
+        guard row >= 0, column >= 0 else { return }
+        currentDataColumn = column
+        gridSelection.extend(to: GridCellCoordinate(row: row, column: column))
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        updateSelectedValue()
+        scheduleDetailPanelUpdate()
+        reloadSelectedRowHighlight()
+    }
+
+    func clearGridSelection() {
+        gridSelection.clear()
+        lastHighlightedRows.removeAll()
+        tableView.deselectAll(nil)
+    }
+
+    func primarySelectedGridCell() -> GridCellCoordinate? {
+        gridSelection.anchor ?? (tableView.selectedRow >= 0 ? GridCellCoordinate(row: tableView.selectedRow, column: currentDataColumn) : nil)
+    }
+
+    func isGridCellSelected(row: Int, column: Int) -> Bool {
+        if gridSelection.contains(row: row, column: column) { return true }
+        return gridSelection.isEmpty && row == tableView.selectedRow && column == currentDataColumn
+    }
+
+    func selectedGridCopyString() -> String? {
+        guard let doc = csvDocument else { return nil }
+        let selection = gridSelection.isEmpty
+            ? (primarySelectedGridCell().map { Set([$0]) } ?? [])
+            : gridSelection.selectedCells
+        guard let bounds = GridSelectionModel(selectedCells: selection).boundingRect() else { return nil }
+
+        var rows: [[String]] = []
+        rows.reserveCapacity(bounds.rows.upperBound + 1)
+        for rowIndex in 0...bounds.rows.upperBound {
+            if rowIndex < bounds.rows.lowerBound {
+                rows.append([])
+            } else {
+                rows.append((try? doc.getDisplayRow(rowIndex)) ?? [])
+            }
+        }
+        return GridCopyFormatter.tsv(rows: rows, selection: selection)
+    }
+
+    func rowCopyString(row: Int) -> String? {
+        guard let doc = csvDocument, row >= 0, row < doc.displayRowCount else { return nil }
+        let visibleColumns = columnNames.indices.filter { !hiddenColumnIndexes.contains($0) }
+        guard let fields = try? doc.getDisplayRow(row) else { return nil }
+        return GridCopyFormatter.tsv(row: fields, columns: visibleColumns)
+    }
+
+    func columnCopyString(column: Int, includeHeader: Bool) -> String? {
+        guard let doc = csvDocument, column >= 0, column < columnNames.count else { return nil }
+        let values = (0..<doc.displayRowCount).map { row -> String in
+            guard let fields = try? doc.getDisplayRow(row), column < fields.count else { return "" }
+            return fields[column]
+        }
+        if includeHeader {
+            return GridCopyFormatter.tsv(columnName: columnNames[column], values: values)
+        }
+        return values.joined(separator: "\n") + "\n"
+    }
+
+    func inspectorTextCopyString() -> String {
+        InspectorCopyFormatter.text(detailTextView.string)
+    }
+
+    func inspectorJsonCopyString() -> String? {
+        guard case .row(let displayRow, _) = currentInspectorContentKind,
+              let row = try? csvDocument?.getDisplayRow(displayRow) else {
+            return nil
+        }
+        return InspectorCopyFormatter.jsonObject(headers: columnNames, row: row)
+    }
+
+    func updateInspectorCopyButtons() {
+        inspectorCopyTextButton.isEnabled = !detailTextView.string.isEmpty
+        if case .row = currentInspectorContentKind {
+            inspectorCopyJsonButton.isEnabled = true
+        } else {
+            inspectorCopyJsonButton.isEnabled = false
+        }
+    }
+
     func updateSelectedValue() {
-        guard let doc = csvDocument, tableView.selectedRow >= 0 else {
+        guard let doc = csvDocument, let primary = primarySelectedGridCell() else {
             selectedValueBar.isHidden = true
             selectedAddressLabel.stringValue = ""
             selectedValueTextView.string = ""
             return
         }
         selectedValueBar.isHidden = false
-        let row = tableView.selectedRow
         do {
-            let fields = try doc.getDisplayRow(row)
-            let column = max(0, min(currentDataColumn, max(0, columnNames.count - 1)))
+            let fields = try doc.getDisplayRow(primary.row)
+            let column = max(0, min(primary.column, max(0, columnNames.count - 1)))
             let value = column < fields.count ? fields[column] : ""
             selectedValueTextView.string = value
             let name = columnNames[safe: column] ?? ""
-            selectedAddressLabel.stringValue = "\(doc.getSourceRowNumber(row).formatted()) · \(name)"
+            selectedAddressLabel.stringValue = "\(doc.getSourceRowNumber(primary.row).formatted()) · \(name)"
         } catch {
             selectedValueTextView.string = ""
         }
@@ -2557,7 +3865,92 @@ extension MainWindowController {
     }
 
     @objc func visibleRowsDidChange(_ notification: Notification) {
+        syncHeaderClipIfNeeded()
         scheduleVisibleRowPrefetch()
+    }
+
+    /// AppKit normally keeps the header clip view in sync with the content
+    /// clip during interactive scrolling, but programmatic scrolls (and
+    /// headless test runs) can leave it behind. No-op when already in sync.
+    private func syncHeaderClipIfNeeded() {
+        let contentX = scrollView.contentView.bounds.origin.x
+        guard let headerClip = tableView.headerView?.superview as? NSClipView,
+              abs(headerClip.bounds.origin.x - contentX) > 0.01 else { return }
+        headerClip.scroll(to: NSPoint(x: contentX, y: headerClip.bounds.origin.y))
+        scrollView.reflectScrolledClipView(headerClip)
+    }
+
+    @objc func tableViewportDidResize(_ notification: Notification) {
+        updateTableDocumentWidthForViewport()
+    }
+
+    /// Restores user column widths, lets AppKit tile the table, and decides
+    /// scroller visibility / viewport fill from the MEASURED natural width.
+    /// Never forces table/header frames and never computes geometry from
+    /// summed column widths — AppKit owns intercell spacing and style insets.
+    func updateTableDocumentWidthForViewport() {
+        guard !tableView.tableColumns.isEmpty, !applyingGridLayout else { return }
+        let viewportWidth = scrollView.contentSize.width
+        guard viewportWidth > 0 else { return }
+        gridLayoutPassCount += 1
+
+        applyingGridLayout = true
+        defer { applyingGridLayout = false }
+
+        for column in tableView.tableColumns where !column.isHidden {
+            let base = baseWidth(for: column)
+            if abs(column.width - base) > 0.5 {
+                column.width = base
+            }
+        }
+        tableView.tile()
+
+        // tile() pads the table frame up to the clip width, so the frame
+        // cannot reveal a shortfall; measure the actual right edge of the
+        // last visible column plus the style's symmetric side inset instead.
+        guard let extent = measuredColumnExtent() else { return }
+        let decision = GridTableLayout.decide(
+            naturalWidth: extent.contentMaxX + extent.leadingInset,
+            viewportWidth: viewportWidth
+        )
+        if decision.fillDelta > 0.5,
+           let fillColumn = tableView.tableColumns.last(where: { !$0.isHidden && $0.identifier.rawValue.hasPrefix("c") }) {
+            fillColumn.width = baseWidth(for: fillColumn) + decision.fillDelta
+            tableView.tile()
+        }
+
+        if scrollView.hasHorizontalScroller != decision.needsHorizontalScroller {
+            scrollView.hasHorizontalScroller = decision.needsHorizontalScroller
+            scrollView.tile()
+        }
+        if !decision.needsHorizontalScroller, scrollView.contentView.bounds.origin.x > 0.5 {
+            let origin = NSPoint(x: 0, y: scrollView.contentView.bounds.origin.y)
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    private func measuredColumnExtent() -> (contentMaxX: CGFloat, leadingInset: CGFloat)? {
+        var contentMaxX: CGFloat = 0
+        var leadingInset = CGFloat.greatestFiniteMagnitude
+        var hasVisibleColumn = false
+        for index in 0..<tableView.tableColumns.count where !tableView.tableColumns[index].isHidden {
+            let rect = tableView.rect(ofColumn: index)
+            guard !rect.isNull, rect.width > 0 else { continue }
+            hasVisibleColumn = true
+            contentMaxX = max(contentMaxX, rect.maxX)
+            leadingInset = min(leadingInset, rect.minX)
+        }
+        guard hasVisibleColumn else { return nil }
+        return (contentMaxX, max(0, min(leadingInset, 32)))
+    }
+
+    private func baseWidth(for column: NSTableColumn) -> CGFloat {
+        max(gridColumnBaseWidths[column.identifier] ?? column.width, column.minWidth)
+    }
+
+    private func recordBaseWidth(for column: NSTableColumn) {
+        gridColumnBaseWidths[column.identifier] = max(column.width, column.minWidth)
     }
 
     func scheduleVisibleRowPrefetch() {
@@ -2590,6 +3983,9 @@ extension MainWindowController {
             selectedAddressLabel.stringValue = ""
             selectedValueTextView.string = ""
             detailTextView.string = ""
+            gridSelection.clear()
+            currentInspectorContentKind = .empty
+            updateInspectorCopyButtons()
         }
     }
 
@@ -2598,8 +3994,15 @@ extension MainWindowController {
         if textCondition != nil {
             descriptions.append(textConditionDescription)
         }
-        descriptions.append(contentsOf: valueConditions.map(\.description))
+        descriptions.append(contentsOf: columnFilterDescriptions())
         return descriptions
+    }
+
+    func columnFilterDescriptions() -> [String] {
+        columnFilterState.descriptions(
+            columnNames: columnNames,
+            blankLabel: L.t("(Blank)", "(빈 값)")
+        )
     }
 
     func refreshFilterTokens() {
@@ -2623,12 +4026,15 @@ extension MainWindowController {
             visibleCount += 1
         }
 
-        for (index, condition) in valueConditions.enumerated() where visibleCount < 4 {
+        let columnFilters = columnFilterState.filters
+        let columnDescriptions = columnFilterDescriptions()
+        for index in columnFilters.indices where visibleCount < 4 {
+            let filter = columnFilters[index]
             addFilterToken(
-                condition.description,
+                columnDescriptions[safe: index] ?? L.t("Column filter", "컬럼 필터"),
                 editable: false,
                 onEdit: nil,
-                onRemove: { [weak self] in self?.removeValueFilterToken(at: index) }
+                onRemove: { [weak self] in self?.removeColumnFilterToken(column: filter.column) }
             )
             visibleCount += 1
         }
@@ -2673,23 +4079,168 @@ extension MainWindowController {
         rebuildFilter(message: L.t("Updating filter...", "필터 갱신 중..."))
     }
 
-    private func removeValueFilterToken(at index: Int) {
-        guard valueConditions.indices.contains(index) else { return }
-        valueConditions.remove(at: index)
+    private func removeColumnFilterToken(column: Int) {
+        guard columnFilterState.filter(for: column) != nil else { return }
+        clearColumnFilter(column: column)
+    }
+
+    func applyColumnFilter(_ filter: ColumnFilter) {
+        switch filter {
+        case .selectedValues(let column, let values, let includeBlanks):
+            columnFilterState.setValues(column: column, values: values, includeBlanks: includeBlanks)
+        case .dateRange(let column, let start, let end):
+            columnFilterState.setDateRange(column: column, start: start, end: end)
+        case .numericRange(let column, let lower, let upper, let includesUpperBound):
+            columnFilterState.setNumericRange(column: column, lower: lower, upper: upper, includesUpperBound: includesUpperBound)
+        }
+        setFilterBarVisible(true)
+        updateSortHeaders()
+        rebuildFilter(message: L.t("Applying column filter...", "컬럼 필터 적용 중..."))
+    }
+
+    func clearColumnFilter(column: Int) {
+        columnFilterState.remove(column: column)
+        updateSortHeaders()
         rebuildFilter(message: L.t("Updating filter...", "필터 갱신 중..."))
     }
 
+    func showColumnFilterPopover(column: Int, relativeTo frame: NSRect) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        guard let type = columnStatisticsReport?.columns[safe: column]?.inferredType,
+              type == .categorical || type == .date else {
+            statusLabel.stringValue = L.t("Column filters are available for categorical and date columns.", "컬럼 필터는 범주형 및 날짜 컬럼에서 사용할 수 있습니다.")
+            return
+        }
+
+        if type == .date {
+            presentColumnFilterPopover(column: column, type: type, values: [], relativeTo: frame)
+            return
+        }
+
+        let cancellation = startColumnFilterValuesLoad()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, doc] in
+            do {
+                let values = try doc.distinctValues(column: column, withinCurrentView: false, limit: nil, progress: { pct in
+                    DispatchQueue.main.async {
+                        guard let self, self.columnFilterValuesCancellation === cancellation else { return }
+                        self.updateProgress(pct)
+                    }
+                }, cancellation: cancellation)
+                DispatchQueue.main.async {
+                    self?.finishColumnFilterValuesLoad(
+                        cancellation: cancellation,
+                        doc: doc,
+                        column: column,
+                        type: type,
+                        values: values,
+                        relativeTo: frame
+                    )
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    self?.discardColumnFilterValuesLoad(cancellation: cancellation)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.failColumnFilterValuesLoad(cancellation: cancellation, error: error)
+                }
+            }
+        }
+    }
+
+    private var columnFilterValuesLoadingMessage: String {
+        L.t("Loading filter values...", "필터 값을 불러오는 중...")
+    }
+
+    private func startColumnFilterValuesLoad() -> CancellationFlag {
+        columnFilterValuesCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        columnFilterValuesCancellation = cancellation
+        setBusy(true, message: columnFilterValuesLoadingMessage)
+        setProgressVisible(true)
+        updateProgress(0)
+        return cancellation
+    }
+
+    private func finishColumnFilterValuesLoad(
+        cancellation: CancellationFlag,
+        doc: VirtualCsvDocument,
+        column: Int,
+        type: ColumnValueType,
+        values: [DistinctColumnValue],
+        relativeTo frame: NSRect
+    ) {
+        guard clearCurrentColumnFilterValuesLoad(cancellation: cancellation) else { return }
+        guard doc === csvDocument, !cancellation.isCancelled else { return }
+        presentColumnFilterPopover(column: column, type: type, values: values, relativeTo: frame)
+    }
+
+    private func discardColumnFilterValuesLoad(cancellation: CancellationFlag) {
+        _ = clearCurrentColumnFilterValuesLoad(cancellation: cancellation)
+    }
+
+    private func failColumnFilterValuesLoad(cancellation: CancellationFlag, error: Error) {
+        guard clearCurrentColumnFilterValuesLoad(cancellation: cancellation) else { return }
+        presentError(error)
+    }
+
+    private func clearCurrentColumnFilterValuesLoad(cancellation: CancellationFlag) -> Bool {
+        guard columnFilterValuesCancellation === cancellation else { return false }
+        columnFilterValuesCancellation = nil
+        setProgressVisible(false)
+        setBusy(false)
+        clearColumnFilterValuesLoadingStatus()
+        return true
+    }
+
+    private func clearColumnFilterValuesLoadingStatus() {
+        if statusLabel.stringValue == columnFilterValuesLoadingMessage {
+            statusLabel.stringValue = ""
+        }
+    }
+
+    private func presentColumnFilterPopover(
+        column: Int,
+        type: ColumnValueType,
+        values: [DistinctColumnValue],
+        relativeTo frame: NSRect
+    ) {
+        guard let headerView = tableView.headerView else { return }
+        columnFilterPopover?.close()
+        let controller = ColumnFilterPopoverController(
+            column: column,
+            columnName: columnNames[safe: column] ?? L.t("Column \(column + 1)", "\(column + 1)열"),
+            type: type,
+            values: values,
+            initialFilter: columnFilterState.filter(for: column)
+        )
+        controller.onApply = { [weak self] filter in
+            guard let self else { return }
+            if let filter {
+                applyColumnFilter(filter)
+            } else {
+                clearColumnFilter(column: column)
+            }
+        }
+        controller.onClose = { [weak self] in
+            self?.columnFilterPopover?.close()
+            self?.columnFilterPopover = nil
+        }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = controller
+        popover.show(relativeTo: frame, of: headerView, preferredEdge: .maxY)
+        columnFilterPopover = popover
+    }
+
     func reloadSelectedRowHighlight() {
-        let row = tableView.selectedRow
         guard tableView.numberOfColumns > 1 else { return }
-        var rows = IndexSet()
-        if let lastHighlightedRow, lastHighlightedRow >= 0 {
-            rows.insert(lastHighlightedRow)
-        }
-        if row >= 0 {
-            rows.insert(row)
-        }
-        lastHighlightedRow = row >= 0 ? row : nil
+        var rows = lastHighlightedRows
+        rows.formUnion(gridSelection.selectedRows)
+        if tableView.selectedRow >= 0 { rows.insert(tableView.selectedRow) }
+        lastHighlightedRows = gridSelection.selectedRows
         guard !rows.isEmpty else { return }
         tableView.reloadData(
             forRowIndexes: rows,
@@ -2698,10 +4249,10 @@ extension MainWindowController {
     }
 
     func selectedCellValue() -> String? {
-        guard let doc = csvDocument, tableView.selectedRow >= 0 else { return nil }
+        guard let doc = csvDocument, let primary = primarySelectedGridCell() else { return nil }
         do {
-            let row = try doc.getDisplayRow(tableView.selectedRow)
-            return currentDataColumn < row.count ? row[currentDataColumn] : ""
+            let row = try doc.getDisplayRow(primary.row)
+            return primary.column < row.count ? row[primary.column] : ""
         } catch {
             return nil
         }
@@ -2713,6 +4264,8 @@ extension MainWindowController {
         hiddenColumnIndexes.insert(currentDataColumn)
         column.isHidden = true
         persistColumnVisibility()
+        updateTableDocumentWidthForViewport()
+        scheduleFacetRefresh()
         statusLabel.stringValue = L.t("Column hidden.", "컬럼을 숨겼습니다.")
     }
 
@@ -2722,6 +4275,8 @@ extension MainWindowController {
             tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden = false
         }
         persistColumnVisibility()
+        updateTableDocumentWidthForViewport()
+        scheduleFacetRefresh()
         statusLabel.stringValue = L.t("All columns shown.", "모든 컬럼을 표시했습니다.")
     }
 
@@ -2770,7 +4325,8 @@ extension MainWindowController {
             sortKeys: sortKeys,
             hiddenColumnIndexes: Array(hiddenColumnIndexes),
             searchQuery: searchQuery,
-            currentColumn: currentDataColumn
+            currentColumn: currentDataColumn,
+            columnFilters: columnFilterState
         )
         do {
             let data = try JSONEncoder().encode(saved)
@@ -2792,7 +4348,7 @@ extension MainWindowController {
             return
         }
 
-        valueConditions.removeAll()
+        columnFilterState = saved.columnFilters
         textCondition = nil
         textConditionDescription = ""
         textFilterTerm = saved.filterText ?? ""
@@ -2807,12 +4363,9 @@ extension MainWindowController {
             findField.stringValue = Self.displayText(for: query)
         }
 
-        let predicate: (([String]) -> Bool)?
         do {
             if let filterText = saved.filterText {
-                predicate = try configureTextCondition(term: filterText, column: textFilterColumn, document: doc).predicate
-            } else {
-                predicate = nil
+                _ = try configureTextCondition(term: filterText, column: textFilterColumn, document: doc)
             }
         } catch {
             presentError(error)
@@ -2820,6 +4373,7 @@ extension MainWindowController {
         }
 
         let keys = sortKeys
+        let predicate = hasAnyFilter ? combinedPredicate() : nil
         runViewOperation(message: L.t("Restoring view...", "보기 복원 중...")) { flag, progress in
             doc.clearView()
             if let predicate {
@@ -2846,6 +4400,7 @@ extension MainWindowController {
             tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden = hiddenColumnIndexes.contains(index)
         }
         persistColumnVisibility()
+        updateTableDocumentWidthForViewport()
     }
 
     private static func displayText(for query: CsvSearchQuery) -> String {
@@ -2868,12 +4423,15 @@ extension MainWindowController {
         guard let doc = csvDocument, tableView.selectedRow >= 0 else {
             detailHeaderLabel.stringValue = L.t("Inspector", "인스펙터")
             detailTextView.string = ""
+            currentInspectorContentKind = .empty
+            updateInspectorCopyButtons()
             return
         }
         let row = tableView.selectedRow
         do {
             let fields = try doc.getDisplayRow(row)
             detailHeaderLabel.stringValue = L.t("Source Row \(doc.getSourceRowNumber(row).formatted())", "원본 \(doc.getSourceRowNumber(row).formatted())행")
+            currentInspectorContentKind = .row(displayRow: row, sourceRow: doc.getSourceRowNumber(row))
             let text = NSMutableAttributedString()
             for index in 0..<doc.columnCount {
                 let name = columnNames[safe: index] ?? L.t("Column \(index + 1)", "\(index + 1)열")
@@ -2888,8 +4446,11 @@ extension MainWindowController {
                 ]))
             }
             detailTextView.textStorage?.setAttributedString(text)
+            updateInspectorCopyButtons()
         } catch {
             detailTextView.string = ""
+            currentInspectorContentKind = .empty
+            updateInspectorCopyButtons()
         }
     }
 
@@ -2909,8 +4470,10 @@ extension MainWindowController {
                     guard !cancellation.isCancelled else { return }
                     guard priority >= (self?.acceptedColumnStatisticsPriority ?? 0) else { return }
                     self?.acceptedColumnStatisticsPriority = priority
-                    self?.columnStatisticsReport = report
+                    self?.baseColumnStatisticsReport = report
+                    self?.columnStatisticsReport = report.applyingOverrides(self?.columnTypeOverrides ?? [:])
                     self?.updateSortHeaders()
+                    self?.scheduleFacetRefresh()
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -2951,13 +4514,16 @@ extension MainWindowController {
     func renderColumnStatistics(column: Int) {
         guard let doc = csvDocument else { return }
         detailHeaderLabel.stringValue = L.t("Column Statistics", "컬럼 통계")
+        currentInspectorContentKind = .columnStatistics(column: column)
         guard let report = columnStatisticsReport else {
             detailTextView.string = L.t("Statistics are still being calculated.", "통계를 계산 중입니다.")
+            updateInspectorCopyButtons()
             refreshColumnStatistics(for: doc)
             return
         }
         guard let summary = report.columns[safe: column] else {
             detailTextView.string = ""
+            updateInspectorCopyButtons()
             return
         }
 
@@ -2990,6 +4556,7 @@ extension MainWindowController {
         }
 
         detailTextView.string = lines.joined(separator: "\n")
+        updateInspectorCopyButtons()
     }
 
     func clampedCurrentDataColumn() -> Int {
@@ -3197,10 +4764,11 @@ extension MainWindowController {
         textConditionDescription = ""
         textFilterTerm = ""
         textFilterColumn = -1
-        valueConditions.removeAll()
+        columnFilterState = ColumnFilterState()
         sortKeys.removeAll()
         currentDataColumn = 0
-        lastHighlightedRow = nil
+        lastHighlightedRows.removeAll()
+        gridSelection.clear()
         findField.stringValue = ""
         filterField.stringValue = ""
         selectedValueBar.isHidden = true
@@ -3218,12 +4786,23 @@ extension MainWindowController {
         operationCancellation?.cancel()
         findCancellation?.cancel()
         prefetchCancellation?.cancel()
+        columnFilterValuesCancellation?.cancel()
+        columnFilterValuesCancellation = nil
         columnStatisticsCancellation?.cancel()
         analysisCancellation?.cancel()
+        chartCancellation?.cancel()
+        chartCancellation = nil
+        dataQualityCancellation?.cancel()
+        dataQualityCancellation = nil
+        facetsCancellation?.cancel()
+        facetsCancellation = nil
+        facetRefreshWorkItem?.cancel()
         rowTimer?.invalidate()
         detailUpdateWorkItem?.cancel()
         indexing = false
-        busy = false
+        setBusy(false)
+        setProgressVisible(false)
+        clearColumnFilterValuesLoadingStatus()
     }
 
     func setBusy(_ value: Bool, message: String? = nil) {
@@ -3430,6 +5009,22 @@ extension MainWindowController {
         csvDocument?.indexingComplete == true
     }
 
+    var busyForTesting: Bool {
+        busy
+    }
+
+    var progressVisibleForTesting: Bool {
+        !progressLabel.isHidden && !progressIndicator.isHidden
+    }
+
+    var statusTextForTesting: String {
+        statusLabel.stringValue
+    }
+
+    var hasCurrentColumnFilterValuesLoadForTesting: Bool {
+        columnFilterValuesCancellation != nil
+    }
+
     var renderedRowCountForTesting: Int {
         tableView.numberOfRows
     }
@@ -3455,9 +5050,78 @@ extension MainWindowController {
     }
 
     func selectCellForTesting(row: Int, column: Int) {
-        currentDataColumn = column
-        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        updateSelectedValue()
+        selectGridCellForTesting(row: row, column: column)
+    }
+
+    func selectGridCellForTesting(row: Int, column: Int) {
+        selectGridCell(row: row, column: column)
+    }
+
+    func extendGridSelectionForTesting(toRow row: Int, column: Int) {
+        extendGridSelection(toRow: row, column: column)
+    }
+
+    func toggleGridCellSelectionForTesting(row: Int, column: Int) {
+        selectGridCell(row: row, column: column, toggling: true)
+    }
+
+    var selectedGridCellsForTesting: Set<GridCellCoordinate> {
+        gridSelection.selectedCells
+    }
+
+    func selectedGridCopyStringForTesting() -> String? {
+        selectedGridCopyString()
+    }
+
+    func applyColumnFilterForTesting(_ filter: ColumnFilter) {
+        applyColumnFilter(filter)
+    }
+
+    func startColumnFilterValuesLoadForTesting() -> CancellationFlag {
+        startColumnFilterValuesLoad()
+    }
+
+    func finishColumnFilterValuesLoadForTesting(
+        cancellation: CancellationFlag,
+        values: [DistinctColumnValue]
+    ) {
+        guard let doc = csvDocument else { return }
+        finishColumnFilterValuesLoad(
+            cancellation: cancellation,
+            doc: doc,
+            column: 0,
+            type: .categorical,
+            values: values,
+            relativeTo: .zero
+        )
+    }
+
+    func isCurrentColumnFilterValuesLoadForTesting(_ cancellation: CancellationFlag) -> Bool {
+        columnFilterValuesCancellation === cancellation
+    }
+
+    func rowCopyStringForTesting(row: Int) -> String? {
+        rowCopyString(row: row)
+    }
+
+    func columnCopyStringForTesting(column: Int, includeHeader: Bool) -> String? {
+        columnCopyString(column: column, includeHeader: includeHeader)
+    }
+
+    func setInspectorVisibleForTesting(_ visible: Bool) {
+        setInspectorVisible(visible, rememberWidth: false, animated: false)
+    }
+
+    func showInspectorForTesting() {
+        setInspectorVisible(true, animated: false)
+    }
+
+    func inspectorTextCopyStringForTesting() -> String {
+        inspectorTextCopyString()
+    }
+
+    func inspectorJsonCopyStringForTesting() -> String {
+        inspectorJsonCopyString() ?? ""
     }
 
     func toggleSelectedValueExpansionForTesting() {
@@ -3491,6 +5155,53 @@ extension MainWindowController {
         return header.typeText
     }
 
+    func headerFilterAvailableForTesting(column: Int) -> Bool {
+        guard let header = tableView
+            .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
+            .headerCell as? SortHeaderCell else { return false }
+        return header.filterAvailable
+    }
+
+    func headerFilterActiveForTesting(column: Int) -> Bool {
+        guard let header = tableView
+            .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
+            .headerCell as? SortHeaderCell else { return false }
+        return header.filterActive
+    }
+
+    func headerFilterFrameForTesting(column: Int) -> NSRect? {
+        guard let tableColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)")),
+              let tableColumnIndex = tableView.tableColumns.firstIndex(of: tableColumn),
+              let headerView = tableView.headerView,
+              let header = tableColumn.headerCell as? SortHeaderCell else {
+            return nil
+        }
+        return header.filterButtonFrame(withFrame: headerView.headerRect(ofColumn: tableColumnIndex), in: headerView)
+    }
+
+    var headerVisibleRectForTesting: NSRect {
+        tableView.headerView?.visibleRect ?? .zero
+    }
+
+    var tableVisibleRectForTesting: NSRect {
+        tableView.visibleRect
+    }
+
+    func scrollGridHorizontallyForTesting(to x: CGFloat) {
+        let maxX = max(0, tableView.frame.width - scrollView.contentSize.width)
+        let origin = NSPoint(x: min(max(0, x), maxX), y: scrollView.contentView.bounds.origin.y)
+        scrollView.contentView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    func scrollColumnToVisibleForTesting(column: Int) {
+        guard let tableColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)")),
+              let tableColumnIndex = tableView.tableColumns.firstIndex(of: tableColumn) else {
+            return
+        }
+        tableView.scrollColumnToVisible(tableColumnIndex)
+    }
+
     func headerDisplayTitleForTesting(column: Int) -> String? {
         tableView
             .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
@@ -3505,13 +5216,134 @@ extension MainWindowController {
     func layoutWindowForTesting() {
         window?.layoutIfNeeded()
         window?.contentView?.layoutSubtreeIfNeeded()
+        updateTableDocumentWidthForViewport()
         tableView.layoutSubtreeIfNeeded()
+    }
+
+    var facetsPanelVisibleForTesting: Bool {
+        isFacetsPanelVisible
+    }
+
+    var inspectorVisibleForTesting: Bool {
+        isInspectorVisible
+    }
+
+    var chartWindowsForTesting: [ChartWindowController] {
+        chartWindows
+    }
+
+    func openChartWindowForTesting(_ request: ChartRequest) {
+        openChartWindow(request: request)
+    }
+
+    func defaultChartRequestForTesting(kind: ChartKind) -> ChartRequest? {
+        defaultChartRequest(for: kind)
+    }
+
+    var dataQualityReportForTesting: DataQualityReport? {
+        currentDataQualityReport
+    }
+
+    var hasPendingDataQualityScanForTesting: Bool {
+        dataQualityCancellation != nil
+    }
+
+    func setFacetsPanelVisibleForTesting(_ visible: Bool) {
+        setFacetsPanelVisible(visible, persist: false)
+    }
+
+    var facetSectionsForTesting: [FacetPanelSection] {
+        facetsPanel.renderedSections
+    }
+
+    var facetsPanelWidthForTesting: CGFloat {
+        facetsWidthConstraint?.constant ?? 0
+    }
+
+    var hasPendingFacetLoadForTesting: Bool {
+        facetsCancellation != nil
+    }
+
+    func handleFacetSelectionForTesting(column: Int, kind: FacetPanelEntry.Kind) {
+        handleFacetSelection(column: column, kind: kind)
+    }
+
+    var columnFilterStateForTesting: ColumnFilterState {
+        columnFilterState
+    }
+
+    var tableDocumentWidthForTesting: CGFloat {
+        tableView.frame.width
+    }
+
+    var gridLayoutPassCountForTesting: Int {
+        gridLayoutPassCount
+    }
+
+    var tableViewportWidthForTesting: CGFloat {
+        scrollView.contentSize.width
+    }
+
+    var horizontalScrollerConfiguredForTesting: Bool {
+        scrollView.hasHorizontalScroller && !scrollView.autohidesScrollers && scrollView.scrollerStyle == .legacy
+    }
+
+    func tableColumnWidthForTesting(column: Int) -> CGFloat {
+        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?.width ?? 0
+    }
+
+    func setTableColumnWidthForTesting(column: Int, width: CGFloat) {
+        guard let tableColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)")) else {
+            return
+        }
+        let oldWidth = tableColumn.width
+        tableColumn.width = width
+        NotificationCenter.default.post(
+            name: NSTableView.columnDidResizeNotification,
+            object: tableView,
+            userInfo: ["NSTableColumn": tableColumn, "NSOldWidth": oldWidth]
+        )
     }
 
     func headerTooltipForTesting(column: Int) -> String? {
         tableView
             .tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)"))?
             .headerToolTip
+    }
+
+    func tableColumnRectForTesting(column: Int) -> NSRect {
+        guard let tableColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)")),
+              let index = tableView.tableColumns.firstIndex(of: tableColumn) else {
+            return .null
+        }
+        return tableView.rect(ofColumn: index)
+    }
+
+    var tableIntercellSpacingForTesting: NSSize {
+        tableView.intercellSpacing
+    }
+
+    func setColumnTypeOverrideForTesting(column: Int, type: ColumnValueType?) {
+        setColumnTypeOverride(column: column, type: type)
+    }
+
+    func requestColumnTypeChangeForTesting(column: Int, to target: ColumnValueType) {
+        requestColumnTypeChange(column: column, to: target)
+    }
+
+    var columnTypeOverridesForTesting: [Int: String] {
+        columnTypeOverrides.mapValues(\.rawValue)
+    }
+
+    func headerFilterHitDataColumnForTesting(column: Int) -> Int? {
+        guard let headerView = tableView.headerView as? CsvTableHeaderView,
+              let tableColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(column)")),
+              let index = tableView.tableColumns.firstIndex(of: tableColumn),
+              let cell = tableColumn.headerCell as? SortHeaderCell,
+              let frame = cell.filterHitFrame(headerFrame: headerView.headerRect(ofColumn: index), in: headerView) else {
+            return nil
+        }
+        return headerView.filterHit(at: NSPoint(x: frame.midX, y: frame.midY))?.dataColumn
     }
 }
 #endif

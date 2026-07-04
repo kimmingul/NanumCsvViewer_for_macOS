@@ -213,7 +213,7 @@ enum CsvStatistics {
         return clampedProbability(regularizedIncompleteBeta(a: degreesOfFreedom / 2, b: 0.5, x: x))
     }
 
-    private static func studentTCriticalTwoSided(alpha: Double, degreesOfFreedom: Double) -> Double {
+    static func studentTCriticalTwoSided(alpha: Double, degreesOfFreedom: Double) -> Double {
         guard degreesOfFreedom > 0 else { return 0 }
         var low = 0.0
         var high = 1.0
@@ -236,7 +236,7 @@ enum CsvStatistics {
         return clampedProbability(regularizedGammaQ(a: Double(degreesOfFreedom) / 2, x: max(0, statistic) / 2))
     }
 
-    private static func regularizedIncompleteBeta(a: Double, b: Double, x: Double) -> Double {
+    static func regularizedIncompleteBeta(a: Double, b: Double, x: Double) -> Double {
         guard a > 0, b > 0 else { return Double.nan }
         if x <= 0 { return 0 }
         if x >= 1 { return 1 }
@@ -344,7 +344,7 @@ enum CsvStatistics {
         return clampedProbability(exp(-x + a * log(x) - lgamma(a)) * h)
     }
 
-    private static func clampedProbability(_ value: Double) -> Double {
+    static func clampedProbability(_ value: Double) -> Double {
         guard value.isFinite else { return value.isNaN ? 1 : (value.sign == .minus ? 0 : 1) }
         return max(0, min(1, value))
     }

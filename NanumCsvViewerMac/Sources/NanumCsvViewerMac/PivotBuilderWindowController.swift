@@ -1,13 +1,23 @@
 import AppKit
+import UniformTypeIdentifiers
 @preconcurrency import CsvCore
+
+private let pivotPreviewTableHeaderHeight: CGFloat = 26
 
 private struct PivotPreviewSection: Equatable {
     let title: String
     let measure: PivotMeasure
     let pivot: PivotTableResult
-    let headers: [String]
-    let rows: [[String]]
+    var tableModel: PivotResultTableModel
     let chartModel: PivotChartModel
+
+    var headers: [String] {
+        tableModel.headers
+    }
+
+    var rows: [[String]] {
+        tableModel.visibleRows
+    }
 }
 
 private final class PivotPreviewDocumentStackView: NSStackView {
@@ -17,13 +27,27 @@ private final class PivotPreviewDocumentStackView: NSStackView {
 }
 
 @MainActor
+private final class PivotPreviewContainerView: NSView {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
+@MainActor
 private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let titleLabel = NSTextField(labelWithString: "")
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
+    private let onSort: (Int) -> Void
     private var section: PivotPreviewSection?
+    private var currentHeaders: [String] = []
+    private var isAdjustingColumnWidths = false
 
-    override init(frame frameRect: NSRect) {
+    init(onSort: @escaping (Int) -> Void = { _ in }, frame frameRect: NSRect = .zero) {
+        self.onSort = onSort
         super.init(frame: frameRect)
         configure()
     }
@@ -37,7 +61,24 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
         self.section = section
         titleLabel.stringValue = section.title
         rebuildColumns(headers: section.headers)
+        updateSortHeaders()
         tableView.reloadData()
+        adjustColumnsToFillVisibleWidth()
+    }
+
+    func update(section: PivotPreviewSection) -> Bool {
+        guard currentHeaders == section.headers else { return false }
+        self.section = section
+        titleLabel.stringValue = section.title
+        updateSortHeaders()
+        tableView.reloadData()
+        adjustColumnsToFillVisibleWidth()
+        return true
+    }
+
+    func refreshColumnLayout() {
+        layoutSubtreeIfNeeded()
+        adjustColumnsToFillVisibleWidth()
     }
 
     private func configure() {
@@ -53,6 +94,12 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
+        tableView.headerView = CsvTableHeaderView(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: 0,
+            height: pivotPreviewTableHeaderHeight
+        ))
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -73,6 +120,16 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
         ])
     }
 
+    override func layout() {
+        super.layout()
+        adjustColumnsToFillVisibleWidth()
+    }
+
+    override func viewWillDraw() {
+        super.viewWillDraw()
+        adjustColumnsToFillVisibleWidth()
+    }
+
     private func rebuildColumns(headers: [String]) {
         for column in tableView.tableColumns {
             tableView.removeTableColumn(column)
@@ -80,10 +137,95 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
         for (index, header) in headers.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("preview_\(index)"))
             column.title = header
+            let headerCell = SortHeaderCell(textCell: header)
+            headerCell.columnIdentifierRawValue = column.identifier.rawValue
+            column.headerCell = headerCell
             column.width = index == 0 ? 160 : 110
             column.minWidth = index == 0 ? 120 : 80
             tableView.addTableColumn(column)
         }
+        currentHeaders = headers
+    }
+
+    private func adjustColumnsToFillVisibleWidth() {
+        guard !isAdjustingColumnWidths,
+              let lastColumn = tableView.tableColumns.last else { return }
+
+        isAdjustingColumnWidths = true
+        defer { isAdjustingColumnWidths = false }
+
+        for _ in 0..<8 {
+            let visibleWidth = visibleWidthForTesting
+            guard visibleWidth > 0 else { return }
+            let columnsMaxX = headerColumnsMaxX() ?? columnsTotalWidthForTesting
+            let delta = visibleWidth - columnsMaxX
+            guard abs(delta) > 0.5 else { break }
+            let targetWidth = max(lastColumn.minWidth, lastColumn.width + delta)
+            guard abs(lastColumn.width - targetWidth) > 0.5 else { break }
+            lastColumn.width = targetWidth
+            tableView.tile()
+            tableView.layoutSubtreeIfNeeded()
+            tableView.headerView?.needsDisplay = true
+        }
+    }
+
+    private func headerColumnsMaxX() -> CGFloat? {
+        guard let headerView = tableView.headerView else { return nil }
+        var maxX = headerView.bounds.minX
+        for columnIndex in 0..<tableView.numberOfColumns {
+            let column = tableView.tableColumns[columnIndex]
+            guard !column.isHidden else { continue }
+            let rect = headerView.headerRect(ofColumn: columnIndex)
+            guard !rect.isNull, rect.width > 0 else { continue }
+            maxX = max(maxX, rect.maxX)
+        }
+        return maxX
+    }
+
+    private func updateSortHeaders() {
+        guard let section else { return }
+        for (index, column) in tableView.tableColumns.enumerated() {
+            let header = section.headers[safe: index] ?? column.title
+            column.title = header
+            if let cell = column.headerCell as? SortHeaderCell {
+                cell.stringValue = header
+                cell.titleText = header
+                cell.typeText = nil
+                cell.columnIdentifierRawValue = column.identifier.rawValue
+                if let sort = section.tableModel.state.sort, sort.column == index {
+                    cell.ascending = sort.ascending
+                    cell.sortPriority = nil
+                } else {
+                    cell.ascending = nil
+                    cell.sortPriority = nil
+                }
+            }
+        }
+        tableView.headerView?.needsDisplay = true
+    }
+
+    var columnWidthsForTesting: [CGFloat] {
+        tableView.tableColumns.map(\.width)
+    }
+
+    var columnsTotalWidthForTesting: CGFloat {
+        tableView.tableColumns.reduce(CGFloat(0)) { $0 + $1.width }
+    }
+
+    var headerColumnsMaxXForTesting: CGFloat {
+        headerColumnsMaxX() ?? columnsTotalWidthForTesting
+    }
+
+    var visibleWidthForTesting: CGFloat {
+        scrollView.contentView.bounds.width
+    }
+
+    func setColumnWidthForTesting(column index: Int, width: CGFloat) {
+        guard let column = tableView.tableColumns[safe: index] else { return }
+        column.width = width
+        tableView.tile()
+        adjustColumnsToFillVisibleWidth()
+        tableView.headerView?.needsDisplay = true
     }
 
     nonisolated func numberOfRows(in tableView: NSTableView) -> Int {
@@ -97,6 +239,13 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
             let columnIndex = tableView.tableColumns.firstIndex { $0 === tableColumn } ?? 0
             let text = section?.rows[safe: row]?[safe: columnIndex] ?? ""
             return makeCell(text: text)
+        }
+    }
+
+    nonisolated func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+        MainActor.assumeIsolated {
+            guard let columnIndex = tableView.tableColumns.firstIndex(where: { $0 === tableColumn }) else { return }
+            onSort(columnIndex)
         }
     }
 
@@ -139,10 +288,9 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private static let previewTableRowHeight: CGFloat = 24
-    private static let previewTableHeaderHeight: CGFloat = 26
+    private static let previewTableHeaderHeight: CGFloat = pivotPreviewTableHeaderHeight
     private static let previewTableTitleHeight: CGFloat = 18
     private static let previewTableTitleSpacing: CGFloat = 6
-    private static let previewTableMinimumScrollHeight: CGFloat = 96
     private static let previewTableMaximumVisibleRows = 14
     private static let previewChartSectionHeight: CGFloat = 332
     private static let previewChartHeight: CGFloat = 300
@@ -158,6 +306,7 @@ final class PivotBuilderWindowController: NSWindowController {
     private var typeAnalysisCancellation: CancellationFlag?
     private var previewGeneration = 0
     private var previewIsComputing = false
+    private var resultFilterQuery = ""
     private var controlSectionTitles: [String] = []
     private var filteredFieldIndexes: [Int] = []
     private var nextMeasureID = 1
@@ -176,7 +325,10 @@ final class PivotBuilderWindowController: NSWindowController {
     private let chartResultsStack = PivotPreviewDocumentStackView()
     private let aggregationPopup = NSPopUpButton()
     private let previewTabs = NSSegmentedControl(labels: [], trackingMode: .selectOne, target: nil, action: nil)
-    private let previewContainer = NSView()
+    private let resultFilterField = NSSearchField()
+    private let resultCopyButton = NSButton()
+    private let resultExportButton = NSButton()
+    private let previewContainer = PivotPreviewContainerView()
     private let emptyPreviewLabel = NSTextField(labelWithString: "")
     private let resultSummaryLabel = NSTextField(labelWithString: "")
     private let dateGroupControlsStack = NSStackView()
@@ -811,19 +963,55 @@ final class PivotBuilderWindowController: NSWindowController {
         resultSummaryLabel.lineBreakMode = .byTruncatingTail
         resultSummaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        resultFilterField.placeholderString = L.t("Filter result", "결과 필터")
+        resultFilterField.sendsSearchStringImmediately = true
+        resultFilterField.target = self
+        resultFilterField.action = #selector(resultFilterChanged(_:))
+        resultFilterField.controlSize = .small
+        resultFilterField.widthAnchor.constraint(equalToConstant: 160).isActive = true
+
+        configureResultActionButton(
+            resultCopyButton,
+            title: L.t("Copy", "복사"),
+            symbol: "doc.on.doc",
+            action: #selector(copyPivotResult(_:))
+        )
+        configureResultActionButton(
+            resultExportButton,
+            title: L.t("Export...", "내보내기..."),
+            symbol: "square.and.arrow.up",
+            action: #selector(exportPivotResult(_:))
+        )
+
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         stack.addArrangedSubview(title)
         stack.addArrangedSubview(resultSummaryLabel)
         stack.addArrangedSubview(spacer)
+        stack.addArrangedSubview(resultFilterField)
+        stack.addArrangedSubview(resultCopyButton)
+        stack.addArrangedSubview(resultExportButton)
         stack.addArrangedSubview(previewTabs)
         return stack
+    }
+
+    private func configureResultActionButton(_ button: NSButton, title: String, symbol: String, action: Selector) {
+        button.title = title
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.target = self
+        button.action = action
     }
 
     private func configurePreviewContainer() {
         previewContainer.setContentHuggingPriority(.defaultLow, for: .vertical)
         previewContainer.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
+        previewContainer.onLayout = { [weak self] in
+            self?.sizePreviewDocumentViews()
+        }
 
         tablePreview.delegate = self
         tablePreview.dataSource = self
@@ -872,6 +1060,38 @@ final class PivotBuilderWindowController: NSWindowController {
 
     @objc private func previewTabChanged(_ sender: NSSegmentedControl) {
         updatePreviewVisibility()
+    }
+
+    @objc private func resultFilterChanged(_ sender: NSSearchField) {
+        setResultFilter(sender.stringValue)
+    }
+
+    @objc private func copyPivotResult(_ sender: Any?) {
+        let text = pivotResultExportString(format: .tsv)
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc private func exportPivotResult(_ sender: Any?) {
+        guard !previewSections.isEmpty, let window else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [
+            .commaSeparatedText,
+            UTType(filenameExtension: "tsv") ?? .tabSeparatedText,
+            .plainText
+        ]
+        panel.nameFieldStringValue = "pivot-result.csv"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            let format: PivotResultExportFormat = url.pathExtension.lowercased() == "tsv" ? .tsv : .csv
+            do {
+                guard let data = self?.pivotResultExportString(format: format).data(using: .utf8) else { return }
+                try data.write(to: url)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
     }
 
     @objc private func aggregationChanged(_ sender: NSPopUpButton) {
@@ -1026,6 +1246,55 @@ final class PivotBuilderWindowController: NSWindowController {
         refreshZones()
         refreshFilterControls()
         refreshPreview()
+    }
+
+    private func setResultFilter(_ query: String) {
+        resultFilterQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if resultFilterField.stringValue != query {
+            resultFilterField.stringValue = query
+        }
+        for index in previewSections.indices {
+            previewSections[index].tableModel.setFilter(column: nil, query: resultFilterQuery)
+        }
+        previewHeaders = previewSections.first?.headers ?? []
+        previewRows = previewSections.first?.rows ?? []
+        if !updatePreviewTableSectionsInPlace() {
+            rebuildPreviewSections()
+        }
+        updateResultSummary()
+        updatePreviewVisibility()
+    }
+
+    private func sortPreviewSection(section index: Int, column: Int, ascending: Bool? = nil) {
+        guard previewSections.indices.contains(index) else { return }
+        if let ascending {
+            previewSections[index].tableModel.sort(column: column, ascending: ascending)
+        } else {
+            previewSections[index].tableModel.toggleSort(column: column)
+        }
+        previewHeaders = previewSections.first?.headers ?? []
+        previewRows = previewSections.first?.rows ?? []
+        if !updatePreviewTableSectionsInPlace() {
+            rebuildPreviewSections()
+        }
+        updateResultSummary()
+        updatePreviewVisibility()
+    }
+
+    private func pivotResultExportString(format: PivotResultExportFormat) -> String {
+        guard !previewSections.isEmpty else { return "" }
+        if previewSections.count == 1 {
+            return previewSections[0].tableModel.exportString(format: format)
+        }
+        return previewSections.map { section in
+            switch format {
+            case .tsv:
+                return section.title + "\n" + section.tableModel.exportString(format: .tsv)
+            case .csv:
+                let title = PivotResultTableModel(headers: [section.title], rows: []).exportString(format: .csv)
+                return title + section.tableModel.exportString(format: .csv)
+            }
+        }.joined(separator: "\n")
     }
 
     private func setDateGrouping(column: Int, period: DateBinPeriod) {
@@ -1418,18 +1687,16 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func applyPreview(_ results: [(measure: PivotMeasure, result: PivotTableResult)]) {
         previewSections = results.map { makePreviewSection(result: $0.result, measure: $0.measure) }
+        for index in previewSections.indices {
+            previewSections[index].tableModel.setFilter(column: nil, query: resultFilterQuery)
+        }
         pivot = previewSections.first?.pivot
         previewHeaders = previewSections.first?.headers ?? []
         previewRows = previewSections.first?.rows ?? []
 
         rebuildPreviewSections()
         chartView.update(model: previewSections.first?.chartModel)
-        let rowCount = previewSections.reduce(0) { $0 + $1.rows.count }
-        let sectionCount = previewSections.count
-        resultSummaryLabel.stringValue = L.t(
-            "\(sectionCount.formatted()) measures, \(rowCount.formatted()) rows",
-            "\(sectionCount.formatted())개 측정값, \(rowCount.formatted())행"
-        )
+        updateResultSummary()
         updatePreviewVisibility()
     }
 
@@ -1480,8 +1747,7 @@ final class PivotBuilderWindowController: NSWindowController {
             title: valueHeader,
             measure: measure,
             pivot: result,
-            headers: headers,
-            rows: rows,
+            tableModel: PivotResultTableModel(headers: headers, rows: rows),
             chartModel: PivotChartModel.make(from: result)
         )
     }
@@ -1523,7 +1789,7 @@ final class PivotBuilderWindowController: NSWindowController {
         tablePreview.reloadData()
 
         for (index, section) in previewSections.enumerated() {
-            let sectionView = makeTableSectionView(section)
+            let sectionView = makeTableSectionView(section, sectionIndex: index)
             tableResultsStack.addArrangedSubview(sectionView)
             NSLayoutConstraint.activate([
                 sectionView.widthAnchor.constraint(equalTo: tableResultsStack.widthAnchor),
@@ -1539,16 +1805,51 @@ final class PivotBuilderWindowController: NSWindowController {
         sizePreviewDocumentViews()
     }
 
+    private func updatePreviewTableSectionsInPlace() -> Bool {
+        guard tableResultsStack.arrangedSubviews.count == previewSections.count else { return false }
+        var tableSectionViews: [PivotPreviewTableSectionView] = []
+        tableSectionViews.reserveCapacity(previewSections.count)
+        for view in tableResultsStack.arrangedSubviews {
+            guard let sectionView = view as? PivotPreviewTableSectionView else { return false }
+            tableSectionViews.append(sectionView)
+        }
+
+        for (index, sectionView) in tableSectionViews.enumerated() {
+            guard sectionView.update(section: previewSections[index]) else { return false }
+            updateHeightConstraint(for: sectionView, height: tableSectionHeight(for: previewSections[index]))
+        }
+        sizePreviewDocumentViews()
+        return true
+    }
+
+    private func updateHeightConstraint(for view: NSView, height: CGFloat) {
+        if let constraint = view.constraints.first(where: {
+            $0.firstItem === view
+                && $0.firstAttribute == .height
+                && $0.relation == .equal
+                && $0.secondItem == nil
+        }) {
+            constraint.constant = height
+        } else {
+            view.heightAnchor.constraint(equalToConstant: height).isActive = true
+        }
+    }
+
     private func updatePreviewVisibility() {
         let hasPreview = !previewSections.isEmpty
         emptyPreviewLabel.isHidden = hasPreview
         tableScroll.isHidden = !hasPreview || previewTabs.selectedSegment != 0
         chartScroll.isHidden = !hasPreview || previewTabs.selectedSegment != 1
+        resultFilterField.isEnabled = hasPreview
+        resultCopyButton.isEnabled = hasPreview
+        resultExportButton.isEnabled = hasPreview
         sizePreviewDocumentViews()
     }
 
-    private func makeTableSectionView(_ section: PivotPreviewSection) -> NSView {
-        let sectionView = PivotPreviewTableSectionView()
+    private func makeTableSectionView(_ section: PivotPreviewSection, sectionIndex: Int) -> NSView {
+        let sectionView = PivotPreviewTableSectionView { [weak self] column in
+            self?.sortPreviewSection(section: sectionIndex, column: column)
+        }
         sectionView.translatesAutoresizingMaskIntoConstraints = false
         sectionView.configure(section: section)
         return sectionView
@@ -1586,6 +1887,14 @@ final class PivotBuilderWindowController: NSWindowController {
             origin: .zero,
             size: NSSize(width: width, height: max(chartResultsStack.fittingSize.height, 1))
         )
+        refreshPreviewTableColumnLayouts()
+    }
+
+    private func refreshPreviewTableColumnLayouts() {
+        tableResultsStack.layoutSubtreeIfNeeded()
+        for view in tableResultsStack.arrangedSubviews {
+            (view as? PivotPreviewTableSectionView)?.refreshColumnLayout()
+        }
     }
 
     private func previewTableDocumentHeight() -> CGFloat {
@@ -1599,11 +1908,17 @@ final class PivotBuilderWindowController: NSWindowController {
 
     private func tableSectionHeight(for section: PivotPreviewSection) -> CGFloat {
         let visibleRows = max(1, min(section.rows.count, Self.previewTableMaximumVisibleRows))
-        let scrollHeight = max(
-            Self.previewTableMinimumScrollHeight,
-            Self.previewTableHeaderHeight + CGFloat(visibleRows) * Self.previewTableRowHeight
-        )
+        let scrollHeight = Self.previewTableHeaderHeight + CGFloat(visibleRows) * Self.previewTableRowHeight
         return Self.previewTableTitleHeight + Self.previewTableTitleSpacing + scrollHeight
+    }
+
+    private func updateResultSummary() {
+        let rowCount = previewSections.reduce(0) { $0 + $1.rows.count }
+        let sectionCount = previewSections.count
+        resultSummaryLabel.stringValue = L.t(
+            "\(sectionCount.formatted()) measures, \(rowCount.formatted()) rows",
+            "\(sectionCount.formatted())개 측정값, \(rowCount.formatted())행"
+        )
     }
 
     private static func formatNumber(_ value: Double) -> String {
@@ -1634,19 +1949,15 @@ extension PivotBuilderWindowController: NSTableViewDataSource, NSTableViewDelega
         }
     }
 
-    nonisolated func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        MainActor.assumeIsolated {
-            guard tableView === fieldTable,
-                  let field = fieldForVisibleRow(row) else { return nil }
-            return PivotFieldDragPayload.pasteboardItem(fieldIndex: field.index)
-        }
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard tableView === fieldTable,
+              let field = fieldForVisibleRow(row) else { return nil }
+        return PivotFieldDragPayload.pasteboardItem(fieldIndex: field.index)
     }
 
-    nonisolated func tableViewSelectionDidChange(_ notification: Notification) {
-        MainActor.assumeIsolated {
-            guard notification.object as? NSTableView === fieldTable else { return }
-            updateFieldActionButtons()
-        }
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard notification.object as? NSTableView === fieldTable else { return }
+        updateFieldActionButtons()
     }
 
     private func makeFieldCell(tableView: NSTableView, field: PivotField) -> PivotFieldCellView {
@@ -1726,6 +2037,26 @@ extension PivotBuilderWindowController {
 
     func previewRowForTesting(section: Int, row: Int) -> [String] {
         previewSections[safe: section]?.rows[safe: row] ?? []
+    }
+
+    func previewVisibleRowCountForTesting(section: Int) -> Int {
+        previewSections[safe: section]?.rows.count ?? 0
+    }
+
+    func sortPreviewSectionForTesting(section: Int, column: Int, ascending: Bool) {
+        sortPreviewSection(section: section, column: column, ascending: ascending)
+    }
+
+    func setResultFilterForTesting(_ query: String) {
+        setResultFilter(query)
+    }
+
+    func copyPivotResultForTesting() -> String {
+        pivotResultExportString(format: .tsv)
+    }
+
+    func pivotResultExportForTesting(format: PivotResultExportFormat) -> String {
+        pivotResultExportString(format: format)
     }
 
     var previewSectionCountForTesting: Int {
@@ -1823,6 +2154,50 @@ extension PivotBuilderWindowController {
     var previewTableFirstSectionCenterDeltaForTesting: CGFloat {
         guard let first = tableResultsStack.arrangedSubviews.first else { return .greatestFiniteMagnitude }
         return abs(first.frame.midX - tableResultsStack.bounds.midX)
+    }
+
+    func previewTableSectionIdentityForTesting(section index: Int) -> ObjectIdentifier? {
+        guard let view = tableResultsStack.arrangedSubviews[safe: index] else { return nil }
+        return ObjectIdentifier(view)
+    }
+
+    func previewTableColumnWidthsForTesting(section index: Int) -> [CGFloat] {
+        guard let view = tableResultsStack.arrangedSubviews[safe: index] as? PivotPreviewTableSectionView else {
+            return []
+        }
+        view.refreshColumnLayout()
+        return view.columnWidthsForTesting
+    }
+
+    func setPreviewTableColumnWidthForTesting(section sectionIndex: Int, column columnIndex: Int, width: CGFloat) {
+        guard let view = tableResultsStack.arrangedSubviews[safe: sectionIndex] as? PivotPreviewTableSectionView else {
+            return
+        }
+        view.setColumnWidthForTesting(column: columnIndex, width: width)
+    }
+
+    func previewTableColumnsTotalWidthForTesting(section index: Int) -> CGFloat {
+        guard let view = tableResultsStack.arrangedSubviews[safe: index] as? PivotPreviewTableSectionView else {
+            return 0
+        }
+        view.refreshColumnLayout()
+        return view.columnsTotalWidthForTesting
+    }
+
+    func previewTableHeaderColumnsMaxXForTesting(section index: Int) -> CGFloat {
+        guard let view = tableResultsStack.arrangedSubviews[safe: index] as? PivotPreviewTableSectionView else {
+            return 0
+        }
+        view.refreshColumnLayout()
+        return view.headerColumnsMaxXForTesting
+    }
+
+    func previewTableSectionVisibleWidthForTesting(section index: Int) -> CGFloat {
+        guard let view = tableResultsStack.arrangedSubviews[safe: index] as? PivotPreviewTableSectionView else {
+            return 0
+        }
+        view.refreshColumnLayout()
+        return view.visibleWidthForTesting
     }
 
     var previewChartFirstSectionWidthForTesting: CGFloat {
