@@ -23,8 +23,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        let controller = makeWindowController()
-        controller.showWindow(nil)
+        // application(_:openFile:) runs BEFORE this for command-line and
+        // Finder-open launches and may already have created a document
+        // window; only add the empty window when nothing exists yet.
+        if windowControllers.isEmpty {
+            let controller = makeWindowController()
+            controller.showWindow(nil)
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 
