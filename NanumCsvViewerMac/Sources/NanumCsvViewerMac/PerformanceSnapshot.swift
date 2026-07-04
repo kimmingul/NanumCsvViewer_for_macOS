@@ -8,6 +8,7 @@ struct PerformanceSnapshot: Equatable {
     let storageMode: String
     let indexingElapsed: TimeInterval?
     let indexingComplete: Bool
+    var memoryFootprintBytes: Int64? = nil
 
     func formattedLines() -> [String] {
         var lines = [
@@ -16,6 +17,10 @@ struct PerformanceSnapshot: Equatable {
             "Columns: \(columnCount.formatted())",
             "Storage: \(storageMode)"
         ]
+
+        if let memoryFootprintBytes {
+            lines.append("Memory: \(Self.formatBytes(memoryFootprintBytes))")
+        }
 
         if indexingComplete, let indexingElapsed {
             lines.append("Indexing: complete in \(Self.formatSeconds(indexingElapsed))")

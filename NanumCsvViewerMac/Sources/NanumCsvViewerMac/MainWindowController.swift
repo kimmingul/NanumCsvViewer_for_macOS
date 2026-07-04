@@ -52,6 +52,11 @@ final class MainWindowController: NSWindowController {
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
     private static let facetsVisibleDefaultsKey = "NanumCsvViewerMac.FacetsPanelVisible"
     private static let inspectorVisibleDefaultsKey = "NanumCsvViewerMac.InspectorVisible"
+    private static let savedViewStoreDefaultsKey = "NanumCsvViewerMac.SavedViewStore"
+    private static let autoRestoreViewDefaultsKey = "NanumCsvViewerMac.AutoRestoreView"
+    private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
+    private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
+    private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
     private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
@@ -148,6 +153,7 @@ final class MainWindowController: NSWindowController {
     private var currentInspectorContentKind: InspectorContentKind = .empty
     private var gridColumnBaseWidths: [NSUserInterfaceItemIdentifier: CGFloat] = [:]
     private var applyingGridLayout = false
+    private var isApplyingColumnOrder = false
     private var gridLayoutPassCount = 0
     private var earlyColumnStatisticsRequested = false
     private var acceptedColumnStatisticsPriority = 0
@@ -632,7 +638,8 @@ final class MainWindowController: NSWindowController {
         tableView.dataSource = self
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
-        tableView.rowSizeStyle = .medium
+        tableView.rowSizeStyle = .custom
+        tableView.rowHeight = currentRowDensity.rowHeight
         tableView.allowsMultipleSelection = false
         tableView.allowsColumnResizing = true
         tableView.allowsColumnReordering = true
@@ -1097,6 +1104,12 @@ extension MainWindowController: NSMenuItemValidation {
                 return hasDocument && !hiddenColumnIndexes.isEmpty
             case #selector(saveCurrentView(_:)), #selector(restoreSavedView(_:)):
                 return hasDocument && ready
+            case #selector(toggleAutoRestoreView(_:)):
+                menuItem.state = UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey) ? .on : .off
+                return true
+            case #selector(changeRowDensity(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == currentRowDensity.rawValue ? .on : .off
+                return true
             case #selector(hideCurrentColumn(_:)):
                 return hasDocument && currentDataColumn >= 0
             case #selector(togglePersistentIndex(_:)):
@@ -1275,10 +1288,164 @@ extension MainWindowController {
     }
 
     private func visibleColumnIndexesForExport() -> [Int]? {
-        let visible = columnNames.indices.filter { index in
-            tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden != true
+        ColumnManagement.exportColumnOrder(
+            visualDataColumns: visualDataColumnOrder(),
+            hidden: hiddenColumnIndexes,
+            totalColumns: columnNames.count
+        )
+    }
+
+    /// Data-column indices in on-screen (visual) order, derived from the live
+    /// table columns so drag-reordering is reflected.
+    private func visualDataColumnOrder() -> [Int] {
+        tableView.tableColumns.compactMap { column in
+            column.identifier.rawValue.hasPrefix("c") ? columnIndex(from: column.identifier) : nil
         }
-        return visible.count == columnNames.count ? nil : visible
+    }
+
+    // MARK: - Column order persistence and checklist
+
+    private func columnOrderMap() -> [String: [Int]] {
+        (UserDefaults.standard.dictionary(forKey: Self.columnOrderDefaultsKey) as? [String: [Int]]) ?? [:]
+    }
+
+    private func persistColumnOrder() {
+        guard let currentFilePath else { return }
+        var map = columnOrderMap()
+        let order = visualDataColumnOrder()
+        if order == Array(0..<columnNames.count) {
+            map[currentFilePath] = nil
+        } else {
+            map[currentFilePath] = order
+        }
+        // Prune convenience entries for files that no longer exist so the map
+        // cannot grow unbounded across the app's lifetime.
+        map = map.filter { path, _ in path == currentFilePath || FileManager.default.fileExists(atPath: path) }
+        UserDefaults.standard.set(map, forKey: Self.columnOrderDefaultsKey)
+    }
+
+    private func applyStoredColumnOrder() {
+        guard let currentFilePath, let stored = columnOrderMap()[currentFilePath] else { return }
+        let target = ColumnManagement.normalizedOrder(stored: stored, totalColumns: columnNames.count)
+        guard target != Array(0..<columnNames.count) else { return }
+        isApplyingColumnOrder = true
+        // The row-number gutter stays at visual index 0; data columns follow.
+        for (position, dataColumn) in target.enumerated() {
+            let identifier = NSUserInterfaceItemIdentifier("c\(dataColumn)")
+            let currentVisual = tableView.column(withIdentifier: identifier)
+            let targetVisual = position + 1
+            if currentVisual >= 0, currentVisual != targetVisual {
+                tableView.moveColumn(currentVisual, toColumn: targetVisual)
+            }
+        }
+        isApplyingColumnOrder = false
+        updateTableDocumentWidthForViewport()
+    }
+
+    // MARK: - Pin columns to front
+
+    private func pinnedColumnsMap() -> [String: [Int]] {
+        (UserDefaults.standard.dictionary(forKey: Self.pinnedColumnsDefaultsKey) as? [String: [Int]]) ?? [:]
+    }
+
+    private func pinnedColumns() -> [Int] {
+        guard let currentFilePath else { return [] }
+        return (pinnedColumnsMap()[currentFilePath] ?? []).filter { $0 >= 0 && $0 < columnNames.count }
+    }
+
+    func isColumnPinned(_ column: Int) -> Bool {
+        pinnedColumns().contains(column)
+    }
+
+    private func persistPinnedColumns(_ pinned: [Int]) {
+        guard let currentFilePath else { return }
+        var map = pinnedColumnsMap()
+        map[currentFilePath] = pinned.isEmpty ? nil : pinned
+        map = map.filter { path, _ in path == currentFilePath || FileManager.default.fileExists(atPath: path) }
+        UserDefaults.standard.set(map, forKey: Self.pinnedColumnsDefaultsKey)
+    }
+
+    @objc private func pinColumnFromMenu(_ sender: NSMenuItem) {
+        pinColumnToFront(sender.tag)
+    }
+
+    @objc private func unpinColumnFromMenu(_ sender: NSMenuItem) {
+        unpinColumn(sender.tag)
+    }
+
+    func pinColumnToFront(_ column: Int) {
+        guard column >= 0, column < columnNames.count else { return }
+        var pinned = pinnedColumns()
+        guard !pinned.contains(column) else { return }
+        pinned.append(column)
+        persistPinnedColumns(pinned)
+        moveColumnToVisualPosition(column, position: pinned.count)
+        updateSortHeaders()
+    }
+
+    func unpinColumn(_ column: Int) {
+        var pinned = pinnedColumns()
+        guard let removeIndex = pinned.firstIndex(of: column) else { return }
+        pinned.remove(at: removeIndex)
+        persistPinnedColumns(pinned)
+        updateSortHeaders()
+    }
+
+    private func moveColumnToVisualPosition(_ dataColumn: Int, position: Int) {
+        let identifier = NSUserInterfaceItemIdentifier("c\(dataColumn)")
+        let currentVisual = tableView.column(withIdentifier: identifier)
+        guard currentVisual >= 0, currentVisual != position else { return }
+        tableView.moveColumn(currentVisual, toColumn: position)
+    }
+
+    private func applyPinnedColumns() {
+        let pinned = pinnedColumns()
+        guard !pinned.isEmpty else { return }
+        isApplyingColumnOrder = true
+        for (offset, dataColumn) in pinned.enumerated() {
+            moveColumnToVisualPosition(dataColumn, position: offset + 1)
+        }
+        isApplyingColumnOrder = false
+        updateTableDocumentWidthForViewport()
+    }
+
+    func populateColumnsMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard !columnNames.isEmpty else {
+            let empty = NSMenuItem(title: L.t("No columns", "컬럼 없음"), action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+        for (index, name) in columnNames.enumerated() {
+            let item = NSMenuItem(title: name, action: #selector(toggleColumnVisibilityFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = hiddenColumnIndexes.contains(index) ? .off : .on
+            item.tag = index
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func toggleColumnVisibilityFromMenu(_ sender: NSMenuItem) {
+        toggleColumnVisibility(sender.tag)
+    }
+
+    private func toggleColumnVisibility(_ index: Int) {
+        guard index >= 0, index < columnNames.count else { return }
+        // Keep at least one data column visible.
+        if !hiddenColumnIndexes.contains(index), hiddenColumnIndexes.count >= columnNames.count - 1 {
+            statusLabel.stringValue = L.t("At least one column must stay visible.", "최소 한 개의 컬럼은 표시되어야 합니다.")
+            return
+        }
+        if hiddenColumnIndexes.contains(index) {
+            hiddenColumnIndexes.remove(index)
+        } else {
+            hiddenColumnIndexes.insert(index)
+        }
+        tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(index)"))?.isHidden = hiddenColumnIndexes.contains(index)
+        persistColumnVisibility()
+        updateTableDocumentWidthForViewport()
+        scheduleFacetRefresh()
     }
 
     var hasOpenDocument: Bool {
@@ -1624,6 +1791,7 @@ extension MainWindowController {
         statusLabel.stringValue = ""
         refreshColumnStatistics(for: doc, final: true)
         scheduleFacetRefresh(delay: 0)
+        autoRestoreSavedViewIfEnabled()
     }
 
     private func startRowTimer() {
@@ -1684,6 +1852,8 @@ extension MainWindowController {
         filterColumnPopup.addItems(withTitles: columnNames)
         filterColumnPopup.selectItem(at: 0)
         updateSortHeaders()
+        applyStoredColumnOrder()
+        applyPinnedColumns()
         DispatchQueue.main.async { [weak self] in
             self?.updateTableDocumentWidthForViewport()
         }
@@ -1986,7 +2156,7 @@ extension MainWindowController {
                 let priority = sortKeys.count > 1 ? sortIndex + 1 : nil
                 if let header = column?.headerCell as? SortHeaderCell {
                     header.stringValue = displayTitle
-                    header.titleText = name
+                    header.titleText = isColumnPinned(index) ? "📌 " + name : name
                     header.sortPriority = priority
                     header.ascending = key.ascending
                     header.typeText = typeText
@@ -1998,7 +2168,7 @@ extension MainWindowController {
             } else {
                 if let header = column?.headerCell as? SortHeaderCell {
                     header.stringValue = displayTitle
-                    header.titleText = name
+                    header.titleText = isColumnPinned(index) ? "📌 " + name : name
                     header.sortPriority = nil
                     header.ascending = nil
                     header.typeText = typeText
@@ -3510,8 +3680,18 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         handleTableColumnDidResize(notification)
     }
 
+    func tableView(_ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int) -> Bool {
+        // Pin the row-number gutter at visual index 0: it can't move and nothing
+        // can move ahead of it, so applyStoredColumnOrder's "data starts at 1"
+        // assumption always holds.
+        guard columnIndex != 0, newColumnIndex != 0 else { return false }
+        return true
+    }
+
     func tableViewColumnDidMove(_ notification: Notification) {
         updateTableDocumentWidthForViewport()
+        guard !isApplyingColumnOrder else { return }
+        persistColumnOrder()
     }
 
     nonisolated func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
@@ -3538,9 +3718,24 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func makeColumnHeaderMenu(column: Int) -> NSMenu? {
-        guard let report = columnStatisticsReport, let summary = report.columns[safe: column] else { return nil }
+        guard column >= 0, column < columnNames.count else { return nil }
         let menu = NSMenu()
         menu.autoenablesItems = false
+
+        if isColumnPinned(column) {
+            let unpin = NSMenuItem(title: L.t("Unpin Column", "컬럼 고정 해제"), action: #selector(unpinColumnFromMenu(_:)), keyEquivalent: "")
+            unpin.target = self
+            unpin.tag = column
+            menu.addItem(unpin)
+        } else {
+            let pin = NSMenuItem(title: L.t("Pin Column to Front", "컬럼 앞으로 고정"), action: #selector(pinColumnFromMenu(_:)), keyEquivalent: "")
+            pin.target = self
+            pin.tag = column
+            menu.addItem(pin)
+        }
+
+        guard let report = columnStatisticsReport, let summary = report.columns[safe: column] else { return menu }
+        menu.addItem(.separator())
         let typeItem = NSMenuItem(title: L.t("Change Type", "타입 변경"), action: nil, keyEquivalent: "")
         let typeMenu = NSMenu()
         typeMenu.autoenablesItems = false
@@ -4261,6 +4456,10 @@ extension MainWindowController {
     @objc func hideCurrentColumn(_ sender: Any?) {
         guard currentDataColumn >= 0,
               let column = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("c\(currentDataColumn)")) else { return }
+        guard hiddenColumnIndexes.count < columnNames.count - 1 else {
+            statusLabel.stringValue = L.t("At least one column must stay visible.", "최소 한 개의 컬럼은 표시되어야 합니다.")
+            return
+        }
         hiddenColumnIndexes.insert(currentDataColumn)
         column.isHidden = true
         persistColumnVisibility()
@@ -4317,9 +4516,18 @@ extension MainWindowController {
 
     @objc func saveCurrentView(_ sender: Any?) {
         guard csvDocument != nil, let currentFilePath else { return }
+        let existing = savedViewStore().names(forPath: currentFilePath)
+        let suggestion = existing.isEmpty
+            ? L.t("View 1", "보기 1")
+            : L.t("View \(existing.count + 1)", "보기 \(existing.count + 1)")
+        guard let name = promptForBookmarkName(default: suggestion, existing: existing) else { return }
+        saveCurrentView(named: name, forPath: currentFilePath)
+    }
+
+    private func saveCurrentView(named name: String, forPath path: String) {
         let searchQuery = findField.stringValue.isEmpty ? nil : try? SearchFieldParser.parse(findField.stringValue, column: nil)
         let saved = SavedCsvView(
-            name: URL(fileURLWithPath: currentFilePath).lastPathComponent,
+            name: name,
             filterText: textFilterTerm.isEmpty ? nil : textFilterTerm,
             filterColumn: textFilterColumn < 0 ? nil : textFilterColumn,
             sortKeys: sortKeys,
@@ -4328,24 +4536,37 @@ extension MainWindowController {
             currentColumn: currentDataColumn,
             columnFilters: columnFilterState
         )
-        do {
-            let data = try JSONEncoder().encode(saved)
-            var map = savedViewMap()
-            map[currentFilePath] = data.base64EncodedString()
-            UserDefaults.standard.set(map, forKey: Self.savedViewsDefaultsKey)
-            statusLabel.stringValue = L.t("Saved current view.", "현재 보기를 저장했습니다.")
-        } catch {
-            presentError(error)
-        }
+        var store = savedViewStore()
+        store.save(saved, forPath: path)
+        persistSavedViewStore(store)
+        statusLabel.stringValue = L.t("Saved view \"\(name)\".", "\"\(name)\" 보기를 저장했습니다.")
     }
 
     @objc func restoreSavedView(_ sender: Any?) {
-        guard let doc = csvDocument, let currentFilePath, !busy else { return }
-        guard let encoded = savedViewMap()[currentFilePath],
-              let data = Data(base64Encoded: encoded),
-              let saved = try? JSONDecoder().decode(SavedCsvView.self, from: data) else {
-            statusLabel.stringValue = L.t("No saved view for this file.", "이 파일에 저장된 보기가 없습니다.")
+        guard csvDocument != nil, let currentFilePath, !busy else { return }
+        let names = savedViewStore().names(forPath: currentFilePath)
+        guard !names.isEmpty else {
+            statusLabel.stringValue = L.t("No saved views for this file.", "이 파일에 저장된 보기가 없습니다.")
             return
+        }
+        guard let choice = promptForSavedViewChoice(names: names) else { return }
+        switch choice {
+        case .restore(let name):
+            restoreSavedView(named: name, forPath: currentFilePath)
+        case .delete(let name):
+            var store = savedViewStore()
+            store.remove(name: name, forPath: currentFilePath)
+            persistSavedViewStore(store)
+            statusLabel.stringValue = L.t("Deleted view \"\(name)\".", "\"\(name)\" 보기를 삭제했습니다.")
+        }
+    }
+
+    @discardableResult
+    private func restoreSavedView(named name: String, forPath path: String) -> Bool {
+        guard let doc = csvDocument, !busy else { return false }
+        guard let saved = savedViewStore().view(named: name, forPath: path) else {
+            statusLabel.stringValue = L.t("No saved view named \"\(name)\".", "\"\(name)\" 보기가 없습니다.")
+            return false
         }
 
         columnFilterState = saved.columnFilters
@@ -4357,7 +4578,7 @@ extension MainWindowController {
         filterColumnPopup.selectItem(at: textFilterColumn < 0 ? 0 : textFilterColumn + 1)
         sortKeys = saved.sortKeys
         currentDataColumn = min(saved.currentColumn, max(0, columnNames.count - 1))
-        hiddenColumnIndexes = Set(saved.hiddenColumnIndexes)
+        hiddenColumnIndexes = sanitizedHiddenColumns(Set(saved.hiddenColumnIndexes))
         applyColumnVisibility()
         if let query = saved.searchQuery {
             findField.stringValue = Self.displayText(for: query)
@@ -4369,11 +4590,26 @@ extension MainWindowController {
             }
         } catch {
             presentError(error)
-            return
+            return false
         }
 
         let keys = sortKeys
         let predicate = hasAnyFilter ? combinedPredicate() : nil
+        let bookmarkName = saved.name
+
+        // A bookmark with no filter and no sort needs no background scan; skip
+        // the busy flash (matters most for auto-restore-on-open).
+        guard predicate != nil || !keys.isEmpty else {
+            doc.clearView()
+            refreshRowCount()
+            tableView.reloadData()
+            updateSortHeaders()
+            refreshFilterTokens()
+            updateFilterStatus()
+            statusLabel.stringValue = L.t("Restored view \"\(bookmarkName)\".", "\"\(bookmarkName)\" 보기를 복원했습니다.")
+            return true
+        }
+
         runViewOperation(message: L.t("Restoring view...", "보기 복원 중...")) { flag, progress in
             doc.clearView()
             if let predicate {
@@ -4387,12 +4623,117 @@ extension MainWindowController {
             self?.updateSortHeaders()
             self?.refreshFilterTokens()
             self?.updateFilterStatus()
-            self?.statusLabel.stringValue = L.t("Restored saved view.", "저장된 보기를 복원했습니다.")
+            self?.statusLabel.stringValue = L.t("Restored view \"\(bookmarkName)\".", "\"\(bookmarkName)\" 보기를 복원했습니다.")
+        }
+        return true
+    }
+
+    /// Never lets a restored/saved hidden set hide every data column.
+    private func sanitizedHiddenColumns(_ hidden: Set<Int>) -> Set<Int> {
+        let valid = hidden.filter { $0 >= 0 && $0 < columnNames.count }
+        guard valid.count >= columnNames.count, columnNames.count > 0 else { return valid }
+        // Keep the lowest-index column visible.
+        return valid.subtracting([valid.min() ?? 0])
+    }
+
+    // MARK: - Saved view store (named bookmarks)
+
+    private enum SavedViewChoice {
+        case restore(String)
+        case delete(String)
+    }
+
+    private func savedViewStore() -> SavedViewStore {
+        // Once the new store key exists we never fall back to legacy, so a
+        // decode failure returns an empty store instead of resurrecting the
+        // stale v1.7 single-view data over newer bookmarks.
+        if let data = UserDefaults.standard.data(forKey: Self.savedViewStoreDefaultsKey) {
+            return (try? JSONDecoder().decode(SavedViewStore.self, from: data)) ?? SavedViewStore()
+        }
+        // One-time migration from the v1.7 [path: base64] single-view map.
+        let legacyMap = UserDefaults.standard.dictionary(forKey: Self.savedViewsDefaultsKey) as? [String: String] ?? [:]
+        let migrated = SavedViewStore(migratingLegacyMap: legacyMap)
+        if !legacyMap.isEmpty {
+            persistSavedViewStore(migrated)
+        }
+        return migrated
+    }
+
+    private func persistSavedViewStore(_ store: SavedViewStore) {
+        if let data = try? JSONEncoder().encode(store) {
+            UserDefaults.standard.set(data, forKey: Self.savedViewStoreDefaultsKey)
         }
     }
 
-    private func savedViewMap() -> [String: String] {
-        UserDefaults.standard.dictionary(forKey: Self.savedViewsDefaultsKey) as? [String: String] ?? [:]
+    private func promptForBookmarkName(default suggestion: String, existing: [String]) -> String? {
+        let alert = NSAlert()
+        alert.messageText = L.t("Save View As", "다른 이름으로 보기 저장")
+        alert.informativeText = L.t(
+            "Name this view. Reusing a name overwrites that view.",
+            "이 보기의 이름을 입력하세요. 같은 이름은 덮어씁니다."
+        )
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = suggestion
+        alert.accessoryView = field
+        alert.addButton(withTitle: L.t("Save", "저장"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? suggestion : name
+    }
+
+    private func promptForSavedViewChoice(names: [String]) -> SavedViewChoice? {
+        let alert = NSAlert()
+        alert.messageText = L.t("Restore Saved View", "저장된 보기 복원")
+        alert.informativeText = L.t("Choose a saved view to restore or delete.", "복원하거나 삭제할 저장된 보기를 선택하세요.")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 25))
+        popup.addItems(withTitles: names)
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L.t("Restore", "복원"))
+        alert.addButton(withTitle: L.t("Delete", "삭제"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .restore(popup.titleOfSelectedItem ?? names[0])
+        case .alertSecondButtonReturn:
+            return .delete(popup.titleOfSelectedItem ?? names[0])
+        default:
+            return nil
+        }
+    }
+
+    private var currentRowDensity: GridRowDensity {
+        GridRowDensity(rawValue: UserDefaults.standard.string(forKey: Self.rowDensityDefaultsKey) ?? "") ?? .regular
+    }
+
+    @objc func changeRowDensity(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let density = item.representedObject as? String,
+              let value = GridRowDensity(rawValue: density) else { return }
+        UserDefaults.standard.set(value.rawValue, forKey: Self.rowDensityDefaultsKey)
+        applyRowDensity()
+    }
+
+    private func applyRowDensity() {
+        tableView.rowHeight = currentRowDensity.rowHeight
+        tableView.reloadData()
+        updateTableDocumentWidthForViewport()
+    }
+
+    @objc func toggleAutoRestoreView(_ sender: Any?) {
+        let enabled = !UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey)
+        UserDefaults.standard.set(enabled, forKey: Self.autoRestoreViewDefaultsKey)
+        statusLabel.stringValue = enabled
+            ? L.t("Saved views will restore on open.", "파일을 열 때 저장된 보기를 복원합니다.")
+            : L.t("Saved views will not restore on open.", "파일을 열 때 저장된 보기를 복원하지 않습니다.")
+    }
+
+    private func autoRestoreSavedViewIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey),
+              let currentFilePath,
+              let recent = savedViewStore().mostRecent(forPath: currentFilePath) else { return }
+        restoreSavedView(named: recent.name, forPath: currentFilePath)
     }
 
     private func applyColumnVisibility() {
@@ -4893,7 +5234,8 @@ extension MainWindowController {
             columnCount: doc.columnCount,
             storageMode: storageMode,
             indexingElapsed: indexingElapsed,
-            indexingComplete: doc.indexingComplete
+            indexingComplete: doc.indexingComplete,
+            memoryFootprintBytes: MemoryMetrics.currentFootprintBytes()
         )
     }
 
@@ -5242,6 +5584,93 @@ extension MainWindowController {
 
     var dataQualityReportForTesting: DataQualityReport? {
         currentDataQualityReport
+    }
+
+    func saveViewForTesting(named name: String) {
+        guard let currentFilePath = currentFilePathForTesting else { return }
+        saveCurrentView(named: name, forPath: currentFilePath)
+    }
+
+    @discardableResult
+    func restoreViewForTesting(named name: String) -> Bool {
+        guard let currentFilePath = currentFilePathForTesting else { return false }
+        return restoreSavedView(named: name, forPath: currentFilePath)
+    }
+
+    func deleteSavedViewForTesting(named name: String) {
+        guard let currentFilePath = currentFilePathForTesting else { return }
+        var store = savedViewStore()
+        store.remove(name: name, forPath: currentFilePath)
+        persistSavedViewStore(store)
+    }
+
+    var savedViewNamesForTesting: [String] {
+        guard let currentFilePath = currentFilePathForTesting else { return [] }
+        return savedViewStore().names(forPath: currentFilePath)
+    }
+
+    func isColumnHiddenForTesting(_ column: Int) -> Bool {
+        hiddenColumnIndexes.contains(column)
+    }
+
+    var tableRowHeightForTesting: CGFloat {
+        tableView.rowHeight
+    }
+
+    func exportColumnOrderForTesting() -> [Int]? {
+        visibleColumnIndexesForExport()
+    }
+
+    var visualDataColumnOrderForTesting: [Int] {
+        visualDataColumnOrder()
+    }
+
+    func moveDataColumnForTesting(from dataColumn: Int, to dataPosition: Int) {
+        let identifier = NSUserInterfaceItemIdentifier("c\(dataColumn)")
+        let currentVisual = tableView.column(withIdentifier: identifier)
+        guard currentVisual >= 0 else { return }
+        tableView.moveColumn(currentVisual, toColumn: dataPosition + 1)
+    }
+
+    func populateColumnsMenuForTesting(_ menu: NSMenu) {
+        populateColumnsMenu(menu)
+    }
+
+    func toggleColumnVisibilityForTesting(_ index: Int) {
+        toggleColumnVisibility(index)
+    }
+
+    func canReorderColumnForTesting(from: Int, to: Int) -> Bool {
+        self.tableView(tableView, shouldReorderColumn: from, toColumn: to)
+    }
+
+    func pinColumnToFrontForTesting(_ column: Int) {
+        pinColumnToFront(column)
+    }
+
+    func unpinColumnForTesting(_ column: Int) {
+        unpinColumn(column)
+    }
+
+    func isColumnPinnedForTesting(_ column: Int) -> Bool {
+        isColumnPinned(column)
+    }
+
+    func setRowDensityForTesting(_ density: GridRowDensity) {
+        UserDefaults.standard.set(density.rawValue, forKey: Self.rowDensityDefaultsKey)
+        applyRowDensity()
+    }
+
+    func performanceSnapshotForTesting() -> PerformanceSnapshot? {
+        performanceSnapshot()
+    }
+
+    var currentFilePathForTesting: String? {
+        currentFilePath
+    }
+
+    func setAutoRestoreViewForTesting(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.autoRestoreViewDefaultsKey)
     }
 
     var hasPendingDataQualityScanForTesting: Bool {

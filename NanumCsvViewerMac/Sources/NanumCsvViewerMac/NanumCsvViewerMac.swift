@@ -17,9 +17,26 @@ struct NanumCsvViewerMacApp {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var windowControllers: [MainWindowController] = []
     private var aboutWindowController: AboutWindowController?
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == L.t("Columns", "컬럼") else { return }
+        // Bind strictly to the front window's controller — the same one the
+        // menu action will target through the responder chain. No arbitrary
+        // fallback that could mutate a background document.
+        let controller = (NSApp.keyWindow?.windowController as? MainWindowController)
+            ?? (NSApp.mainWindow?.windowController as? MainWindowController)
+        if let controller {
+            controller.populateColumnsMenu(menu)
+        } else {
+            menu.removeAllItems()
+            let empty = NSMenuItem(title: L.t("No document", "문서 없음"), action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -163,15 +180,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let performance = NSMenuItem(title: L.t("Performance Dashboard", "성능 대시보드"), action: #selector(MainWindowController.showPerformanceDashboard(_:)), keyEquivalent: "p")
         performance.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(performance)
+        let columnsItem = NSMenuItem(title: L.t("Columns", "컬럼"), action: nil, keyEquivalent: "")
+        let columnsMenu = NSMenu(title: columnsItem.title)
+        columnsMenu.delegate = self
+        columnsMenu.autoenablesItems = false
+        columnsItem.submenu = columnsMenu
+        viewMenu.addItem(columnsItem)
         let showAllColumns = NSMenuItem(title: L.t("Show All Columns", "모든 컬럼 보기"), action: #selector(MainWindowController.showAllColumns(_:)), keyEquivalent: "")
         viewMenu.addItem(showAllColumns)
+        let rowDensityItem = NSMenuItem(title: L.t("Row Density", "행 밀도"), action: nil, keyEquivalent: "")
+        let rowDensityMenu = NSMenu(title: rowDensityItem.title)
+        rowDensityItem.submenu = rowDensityMenu
+        for density in GridRowDensity.allCases {
+            let item = NSMenuItem(title: density.title, action: #selector(MainWindowController.changeRowDensity(_:)), keyEquivalent: "")
+            item.representedObject = density.rawValue
+            rowDensityMenu.addItem(item)
+        }
+        viewMenu.addItem(rowDensityItem)
         viewMenu.addItem(.separator())
-        let saveView = NSMenuItem(title: L.t("Save Current View", "현재 보기 저장"), action: #selector(MainWindowController.saveCurrentView(_:)), keyEquivalent: "s")
+        let saveView = NSMenuItem(title: L.t("Save View As...", "다른 이름으로 보기 저장..."), action: #selector(MainWindowController.saveCurrentView(_:)), keyEquivalent: "s")
         saveView.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(saveView)
-        let restoreView = NSMenuItem(title: L.t("Restore Saved View", "저장된 보기 복원"), action: #selector(MainWindowController.restoreSavedView(_:)), keyEquivalent: "r")
+        let restoreView = NSMenuItem(title: L.t("Restore Saved View...", "저장된 보기 복원..."), action: #selector(MainWindowController.restoreSavedView(_:)), keyEquivalent: "r")
         restoreView.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(restoreView)
+        let autoRestoreView = NSMenuItem(title: L.t("Restore View on Open", "열 때 보기 복원"), action: #selector(MainWindowController.toggleAutoRestoreView(_:)), keyEquivalent: "")
+        viewMenu.addItem(autoRestoreView)
         viewMenu.addItem(.separator())
         let encodingItem = NSMenuItem(title: L.t("Encoding", "인코딩"), action: nil, keyEquivalent: "")
         let encodingMenu = NSMenu(title: encodingItem.title)
@@ -360,10 +394,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "speedometer"
         case #selector(MainWindowController.showAllColumns(_:)):
             return "tablecells"
+        case #selector(MainWindowController.changeRowDensity(_:)):
+            return "arrow.up.and.down.text.horizontal"
         case #selector(MainWindowController.saveCurrentView(_:)):
             return "bookmark"
         case #selector(MainWindowController.restoreSavedView(_:)):
             return "bookmark.fill"
+        case #selector(MainWindowController.toggleAutoRestoreView(_:)):
+            return "arrow.clockwise.circle"
         case #selector(MainWindowController.togglePersistentIndex(_:)):
             return "internaldrive"
         case #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)):
@@ -441,6 +479,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "gearshape"
         case L.t("Encoding", "인코딩"):
             return "textformat"
+        case L.t("Row Density", "행 밀도"):
+            return "arrow.up.and.down.text.horizontal"
+        case L.t("Columns", "컬럼"):
+            return "checklist"
         case L.t("Analysis", "분석"):
             return "chart.xyaxis.line"
         case L.t("Visualization", "시각화"):

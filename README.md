@@ -80,6 +80,13 @@ cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
+## v1.8.1 User Workflows
+
+- Save several named views per file with `View > Save View As...`, switch between them from `Restore Saved View...`, and enable `Restore View on Open` to reapply the most recent one automatically.
+- Toggle individual columns from the `View > Columns` checklist, drag column headers to reorder them (the order is remembered per file and exports follow it), and right-click a header to `Pin Column to Front` so an identifier column stays leftmost.
+- Change grid row height with `View > Row Density`, and check the process memory footprint in the performance dashboard.
+- App bundle metadata now uses version `1.8.1(181)`.
+
 ## v1.8.0 User Workflows
 
 - Toggle `View > Facets Panel` (F6) to see per-column value distributions beside the grid; click a bar to cross-filter, click it again to remove the filter, and click more bars in the same column to widen the selection.

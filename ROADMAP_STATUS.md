@@ -74,14 +74,22 @@ This audit checks whether the GitHub v1 roadmap, including the v1.6 issue list, 
 
 ## Follow-Up Work
 
-1. Add richer chart views for numeric distributions, date histograms, group-by outputs, and advanced pivot layouts.
-2. Finish column management with frozen columns, a visible column checklist workflow, persisted reorder, and export order alignment.
-3. Expand saved views into multiple named bookmarks with a picker, auto-restore behavior, and integration tests.
-4. Upgrade the performance dashboard with memory metrics and repeatable benchmark runs.
-5. Add theme, font, and row-density controls beyond system light/dark mode.
-6. Reduce analytics memory pressure by streaming or sampling intentionally instead of materializing `currentDisplayRows` for every analysis.
-7. Improve export UX with encoding selection, open-after-export, selected-column control, and large JSON progress behavior.
-8. Clean up temporary files created by clipboard quick import.
+Done in the v1.8 line (2026-07-04):
+
+- ~~Richer chart views~~ — the Visualization menu adds seven statistical chart windows (v1.14 parity).
+- ~~Visible column checklist, persisted reorder, export order alignment~~ — View ▸ Columns checklist, per-file drag-reorder persistence, and export in on-screen visual order all shipped. **Frozen columns remain deferred** (triad adjudication: full Excel freeze panes re-introduce a parallel geometry layer + vertical-scroll drift against the freshly-stabilized grid geometry, for marginal value in a read-only viewer; the reorder mechanism now covers "keep identifiers leftmost"). Revisit as an explicit scoped milestone if lockstep freeze is still wanted.
+- ~~Multiple named saved-view bookmarks with a picker + auto-restore~~ — shipped with legacy migration and integration tests.
+- ~~Performance dashboard memory metrics~~ — process physical-memory footprint added; repeatable benchmark UI still pending.
+- ~~Row-density controls~~ — Compact/Regular/Comfortable shipped; theme and font controls still pending.
+
+Remaining:
+
+1. Add repeatable in-app benchmark runs to the performance dashboard.
+2. Add theme and font controls beyond system light/dark mode.
+3. Reduce analytics memory pressure by streaming or sampling instead of materializing `currentDisplayRows` for every analysis, chart, and pivot (flagged again in the v1.8 adversarial reviews).
+4. Improve export UX with encoding selection, open-after-export, and large JSON progress behavior.
+5. Clean up temporary files created by clipboard quick import and by Excel/SQLite temp-CSV bridges.
+6. Prune per-file persistence maps (saved views, column order, hidden columns) for files that no longer exist.
 
 ## Release Guidance
 
