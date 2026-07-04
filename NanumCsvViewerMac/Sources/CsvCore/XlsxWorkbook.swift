@@ -52,6 +52,16 @@ public enum XlsxWorkbook {
         let dateStyles = try readDateStyleFlags(archive: archive)
         let sheetData = try archive.read(target.entryPath)
 
+        // Width pre-pass: rows can be wider than the header row, and the CSV
+        // engine fixes the column count from the first line, so every row
+        // (including the header) must be padded to the sheet's true width.
+        let widthScanner = SheetWidthScanner()
+        let widthParser = XMLParser(data: sheetData)
+        widthParser.delegate = widthScanner
+        guard widthParser.parse() else {
+            throw XlsxWorkbookError.invalidWorkbook(widthParser.parserError.map { "\($0)" } ?? "worksheet parse failed")
+        }
+
         FileManager.default.createFile(atPath: destination.path, contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
@@ -61,6 +71,7 @@ public enum XlsxWorkbook {
             sharedStrings: sharedStrings,
             dateStyles: dateStyles,
             date1904: info.date1904,
+            sheetColumnCount: widthScanner.maxColumnCount,
             cancellation: cancellation
         )
         let parser = XMLParser(data: sheetData)
@@ -376,8 +387,34 @@ private final class StylesXmlDelegate: NSObject, XMLParserDelegate {
     }
 }
 
+/// Counts the sheet's true column width so the CSV writer can pad every row,
+/// including the header, before any line is emitted.
+private final class SheetWidthScanner: NSObject, XMLParserDelegate {
+    private(set) var maxColumnCount = 0
+    private var currentRowCellCount = 0
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName: String?,
+        attributes: [String: String] = [:]
+    ) {
+        switch elementName {
+        case "row":
+            currentRowCellCount = 0
+        case "c":
+            let column = attributes["r"].flatMap(XlsxWorkbook.columnIndex(fromReference:)) ?? currentRowCellCount
+            currentRowCellCount = max(currentRowCellCount, column + 1)
+            maxColumnCount = max(maxColumnCount, currentRowCellCount)
+        default:
+            break
+        }
+    }
+}
+
 /// Streams `<row>`/`<c>` worksheet elements straight into a CSV file. Rows are
-/// padded to the widest row seen so far, and skipped row numbers become empty
+/// padded to the sheet's full width, and skipped row numbers become empty
 /// rows so the CSV keeps the sheet's vertical alignment.
 private final class SheetCsvWriter: NSObject, XMLParserDelegate {
     private let handle: FileHandle
@@ -388,7 +425,7 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
 
     private var currentRowNumber = 0
     private var lastWrittenRowNumber = 0
-    private var maxColumnCount = 0
+    private let maxColumnCount: Int
     private var rowValues: [String] = []
     private var cellColumn = 0
     private var cellType = ""
@@ -405,12 +442,14 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
         sharedStrings: [String],
         dateStyles: [Bool],
         date1904: Bool,
+        sheetColumnCount: Int,
         cancellation: CancellationFlag
     ) {
         self.handle = handle
         self.sharedStrings = sharedStrings
         self.dateStyles = dateStyles
         self.date1904 = date1904
+        self.maxColumnCount = sheetColumnCount
         self.cancellation = cancellation
     }
 
@@ -505,7 +544,6 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
     private func emitCurrentRow(parser: XMLParser) {
         do {
             try cancellation.check()
-            maxColumnCount = max(maxColumnCount, rowValues.count)
 
             // Fill vertical gaps left by empty rows the XML omits entirely.
             while lastWrittenRowNumber + 1 < currentRowNumber {

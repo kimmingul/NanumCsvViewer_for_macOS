@@ -2146,10 +2146,16 @@ extension MainWindowController {
                         : nil
                     self.facetsPanel.render(sections: sections, note: note)
                 }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.facetGeneration == generation else { return }
+                    self.facetsCancellation = nil
+                }
             } catch {
                 DispatchQueue.main.async {
                     guard let self, self.facetGeneration == generation else { return }
                     self.facetsCancellation = nil
+                    self.facetsPanel.renderMessage(L.t("Facet scan failed.", "패싯 스캔에 실패했습니다."))
                 }
             }
         }

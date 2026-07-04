@@ -138,10 +138,17 @@ extension VirtualCsvDocument {
             if rowSignatures.count < duplicateScanCap {
                 var signature: UInt64 = 0xcbf29ce484222325
                 for field in fields {
+                    // Mixing the field length prevents ["a","b"] and a single
+                    // field containing a 0x1F byte from colliding.
+                    var length = UInt64(field.utf8.count)
+                    while length > 0 {
+                        signature = (signature ^ (length & 0xFF)) &* 0x100000001b3
+                        length >>= 8
+                    }
+                    signature = (signature ^ 0x1F) &* 0x100000001b3
                     for byte in field.utf8 {
                         signature = (signature ^ UInt64(byte)) &* 0x100000001b3
                     }
-                    signature = (signature ^ 0x1F) &* 0x100000001b3
                 }
                 if !rowSignatures.insert(signature).inserted {
                     duplicateRowCount += 1

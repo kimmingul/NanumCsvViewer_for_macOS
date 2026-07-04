@@ -125,6 +125,29 @@ final class XlsxWorkbookTests: XCTestCase {
         XCTAssertTrue(csv.hasPrefix("hello,world\n"))
     }
 
+    func testRowsWiderThanHeaderKeepAllColumns() throws {
+        // The header row must be padded to the sheet's true width, otherwise
+        // the CSV engine treats later columns as inaccessible.
+        let sheet = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+        <row r="1"><c r="A1" t="inlineStr"><is><t>h</t></is></c></row>
+        <row r="2"><c r="C2" t="inlineStr"><is><t>late</t></is></c></row>
+        </sheetData>
+        </worksheet>
+        """
+        let path = try writeFixtureXlsx(sheets: [("W", sheet)])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "W", destination: destination)
+
+        let csv = try String(contentsOf: destination, encoding: .utf8)
+        XCTAssertEqual(csv, "h,,\n,,late\n", "header row is padded to the widest row in the sheet")
+    }
+
     func testExcelDateEpochEdges() {
         // 1900 system: epoch 1899-12-30 absorbs the phantom Feb 29, 1900.
         XCTAssertEqual(XlsxWorkbook.dateString(fromSerial: 1, date1904: false), "1899-12-31")
