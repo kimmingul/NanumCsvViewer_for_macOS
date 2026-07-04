@@ -154,6 +154,8 @@ final class MainWindowController: NSWindowController {
     private var hiddenColumnIndexes: Set<Int> = []
     private var currentFilePath: String?
     private var pivotBuilderWindow: PivotBuilderWindowController?
+    private var chartWindows: [ChartWindowController] = []
+    private var chartCancellation: CancellationFlag?
     var openAdditionalFilesHandler: (([URL], NSWindow?) -> Void)?
     var closeHandler: ((MainWindowController) -> Void)?
 
@@ -1105,6 +1107,8 @@ extension MainWindowController: NSMenuItemValidation {
                 return true
             case #selector(showNumericDistribution(_:)), #selector(showDateHistogram(_:)), #selector(showDuplicateRows(_:)), #selector(showGroupBy(_:)), #selector(showPivotTable(_:)), #selector(showPivotChart(_:)), #selector(showCorrelation(_:)), #selector(showTTest(_:)), #selector(showChiSquare(_:)), #selector(showQuickStats(_:)), #selector(showDescriptiveStatistics(_:)), #selector(showFrequencyAnalysis(_:)), #selector(showOneWayAnova(_:)), #selector(showNormalityTest(_:)):
                 return ready
+            case #selector(showHistogramChartWindow(_:)), #selector(showBoxplotChartWindow(_:)), #selector(showScatterChartWindow(_:)), #selector(showCorrelationHeatmapWindow(_:)), #selector(showQQPlotChartWindow(_:)), #selector(showTimeseriesChartWindow(_:)), #selector(showParetoChartWindow(_:)):
+                return ready
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
                     menuItem.state = name == csvDocument?.encodingName ? .on : .off
@@ -1171,6 +1175,8 @@ extension MainWindowController {
 
         pivotBuilderWindow?.close()
         pivotBuilderWindow = nil
+        closeAllChartWindows()
+        chartCancellation = nil
 
         if VirtualCsvDocument.deletePersistentIndexOnClose {
             closingDocument.deletePersistentIndex()
@@ -1411,6 +1417,7 @@ extension MainWindowController {
 
     private func openFile(_ url: URL) {
         cancelAll()
+        closeAllChartWindows()
         do {
             let doc = try VirtualCsvDocument.open(path: url.path)
             csvDocument = doc
@@ -2587,6 +2594,275 @@ extension MainWindowController {
         ])
 
         return AnalysisPromptSheet(panel: panel, buildRequest: buildRequest)
+    }
+
+    // MARK: - Visualization chart windows
+
+    @objc func showHistogramChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .histogram, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showBoxplotChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .boxplot, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showScatterChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .scatter, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showCorrelationHeatmapWindow(_ sender: Any?) {
+        startChartFlow(kind: .correlationHeatmap, prompt: false)
+    }
+
+    @objc func showQQPlotChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .qqPlot, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showTimeseriesChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .timeseries, prompt: sender is NSMenuItem)
+    }
+
+    @objc func showParetoChartWindow(_ sender: Any?) {
+        startChartFlow(kind: .pareto, prompt: sender is NSMenuItem)
+    }
+
+    private func startChartFlow(kind: ChartKind, prompt: Bool) {
+        guard csvDocument?.indexingComplete == true, !busy else { return }
+        guard let defaultRequest = defaultChartRequest(for: kind) else {
+            statusLabel.stringValue = L.t("No suitable columns for this chart.", "이 차트에 적합한 컬럼이 없습니다.")
+            return
+        }
+        if prompt {
+            promptChartRequest(kind: kind, defaultRequest: defaultRequest)
+        } else {
+            openChartWindow(request: defaultRequest)
+        }
+    }
+
+    func defaultChartRequest(for kind: ChartKind) -> ChartRequest? {
+        guard csvDocument != nil else { return nil }
+        let selected = clampedCurrentDataColumn()
+        switch kind {
+        case .histogram:
+            let column = isNumericColumn(selected) ? selected : (firstNumericColumn(excluding: -1) ?? selected)
+            guard isNumericColumn(column) || columnStatisticsReport == nil else { return nil }
+            return .histogram(column: column, binCount: 20)
+        case .boxplot:
+            guard let valueColumn = isNumericColumn(selected) ? selected : firstNumericColumn(excluding: -1) else { return nil }
+            return .boxplot(groupColumn: firstNonNumericColumn(excluding: -1), valueColumn: valueColumn)
+        case .scatter:
+            guard let x = firstNumericColumn(excluding: -1), let y = firstNumericColumn(excluding: x) else { return nil }
+            return .scatter(xColumn: x, yColumn: y)
+        case .correlationHeatmap:
+            let numericColumns = columnNames.indices.filter { isNumericColumn($0) }
+            guard numericColumns.count >= 2 else { return nil }
+            return .correlationHeatmap(columns: Array(numericColumns.prefix(12)))
+        case .qqPlot:
+            let column = isNumericColumn(selected) ? selected : (firstNumericColumn(excluding: -1) ?? selected)
+            guard isNumericColumn(column) || columnStatisticsReport == nil else { return nil }
+            return .qqPlot(column: column)
+        case .timeseries:
+            let dateColumn = isDateColumn(selected) ? selected : (firstDateColumn(excluding: -1) ?? selected)
+            return .timeseries(dateColumn: dateColumn, valueColumn: nil, period: .month)
+        case .pareto:
+            let column = isNumericColumn(selected) ? (firstNonNumericColumn(excluding: -1) ?? selected) : selected
+            return .pareto(column: column)
+        }
+    }
+
+    private func promptChartRequest(kind: ChartKind, defaultRequest: ChartRequest) {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: Self.analysisPromptContentWidth).isActive = true
+
+        var buildRequest: () -> ChartRequest? = { nil }
+        switch defaultRequest {
+        case .histogram(let column, let binCount):
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
+            let binsField = NSTextField(string: "\(binCount)")
+            binsField.widthAnchor.constraint(equalToConstant: 120).isActive = true
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Bins", "구간"), control: binsField)
+            buildRequest = {
+                .histogram(column: self.selectedColumn(in: columnPopup) ?? column, binCount: max(2, Int(binsField.stringValue) ?? binCount))
+            }
+        case .boxplot(let groupColumn, let valueColumn):
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn)
+            let groupPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: groupColumn ?? -1, includeNone: true)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Group column", "그룹 컬럼"), control: groupPopup)
+            buildRequest = {
+                .boxplot(groupColumn: self.selectedColumn(in: groupPopup), valueColumn: self.selectedColumn(in: valuePopup) ?? valueColumn)
+            }
+        case .scatter(let xColumn, let yColumn):
+            let xPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: xColumn)
+            let yPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: yColumn)
+            addAnalysisPromptRow(to: stack, label: "X", control: xPopup)
+            addAnalysisPromptRow(to: stack, label: "Y", control: yPopup)
+            buildRequest = {
+                .scatter(xColumn: self.selectedColumn(in: xPopup) ?? xColumn, yColumn: self.selectedColumn(in: yPopup) ?? yColumn)
+            }
+        case .correlationHeatmap(let columns):
+            buildRequest = { .correlationHeatmap(columns: columns) }
+        case .qqPlot(let column):
+            let columnPopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .qqPlot(column: self.selectedColumn(in: columnPopup) ?? column) }
+        case .timeseries(let dateColumn, let valueColumn, let period):
+            let datePopup = makeColumnPopup(preferredTypes: [.date], selected: dateColumn)
+            let valuePopup = makeColumnPopup(preferredTypes: [.integer, .float], selected: valueColumn ?? -1, includeNone: true)
+            let periodPopup = NSPopUpButton()
+            periodPopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
+            for item in DateBinPeriod.allCases {
+                periodPopup.addItem(withTitle: item.rawValue)
+            }
+            periodPopup.selectItem(withTitle: period.rawValue)
+            addAnalysisPromptRow(to: stack, label: L.t("Date column", "날짜 컬럼"), control: datePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
+            addAnalysisPromptRow(to: stack, label: L.t("Period", "단위"), control: periodPopup)
+            buildRequest = {
+                let period = DateBinPeriod(rawValue: periodPopup.titleOfSelectedItem ?? DateBinPeriod.month.rawValue) ?? .month
+                return .timeseries(
+                    dateColumn: self.selectedColumn(in: datePopup) ?? dateColumn,
+                    valueColumn: self.selectedColumn(in: valuePopup),
+                    period: period
+                )
+            }
+        case .pareto(let column):
+            let columnPopup = makeColumnPopup(preferredTypes: [.categorical, .string, .boolean], selected: column)
+            addAnalysisPromptRow(to: stack, label: L.t("Column", "컬럼"), control: columnPopup)
+            buildRequest = { .pareto(column: self.selectedColumn(in: columnPopup) ?? column) }
+        }
+
+        let sheet = makeAnalysisPromptSheet(
+            title: kind.title,
+            informativeText: L.t("Choose chart parameters, then run.", "차트 조건을 선택한 뒤 실행하세요."),
+            form: stack,
+            buildRequest: { nil }
+        )
+        sheet.panel.runHandler = { [weak self, weak panel = sheet.panel] in
+            guard let self, let panel, let request = buildRequest() else { return }
+            panel.sheetParent?.endSheet(panel, returnCode: .OK)
+            panel.orderOut(nil)
+            self.openChartWindow(request: request)
+        }
+        window?.beginSheet(sheet.panel)
+    }
+
+    func openChartWindow(request: ChartRequest) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        chartCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        chartCancellation = cancellation
+        let names = columnNames
+        let documentName = (currentFilePath as NSString?)?.lastPathComponent ?? "CSV"
+        let scopeNote = doc.analysisRowsTruncated
+            ? L.t(
+                "Showing first \(VirtualCsvDocument.analysisRowLimit.formatted()) rows",
+                "처음 \(VirtualCsvDocument.analysisRowLimit.formatted())행 기준"
+            )
+            : nil
+        setBusy(true, message: L.t("Preparing chart...", "차트 준비 중..."))
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let render = try Self.buildChartRender(request: request, document: doc, columnNames: names, cancellation: cancellation)
+                DispatchQueue.main.async {
+                    guard let self, doc === self.csvDocument, self.chartCancellation === cancellation else { return }
+                    self.chartCancellation = nil
+                    self.setBusy(false)
+                    guard let render else {
+                        self.statusLabel.stringValue = L.t("Not enough data for this chart.", "차트를 그릴 데이터가 부족합니다.")
+                        return
+                    }
+                    self.statusLabel.stringValue = ""
+                    self.presentChartWindow(ChartWindowModel(
+                        kind: request.kind,
+                        documentName: documentName,
+                        render: render,
+                        scopeNote: scopeNote
+                    ))
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.chartCancellation === cancellation else { return }
+                    self.chartCancellation = nil
+                    self.setBusy(false)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.chartCancellation === cancellation else { return }
+                    self.chartCancellation = nil
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func buildChartRender(
+        request: ChartRequest,
+        document: VirtualCsvDocument,
+        columnNames: [String],
+        cancellation: CancellationFlag
+    ) throws -> ChartRenderModel? {
+        func name(_ index: Int) -> String {
+            columnNames.indices.contains(index) ? columnNames[index] : "Column \(index + 1)"
+        }
+        switch request {
+        case .histogram(let column, let binCount):
+            let data = try document.histogramChartData(column: column, binCount: binCount, cancellation: cancellation)
+            guard data.distribution.count > 0 else { return nil }
+            return .histogram(data, columnName: name(column))
+        case .boxplot(let groupColumn, let valueColumn):
+            let data = try document.boxplotChartData(groupColumn: groupColumn, valueColumn: valueColumn, cancellation: cancellation)
+            guard !data.groups.isEmpty else { return nil }
+            return .boxplot(data, groupName: groupColumn.map(name), valueName: name(valueColumn))
+        case .scatter(let xColumn, let yColumn):
+            let data = try document.scatterChartData(xColumn: xColumn, yColumn: yColumn, cancellation: cancellation)
+            guard data.totalPairCount > 0 else { return nil }
+            return .scatter(data, xName: name(xColumn), yName: name(yColumn))
+        case .correlationHeatmap(let columns):
+            guard columns.count >= 2 else { return nil }
+            let data = try document.correlationMatrixChartData(columns: columns, cancellation: cancellation)
+            return .correlationHeatmap(data, names: data.columns.map(name))
+        case .qqPlot(let column):
+            let points = try document.qqChartData(column: column, cancellation: cancellation)
+            guard !points.isEmpty else { return nil }
+            return .qqPlot(points, columnName: name(column))
+        case .timeseries(let dateColumn, let valueColumn, let period):
+            let histogram = try document.dateHistogram(dateColumn: dateColumn, valueColumn: valueColumn, period: period, cancellation: cancellation)
+            guard !histogram.bins.isEmpty else { return nil }
+            return .timeseries(histogram, dateName: name(dateColumn), valueName: valueColumn.map(name))
+        case .pareto(let column):
+            let data = try document.paretoChartData(column: column, cancellation: cancellation)
+            guard !data.entries.isEmpty else { return nil }
+            return .pareto(data, columnName: name(column))
+        }
+    }
+
+    private func presentChartWindow(_ model: ChartWindowModel) {
+        let controller = ChartWindowController(model: model)
+        controller.onClose = { [weak self] closed in
+            self?.chartWindows.removeAll { $0 === closed }
+        }
+        chartWindows.append(controller)
+        controller.showWindow(nil)
+    }
+
+    // Chart windows show a snapshot of one document's data; switching or
+    // closing the document invalidates them, matching the Windows twin.
+    func closeAllChartWindows() {
+        let windows = chartWindows
+        chartWindows.removeAll()
+        for controller in windows {
+            controller.onClose = nil
+            controller.close()
+        }
     }
 
     private func addAnalysisPromptRow(to stack: NSStackView, label: String, control: NSView) {
@@ -4301,6 +4577,8 @@ extension MainWindowController {
         columnFilterValuesCancellation = nil
         columnStatisticsCancellation?.cancel()
         analysisCancellation?.cancel()
+        chartCancellation?.cancel()
+        chartCancellation = nil
         facetsCancellation?.cancel()
         facetsCancellation = nil
         facetRefreshWorkItem?.cancel()
@@ -4733,6 +5011,18 @@ extension MainWindowController {
 
     var inspectorVisibleForTesting: Bool {
         isInspectorVisible
+    }
+
+    var chartWindowsForTesting: [ChartWindowController] {
+        chartWindows
+    }
+
+    func openChartWindowForTesting(_ request: ChartRequest) {
+        openChartWindow(request: request)
+    }
+
+    func defaultChartRequestForTesting(kind: ChartKind) -> ChartRequest? {
+        defaultChartRequest(for: kind)
     }
 
     func setFacetsPanelVisibleForTesting(_ visible: Bool) {

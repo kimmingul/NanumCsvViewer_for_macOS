@@ -237,6 +237,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelAnalysis.keyEquivalentModifierMask = [.command]
         analysisMenu.addItem(cancelAnalysis)
 
+        let visualizationItem = NSMenuItem(title: L.t("Visualization", "시각화"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(visualizationItem)
+        let visualizationMenu = NSMenu(title: visualizationItem.title)
+        visualizationItem.submenu = visualizationMenu
+        let chartActions: [(ChartKind, Selector)] = [
+            (.histogram, #selector(MainWindowController.showHistogramChartWindow(_:))),
+            (.boxplot, #selector(MainWindowController.showBoxplotChartWindow(_:))),
+            (.scatter, #selector(MainWindowController.showScatterChartWindow(_:))),
+            (.correlationHeatmap, #selector(MainWindowController.showCorrelationHeatmapWindow(_:))),
+            (.qqPlot, #selector(MainWindowController.showQQPlotChartWindow(_:))),
+            (.timeseries, #selector(MainWindowController.showTimeseriesChartWindow(_:))),
+            (.pareto, #selector(MainWindowController.showParetoChartWindow(_:)))
+        ]
+        for (kind, action) in chartActions {
+            visualizationMenu.addItem(NSMenuItem(title: kind.title, action: action, keyEquivalent: ""))
+        }
+
         let pivotItem = NSMenuItem(title: L.t("Pivot", "피벗"), action: nil, keyEquivalent: "")
         mainMenu.addItem(pivotItem)
         let pivotMenu = NSMenu(title: pivotItem.title)
@@ -366,6 +383,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "tablecells"
         case #selector(MainWindowController.showPivotChart(_:)):
             return "chart.bar.xaxis"
+        case #selector(MainWindowController.showHistogramChartWindow(_:)):
+            return "chart.bar"
+        case #selector(MainWindowController.showBoxplotChartWindow(_:)):
+            return "square.split.2x1"
+        case #selector(MainWindowController.showScatterChartWindow(_:)):
+            return "chart.dots.scatter"
+        case #selector(MainWindowController.showCorrelationHeatmapWindow(_:)):
+            return "square.grid.3x3.fill"
+        case #selector(MainWindowController.showQQPlotChartWindow(_:)):
+            return "line.diagonal"
+        case #selector(MainWindowController.showTimeseriesChartWindow(_:)):
+            return "chart.xyaxis.line"
+        case #selector(MainWindowController.showParetoChartWindow(_:)):
+            return "chart.bar.doc.horizontal"
         case #selector(MainWindowController.showUsage(_:)):
             return "book"
         default:
@@ -387,6 +418,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "textformat"
         case L.t("Analysis", "분석"):
             return "chart.xyaxis.line"
+        case L.t("Visualization", "시각화"):
+            return "chart.bar.xaxis"
         case L.t("Pivot", "피벗"):
             return "tablecells"
         case L.t("Help", "도움말"):
