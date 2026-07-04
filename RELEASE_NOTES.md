@@ -4,6 +4,40 @@
 
 No unreleased changes.
 
+## v1.8.1 - 2026-07-05
+
+This release adds the v1 roadmap's remaining column, saved-view, and layout
+conveniences on top of the v1.8.0 feature-parity work.
+
+### Features
+
+- Multiple named saved views (bookmarks) per file: `View > Save View As...`
+  prompts for a name, `Restore Saved View...` shows a picker with restore and
+  delete, and `Restore View on Open` reapplies the most recent bookmark after
+  a file finishes loading. Existing single saved views migrate automatically.
+- Column management: a `View > Columns` checklist toggles individual column
+  visibility, columns can be drag-reordered with the order persisted per file
+  and reapplied on reopen, and exports now follow the on-screen column order.
+- `View > Row Density` (Compact / Regular / Comfortable) adjusts grid row
+  height, and the performance dashboard now reports the process memory
+  footprint.
+- Pin Column to Front: a header right-click pins a column just after the
+  row-number gutter so an identifier column stays leftmost; pinned columns
+  show a pin marker and the pinned state persists per file. (This is the
+  lightweight alternative to full Excel-style freeze panes.)
+
+### Validation
+
+- `swift test`: 338 tests passing.
+- Adversarial review by Codex and Grok advisors; findings adjudicated and
+  fixed (saved-view recency on delete, keep-one-column-visible on every path,
+  row-number gutter pinned against reorder, strict Columns-menu window
+  binding, corrupt-store no-legacy-regression, per-file map pruning, and
+  skipping the busy scan when auto-restoring a filter-free bookmark).
+- Visual smoke tests: named save/restore picker, Columns checklist, row
+  density, and Pin Column to Front verified with screenshots.
+- Bumped bundle metadata to version `1.8.1(181)`.
+
 ## v1.8.0 - 2026-07-04
 
 This release brings the macOS app to feature parity with the Windows twin
