@@ -31,6 +31,23 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         set { configLock.withLock { persistentIndexDirectoryOverrideStorage = newValue } }
     }
 
+    /// Analysis, charts, and pivot scans stop after this many display rows
+    /// (Windows twin behavior); exports and filtering always use the full view.
+    nonisolated(unsafe) private static var analysisRowLimitStorage = 2_000_000
+
+    public static var analysisRowLimit: Int {
+        get { configLock.withLock { analysisRowLimitStorage } }
+        set { configLock.withLock { analysisRowLimitStorage = max(1, newValue) } }
+    }
+
+    public var analysisRowsTruncated: Bool {
+        displayRowCount > Self.analysisRowLimit
+    }
+
+    var analysisRowScanBound: Int {
+        Swift.min(displayRowCount, Self.analysisRowLimit)
+    }
+
     public static var ramBufferBudgetBytes: Int64 {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         return min(max(1_500_000_000, physical / 4), 8_000_000_000)
@@ -1195,9 +1212,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     public func findDuplicates(columns: [Int], cancellation: CancellationFlag) throws -> [DuplicateGroup] {
         let columns = columns.filter { $0 >= 0 && $0 < columnCount }
         guard !columns.isEmpty else { return [] }
+        let bound = analysisRowScanBound
         var rows: [(fields: [String], sourceRow: Int64)] = []
-        rows.reserveCapacity(displayRowCount)
-        for viewRow in 0..<displayRowCount {
+        rows.reserveCapacity(bound)
+        for viewRow in 0..<bound {
             if viewRow & 0x3FFF == 0 { try cancellation.check() }
             rows.append((try getDisplayRow(viewRow), getSourceRowNumber(viewRow)))
         }
@@ -1565,9 +1583,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
 
     func currentDisplayRows(cancellation: CancellationFlag) throws -> [[String]] {
+        let bound = analysisRowScanBound
         var rows: [[String]] = []
-        rows.reserveCapacity(displayRowCount)
-        for viewRow in 0..<displayRowCount {
+        rows.reserveCapacity(bound)
+        for viewRow in 0..<bound {
             if viewRow & 0x3FFF == 0 { try cancellation.check() }
             rows.append(try getDisplayRow(viewRow))
         }

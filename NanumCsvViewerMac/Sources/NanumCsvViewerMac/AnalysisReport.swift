@@ -190,6 +190,7 @@ struct AnalysisProvenance: Equatable, Sendable {
     let parameterLines: [String]
     let generatedAt: Date
     let elapsedMilliseconds: Int?
+    var scannedRows: Int? = nil
 
     func withElapsed(_ elapsed: TimeInterval) -> AnalysisProvenance {
         AnalysisProvenance(
@@ -201,7 +202,8 @@ struct AnalysisProvenance: Equatable, Sendable {
             columnNames: columnNames,
             parameterLines: parameterLines,
             generatedAt: generatedAt,
-            elapsedMilliseconds: Int((elapsed * 1_000).rounded())
+            elapsedMilliseconds: Int((elapsed * 1_000).rounded()),
+            scannedRows: scannedRows
         )
     }
 
@@ -210,6 +212,12 @@ struct AnalysisProvenance: Equatable, Sendable {
             L.t("Rows: \(visibleRows.formatted()) / \(totalRows.formatted())", "행: \(visibleRows.formatted()) / \(totalRows.formatted())"),
             L.t("View: \(isFiltered ? "Filtered current view" : "All rows")", "보기: \(isFiltered ? "필터된 현재 보기" : "전체 행")")
         ]
+        if let scannedRows, scannedRows < visibleRows {
+            output.append(L.t(
+                "Scope: showing first \(scannedRows.formatted()) rows",
+                "범위: 처음 \(scannedRows.formatted())행 기준"
+            ))
+        }
         if !filters.isEmpty {
             output.append(L.t("Filters: \(filters.joined(separator: " | "))", "필터: \(filters.joined(separator: " | "))"))
         }

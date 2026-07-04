@@ -51,6 +51,7 @@ final class MainWindowController: NSWindowController {
     private static let deleteIndexCacheOnCloseDefaultsKey = "NanumCsvViewerMac.DeleteIndexCacheOnClose"
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
     private static let facetsVisibleDefaultsKey = "NanumCsvViewerMac.FacetsPanelVisible"
+    private static let inspectorVisibleDefaultsKey = "NanumCsvViewerMac.InspectorVisible"
     private static let facetRowCap = 2_000_000
     private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
@@ -221,7 +222,9 @@ final class MainWindowController: NSWindowController {
         configureEmptyState()
         configureDropTargets()
         setFilterBarVisible(false)
-        setInspectorVisible(false, rememberWidth: false, animated: false)
+        // The Windows twin shows the detail panel by default on first launch.
+        let inspectorVisible = UserDefaults.standard.object(forKey: Self.inspectorVisibleDefaultsKey) as? Bool ?? true
+        setInspectorVisible(inspectorVisible, rememberWidth: false, animated: false)
         if UserDefaults.standard.bool(forKey: Self.facetsVisibleDefaultsKey) {
             setFacetsPanelVisible(true, persist: false)
         }
@@ -1934,6 +1937,7 @@ extension MainWindowController {
             show = detailToggleButton.state == .on
         }
         setInspectorVisible(show, animated: true)
+        UserDefaults.standard.set(show, forKey: Self.inspectorVisibleDefaultsKey)
     }
 
     var isFacetsPanelVisible: Bool {
@@ -2734,7 +2738,8 @@ extension MainWindowController {
                 : request.selectedColumns().compactMap { columnNames[safe: $0] },
             parameterLines: request.parameterLines(columnNames: columnNames),
             generatedAt: Date(),
-            elapsedMilliseconds: nil
+            elapsedMilliseconds: nil,
+            scannedRows: csvDocument.map { min($0.displayRowCount, VirtualCsvDocument.analysisRowLimit) }
         )
     }
 
@@ -4610,6 +4615,10 @@ extension MainWindowController {
         columnCopyString(column: column, includeHeader: includeHeader)
     }
 
+    func setInspectorVisibleForTesting(_ visible: Bool) {
+        setInspectorVisible(visible, rememberWidth: false, animated: false)
+    }
+
     func showInspectorForTesting() {
         setInspectorVisible(true, animated: false)
     }
@@ -4720,6 +4729,10 @@ extension MainWindowController {
 
     var facetsPanelVisibleForTesting: Bool {
         isFacetsPanelVisible
+    }
+
+    var inspectorVisibleForTesting: Bool {
+        isInspectorVisible
     }
 
     func setFacetsPanelVisibleForTesting(_ visible: Bool) {

@@ -860,6 +860,7 @@ final class MainWindowControllerGridTests: XCTestCase {
         let controller = MainWindowController()
         controller.showWindow(nil)
         defer { controller.close() }
+        controller.setInspectorVisibleForTesting(false)
 
         controller.openFileForTesting(URL(fileURLWithPath: path))
         try waitUntilIndexed(controller)

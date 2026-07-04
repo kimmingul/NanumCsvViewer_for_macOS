@@ -382,7 +382,7 @@ extension VirtualCsvDocument {
     /// Streams display rows and extracts single-column values without
     /// materializing the full row set (rows x columns) in memory.
     private func forEachDisplayRow(cancellation: CancellationFlag, _ body: ([String]) -> Void) throws {
-        let total = displayRowCount
+        let total = analysisRowScanBound
         for viewRow in 0..<total {
             if viewRow & 0xFFF == 0 { try cancellation.check() }
             body(try getDisplayRow(viewRow))

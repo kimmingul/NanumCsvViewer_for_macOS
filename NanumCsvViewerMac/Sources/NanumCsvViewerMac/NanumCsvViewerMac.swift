@@ -151,7 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let filterBar = NSMenuItem(title: L.t("Show Filter Bar", "필터 바 보기"), action: #selector(MainWindowController.toggleFilterBar(_:)), keyEquivalent: "F")
         filterBar.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(filterBar)
-        let details = NSMenuItem(title: L.t("Toggle Inspector", "인스펙터 토글"), action: #selector(MainWindowController.toggleDetailPanel(_:)), keyEquivalent: "\u{F705}")
+        let details = NSMenuItem(title: L.t("Toggle Inspector", "인스펙터 토글"), action: #selector(MainWindowController.toggleDetailPanel(_:)), keyEquivalent: "\u{F707}")
+        details.keyEquivalentModifierMask = []
         viewMenu.addItem(details)
         let facets = NSMenuItem(title: L.t("Facets Panel", "패싯 패널"), action: #selector(MainWindowController.toggleFacetsPanel(_:)), keyEquivalent: "\u{F709}")
         facets.keyEquivalentModifierMask = []
