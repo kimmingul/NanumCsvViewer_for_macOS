@@ -40,9 +40,11 @@ final class ColumnManagementControllerTests: XCTestCase {
     private let hiddenKey = "NanumCsvViewerMac.HiddenColumnIndexes"
     private var savedDefaults: [String: Any?] = [:]
 
+    private let pinnedKey = "NanumCsvViewerMac.PinnedColumnsByPath"
+
     override func setUp() {
         super.setUp()
-        for key in [orderKey, hiddenKey] {
+        for key in [orderKey, hiddenKey, pinnedKey] {
             savedDefaults[key] = UserDefaults.standard.object(forKey: key)
             UserDefaults.standard.removeObject(forKey: key)
         }
@@ -111,6 +113,57 @@ final class ColumnManagementControllerTests: XCTestCase {
             "nothing can move ahead of the gutter"
         )
         XCTAssertTrue(controller.canReorderColumnForTesting(from: 1, to: 3))
+    }
+
+    func testPinColumnMovesItToFrontAndMarksPinned() throws {
+        let controller = try openController(csv: "a,b,c\n1,2,3\n")
+        defer { controller.close() }
+
+        controller.pinColumnToFrontForTesting(2)
+        XCTAssertEqual(controller.visualDataColumnOrderForTesting.first, 2, "pinned column jumps to the front")
+        XCTAssertTrue(controller.isColumnPinnedForTesting(2))
+        XCTAssertFalse(controller.isColumnPinnedForTesting(0))
+    }
+
+    func testTwoPinnedColumnsClusterAtFrontInPinOrder() throws {
+        let controller = try openController(csv: "a,b,c,d\n1,2,3,4\n")
+        defer { controller.close() }
+
+        controller.pinColumnToFrontForTesting(3)
+        controller.pinColumnToFrontForTesting(1)
+        XCTAssertEqual(Array(controller.visualDataColumnOrderForTesting.prefix(2)), [3, 1], "second pin sits after the first")
+    }
+
+    func testUnpinRemovesPinnedFlag() throws {
+        let controller = try openController(csv: "a,b,c\n1,2,3\n")
+        defer { controller.close() }
+
+        controller.pinColumnToFrontForTesting(2)
+        XCTAssertTrue(controller.isColumnPinnedForTesting(2))
+        controller.unpinColumnForTesting(2)
+        XCTAssertFalse(controller.isColumnPinnedForTesting(2))
+    }
+
+    func testPinnedColumnsRestoreToFrontOnReopen() throws {
+        let path = try temporaryCsvPath()
+        try "a,b,c\n1,2,3\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+
+        let first = MainWindowController()
+        first.showWindow(nil)
+        first.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(first)
+        first.pinColumnToFrontForTesting(2)
+        first.close()
+
+        let second = MainWindowController()
+        second.showWindow(nil)
+        defer { second.close() }
+        second.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(second)
+
+        XCTAssertEqual(second.visualDataColumnOrderForTesting.first, 2)
+        XCTAssertTrue(second.isColumnPinnedForTesting(2), "pinned state persists across reopen")
     }
 
     func testColumnChecklistTogglesVisibility() throws {

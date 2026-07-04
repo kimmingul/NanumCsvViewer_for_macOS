@@ -56,6 +56,7 @@ final class MainWindowController: NSWindowController {
     private static let autoRestoreViewDefaultsKey = "NanumCsvViewerMac.AutoRestoreView"
     private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
     private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
+    private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
     private static let facetColumnLimit = 24
     private static let savedViewsDefaultsKey = "NanumCsvViewerMac.SavedViewsByPath"
@@ -1341,6 +1342,73 @@ extension MainWindowController {
         updateTableDocumentWidthForViewport()
     }
 
+    // MARK: - Pin columns to front
+
+    private func pinnedColumnsMap() -> [String: [Int]] {
+        (UserDefaults.standard.dictionary(forKey: Self.pinnedColumnsDefaultsKey) as? [String: [Int]]) ?? [:]
+    }
+
+    private func pinnedColumns() -> [Int] {
+        guard let currentFilePath else { return [] }
+        return (pinnedColumnsMap()[currentFilePath] ?? []).filter { $0 >= 0 && $0 < columnNames.count }
+    }
+
+    func isColumnPinned(_ column: Int) -> Bool {
+        pinnedColumns().contains(column)
+    }
+
+    private func persistPinnedColumns(_ pinned: [Int]) {
+        guard let currentFilePath else { return }
+        var map = pinnedColumnsMap()
+        map[currentFilePath] = pinned.isEmpty ? nil : pinned
+        map = map.filter { path, _ in path == currentFilePath || FileManager.default.fileExists(atPath: path) }
+        UserDefaults.standard.set(map, forKey: Self.pinnedColumnsDefaultsKey)
+    }
+
+    @objc private func pinColumnFromMenu(_ sender: NSMenuItem) {
+        pinColumnToFront(sender.tag)
+    }
+
+    @objc private func unpinColumnFromMenu(_ sender: NSMenuItem) {
+        unpinColumn(sender.tag)
+    }
+
+    func pinColumnToFront(_ column: Int) {
+        guard column >= 0, column < columnNames.count else { return }
+        var pinned = pinnedColumns()
+        guard !pinned.contains(column) else { return }
+        pinned.append(column)
+        persistPinnedColumns(pinned)
+        moveColumnToVisualPosition(column, position: pinned.count)
+        updateSortHeaders()
+    }
+
+    func unpinColumn(_ column: Int) {
+        var pinned = pinnedColumns()
+        guard let removeIndex = pinned.firstIndex(of: column) else { return }
+        pinned.remove(at: removeIndex)
+        persistPinnedColumns(pinned)
+        updateSortHeaders()
+    }
+
+    private func moveColumnToVisualPosition(_ dataColumn: Int, position: Int) {
+        let identifier = NSUserInterfaceItemIdentifier("c\(dataColumn)")
+        let currentVisual = tableView.column(withIdentifier: identifier)
+        guard currentVisual >= 0, currentVisual != position else { return }
+        tableView.moveColumn(currentVisual, toColumn: position)
+    }
+
+    private func applyPinnedColumns() {
+        let pinned = pinnedColumns()
+        guard !pinned.isEmpty else { return }
+        isApplyingColumnOrder = true
+        for (offset, dataColumn) in pinned.enumerated() {
+            moveColumnToVisualPosition(dataColumn, position: offset + 1)
+        }
+        isApplyingColumnOrder = false
+        updateTableDocumentWidthForViewport()
+    }
+
     func populateColumnsMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         guard !columnNames.isEmpty else {
@@ -1785,6 +1853,7 @@ extension MainWindowController {
         filterColumnPopup.selectItem(at: 0)
         updateSortHeaders()
         applyStoredColumnOrder()
+        applyPinnedColumns()
         DispatchQueue.main.async { [weak self] in
             self?.updateTableDocumentWidthForViewport()
         }
@@ -2087,7 +2156,7 @@ extension MainWindowController {
                 let priority = sortKeys.count > 1 ? sortIndex + 1 : nil
                 if let header = column?.headerCell as? SortHeaderCell {
                     header.stringValue = displayTitle
-                    header.titleText = name
+                    header.titleText = isColumnPinned(index) ? "📌 " + name : name
                     header.sortPriority = priority
                     header.ascending = key.ascending
                     header.typeText = typeText
@@ -2099,7 +2168,7 @@ extension MainWindowController {
             } else {
                 if let header = column?.headerCell as? SortHeaderCell {
                     header.stringValue = displayTitle
-                    header.titleText = name
+                    header.titleText = isColumnPinned(index) ? "📌 " + name : name
                     header.sortPriority = nil
                     header.ascending = nil
                     header.typeText = typeText
@@ -3649,9 +3718,24 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func makeColumnHeaderMenu(column: Int) -> NSMenu? {
-        guard let report = columnStatisticsReport, let summary = report.columns[safe: column] else { return nil }
+        guard column >= 0, column < columnNames.count else { return nil }
         let menu = NSMenu()
         menu.autoenablesItems = false
+
+        if isColumnPinned(column) {
+            let unpin = NSMenuItem(title: L.t("Unpin Column", "컬럼 고정 해제"), action: #selector(unpinColumnFromMenu(_:)), keyEquivalent: "")
+            unpin.target = self
+            unpin.tag = column
+            menu.addItem(unpin)
+        } else {
+            let pin = NSMenuItem(title: L.t("Pin Column to Front", "컬럼 앞으로 고정"), action: #selector(pinColumnFromMenu(_:)), keyEquivalent: "")
+            pin.target = self
+            pin.tag = column
+            menu.addItem(pin)
+        }
+
+        guard let report = columnStatisticsReport, let summary = report.columns[safe: column] else { return menu }
+        menu.addItem(.separator())
         let typeItem = NSMenuItem(title: L.t("Change Type", "타입 변경"), action: nil, keyEquivalent: "")
         let typeMenu = NSMenu()
         typeMenu.autoenablesItems = false
@@ -5558,6 +5642,18 @@ extension MainWindowController {
 
     func canReorderColumnForTesting(from: Int, to: Int) -> Bool {
         self.tableView(tableView, shouldReorderColumn: from, toColumn: to)
+    }
+
+    func pinColumnToFrontForTesting(_ column: Int) {
+        pinColumnToFront(column)
+    }
+
+    func unpinColumnForTesting(_ column: Int) {
+        unpinColumn(column)
+    }
+
+    func isColumnPinnedForTesting(_ column: Int) -> Bool {
+        isColumnPinned(column)
     }
 
     func setRowDensityForTesting(_ density: GridRowDensity) {
