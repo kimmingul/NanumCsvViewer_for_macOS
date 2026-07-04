@@ -156,6 +156,8 @@ final class MainWindowController: NSWindowController {
     private var pivotBuilderWindow: PivotBuilderWindowController?
     private var chartWindows: [ChartWindowController] = []
     private var chartCancellation: CancellationFlag?
+    private var currentDataQualityReport: DataQualityReport?
+    private var dataQualityCancellation: CancellationFlag?
     var openAdditionalFilesHandler: (([URL], NSWindow?) -> Void)?
     var closeHandler: ((MainWindowController) -> Void)?
 
@@ -1109,6 +1111,10 @@ extension MainWindowController: NSMenuItemValidation {
                 return ready
             case #selector(showHistogramChartWindow(_:)), #selector(showBoxplotChartWindow(_:)), #selector(showScatterChartWindow(_:)), #selector(showCorrelationHeatmapWindow(_:)), #selector(showQQPlotChartWindow(_:)), #selector(showTimeseriesChartWindow(_:)), #selector(showParetoChartWindow(_:)):
                 return ready
+            case #selector(runDataQualityProfile(_:)):
+                return ready
+            case #selector(exportDataQualityMarkdown(_:)), #selector(exportDataQualityHtml(_:)), #selector(exportDataQualityJson(_:)):
+                return currentDataQualityReport != nil && !busy
             case #selector(changeEncodingFromMenu(_:)):
                 if let name = menuItem.representedObject as? String {
                     menuItem.state = name == csvDocument?.encodingName ? .on : .off
@@ -1190,6 +1196,7 @@ extension MainWindowController {
         baseColumnStatisticsReport = nil
         columnTypeOverrides = [:]
         currentAnalysisReport = nil
+        currentDataQualityReport = nil
         earlyColumnStatisticsRequested = false
         acceptedColumnStatisticsPriority = 0
 
@@ -1427,6 +1434,7 @@ extension MainWindowController {
             baseColumnStatisticsReport = nil
             columnTypeOverrides = [:]
             currentAnalysisReport = nil
+            currentDataQualityReport = nil
             analysisCancellation?.cancel()
             analysisCancellation = nil
             columnStatisticsCancellation?.cancel()
@@ -2842,6 +2850,108 @@ extension MainWindowController {
             let data = try document.paretoChartData(column: column, cancellation: cancellation)
             guard !data.entries.isEmpty else { return nil }
             return .pareto(data, columnName: name(column))
+        }
+    }
+
+    // MARK: - Data quality
+
+    @objc func runDataQualityProfile(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        dataQualityCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        dataQualityCancellation = cancellation
+        let fileName = (currentFilePath as NSString?)?.lastPathComponent ?? "CSV"
+
+        setInspectorVisible(true, animated: true)
+        detailHeaderLabel.stringValue = L.t("Data Quality", "데이터 품질")
+        detailTextView.string = L.t("Profiling full file...", "전체 파일을 프로파일링 중...")
+        currentInspectorContentKind = .dataQuality
+        updateInspectorCopyButtons()
+        setBusy(true, message: L.t("Profiling data quality...", "데이터 품질 프로파일링 중..."))
+        setProgressVisible(true)
+        updateProgress(0)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak doc] in
+            guard let doc else { return }
+            do {
+                let report = try doc.dataQualityReport(
+                    progress: { pct in
+                        DispatchQueue.main.async {
+                            guard let self, self.dataQualityCancellation === cancellation else { return }
+                            self.updateProgress(pct)
+                        }
+                    },
+                    cancellation: cancellation
+                )
+                DispatchQueue.main.async {
+                    guard let self, doc === self.csvDocument, self.dataQualityCancellation === cancellation else { return }
+                    self.dataQualityCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.currentDataQualityReport = report
+                    self.detailHeaderLabel.stringValue = L.t("Data Quality", "데이터 품질")
+                    self.detailTextView.string = DataQualityReportFormatter.markdown(report: report, fileName: fileName)
+                    self.currentInspectorContentKind = .dataQuality
+                    self.updateInspectorCopyButtons()
+                    self.statusLabel.stringValue = L.t(
+                        "Data quality score: \(report.score)/100",
+                        "데이터 품질 점수: \(report.score)/100"
+                    )
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.dataQualityCancellation === cancellation else { return }
+                    self.dataQualityCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.statusLabel.stringValue = L.t("Data quality scan cancelled.", "데이터 품질 스캔이 취소되었습니다.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.dataQualityCancellation === cancellation else { return }
+                    self.dataQualityCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
+    @objc func exportDataQualityMarkdown(_ sender: Any?) {
+        exportDataQualityReport(fileExtension: "md") { report, fileName in
+            Data(DataQualityReportFormatter.markdown(report: report, fileName: fileName).utf8)
+        }
+    }
+
+    @objc func exportDataQualityHtml(_ sender: Any?) {
+        exportDataQualityReport(fileExtension: "html") { report, fileName in
+            Data(DataQualityReportFormatter.html(report: report, fileName: fileName).utf8)
+        }
+    }
+
+    @objc func exportDataQualityJson(_ sender: Any?) {
+        exportDataQualityReport(fileExtension: "json") { report, _ in
+            try DataQualityReportFormatter.json(report: report)
+        }
+    }
+
+    private func exportDataQualityReport(
+        fileExtension: String,
+        encode: @escaping (DataQualityReport, String) throws -> Data
+    ) {
+        guard let report = currentDataQualityReport, let window else { return }
+        let fileName = (currentFilePath as NSString?)?.lastPathComponent ?? "CSV"
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\((fileName as NSString).deletingPathExtension)-quality.\(fileExtension)"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try encode(report, fileName).write(to: url, options: .atomic)
+                self?.statusLabel.stringValue = L.t("Report exported.", "리포트를 내보냈습니다.")
+            } catch {
+                self?.presentError(error)
+            }
         }
     }
 
@@ -4579,6 +4689,8 @@ extension MainWindowController {
         analysisCancellation?.cancel()
         chartCancellation?.cancel()
         chartCancellation = nil
+        dataQualityCancellation?.cancel()
+        dataQualityCancellation = nil
         facetsCancellation?.cancel()
         facetsCancellation = nil
         facetRefreshWorkItem?.cancel()
@@ -5023,6 +5135,14 @@ extension MainWindowController {
 
     func defaultChartRequestForTesting(kind: ChartKind) -> ChartRequest? {
         defaultChartRequest(for: kind)
+    }
+
+    var dataQualityReportForTesting: DataQualityReport? {
+        currentDataQualityReport
+    }
+
+    var hasPendingDataQualityScanForTesting: Bool {
+        dataQualityCancellation != nil
     }
 
     func setFacetsPanelVisibleForTesting(_ visible: Bool) {

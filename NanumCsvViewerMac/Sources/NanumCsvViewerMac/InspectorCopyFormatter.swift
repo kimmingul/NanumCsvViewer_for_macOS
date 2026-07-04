@@ -6,6 +6,7 @@ enum InspectorContentKind: Equatable {
     case columnStatistics(column: Int)
     case performance
     case analysis
+    case dataQuality
 }
 
 enum InspectorCopyFormatter {

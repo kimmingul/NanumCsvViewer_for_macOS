@@ -254,6 +254,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             visualizationMenu.addItem(NSMenuItem(title: kind.title, action: action, keyEquivalent: ""))
         }
 
+        let dataQualityItem = NSMenuItem(title: L.t("Data Quality", "데이터 품질"), action: nil, keyEquivalent: "")
+        mainMenu.addItem(dataQualityItem)
+        let dataQualityMenu = NSMenu(title: dataQualityItem.title)
+        dataQualityItem.submenu = dataQualityMenu
+        let qualityProfile = NSMenuItem(title: L.t("Run Quality Profile", "품질 프로파일 실행"), action: #selector(MainWindowController.runDataQualityProfile(_:)), keyEquivalent: "Q")
+        qualityProfile.keyEquivalentModifierMask = [.command, .shift]
+        dataQualityMenu.addItem(qualityProfile)
+        dataQualityMenu.addItem(.separator())
+        let qualityMarkdown = NSMenuItem(title: L.t("Export Report as Markdown...", "리포트를 Markdown으로 내보내기..."), action: #selector(MainWindowController.exportDataQualityMarkdown(_:)), keyEquivalent: "")
+        dataQualityMenu.addItem(qualityMarkdown)
+        let qualityHtml = NSMenuItem(title: L.t("Export Report as HTML...", "리포트를 HTML로 내보내기..."), action: #selector(MainWindowController.exportDataQualityHtml(_:)), keyEquivalent: "")
+        dataQualityMenu.addItem(qualityHtml)
+        let qualityJson = NSMenuItem(title: L.t("Export Report as JSON...", "리포트를 JSON으로 내보내기..."), action: #selector(MainWindowController.exportDataQualityJson(_:)), keyEquivalent: "")
+        dataQualityMenu.addItem(qualityJson)
+
         let pivotItem = NSMenuItem(title: L.t("Pivot", "피벗"), action: nil, keyEquivalent: "")
         mainMenu.addItem(pivotItem)
         let pivotMenu = NSMenu(title: pivotItem.title)
@@ -397,6 +412,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "chart.xyaxis.line"
         case #selector(MainWindowController.showParetoChartWindow(_:)):
             return "chart.bar.doc.horizontal"
+        case #selector(MainWindowController.runDataQualityProfile(_:)):
+            return "checkmark.seal"
+        case #selector(MainWindowController.exportDataQualityMarkdown(_:)):
+            return "doc.plaintext"
+        case #selector(MainWindowController.exportDataQualityHtml(_:)):
+            return "chevron.left.forwardslash.chevron.right"
+        case #selector(MainWindowController.exportDataQualityJson(_:)):
+            return "curlybraces"
         case #selector(MainWindowController.showUsage(_:)):
             return "book"
         default:
@@ -420,6 +443,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "chart.xyaxis.line"
         case L.t("Visualization", "시각화"):
             return "chart.bar.xaxis"
+        case L.t("Data Quality", "데이터 품질"):
+            return "checkmark.seal"
         case L.t("Pivot", "피벗"):
             return "tablecells"
         case L.t("Help", "도움말"):
