@@ -36,7 +36,21 @@ conveniences on top of the v1.8.0 feature-parity work.
   skipping the busy scan when auto-restoring a filter-free bookmark).
 - Visual smoke tests: named save/restore picker, Columns checklist, row
   density, and Pin Column to Front verified with screenshots.
+- App bundle and DMG Gatekeeper checks: accepted as Notarized Developer ID.
+- Apple notarization:
+  - App ZIP submission `208d47cc-6f65-4919-aaf7-a3fce088601c`: Accepted.
+  - DMG submission `0d99ee97-1de5-4872-9d6c-b3e66ebdad67`: Accepted.
 - Bumped bundle metadata to version `1.8.1(181)`.
+
+### Distribution
+
+- Bundle version: `1.8.1`
+- Bundle build: `181`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application, notarized and stapled
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.8.1.dmg`: `7a51c228eb5d7503894f538626575944f3fca033efae20733558327f10b538ed`
+  - `Nanum-CSV-Viewer-v1.8.1.zip`: `0908e27b27f0fbee1133cd72d0bec4f4624163a8509b3c79eeffcf0a3653d251`
 
 ## v1.8.0 - 2026-07-04
 
