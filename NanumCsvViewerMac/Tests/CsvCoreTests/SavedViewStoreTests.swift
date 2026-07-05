@@ -80,6 +80,18 @@ final class SavedViewStoreTests: XCTestCase {
         XCTAssertEqual(decoded, store)
     }
 
+    func testRemovePathsWhereDropsMatchingEntries() {
+        var store = SavedViewStore()
+        store.save(view("keep"), forPath: "/a.csv")
+        store.save(view("gone"), forPath: "/b.csv")
+        store.save(view("gone2"), forPath: "/b.csv")
+
+        store.removePaths { $0 == "/b.csv" }
+        XCTAssertEqual(store.names(forPath: "/a.csv"), ["keep"])
+        XCTAssertTrue(store.views(forPath: "/b.csv").isEmpty)
+        XCTAssertNil(store.mostRecent(forPath: "/b.csv"))
+    }
+
     func testMigratesLegacySingleViewMap() throws {
         // The v1.7 format stored [path: base64(SavedCsvView)] with one view per file.
         let legacyA = try JSONEncoder().encode(view("legacyA", currentColumn: 2)).base64EncodedString()

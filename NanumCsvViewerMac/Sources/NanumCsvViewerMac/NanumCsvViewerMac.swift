@@ -40,6 +40,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        // Sweep leftover temp-CSV bridge dirs and clipboard files from prior
+        // sessions off the main thread so it never delays launch. The 10-minute
+        // age gate protects anything a document opened at launch just created.
+        DispatchQueue.global(qos: .utility).async {
+            TempFileCleanup.removeStaleTempFiles(
+                in: FileManager.default.temporaryDirectory,
+                minimumAge: 600,
+                now: Date()
+            )
+        }
         // application(_:openFile:) runs BEFORE this for command-line and
         // Finder-open launches and may already have created a document
         // window; only add the empty window when nothing exists yet.

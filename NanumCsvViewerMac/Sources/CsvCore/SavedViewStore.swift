@@ -68,8 +68,22 @@ public struct SavedViewStore: Equatable, Codable, Sendable {
         }
     }
 
+    /// Drops all bookmarks for paths matching `shouldRemove`. The caller
+    /// supplies the policy (e.g. "the file was deleted") so the store stays a
+    /// pure value type.
+    public mutating func removePaths(where shouldRemove: (String) -> Bool) {
+        for path in viewsByPath.keys where shouldRemove(path) {
+            viewsByPath[path] = nil
+            recencyByPath[path] = nil
+        }
+    }
+
     public func views(forPath path: String) -> [SavedCsvView] {
         viewsByPath[path] ?? []
+    }
+
+    public var paths: [String] {
+        Array(viewsByPath.keys)
     }
 
     public func names(forPath path: String) -> [String] {
