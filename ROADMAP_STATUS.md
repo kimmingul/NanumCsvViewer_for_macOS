@@ -84,13 +84,14 @@ Done in the v1.8 line (2026-07-04):
 
 - ~~Reduce analytics memory pressure~~ — done: analysis, charts, and pivot now stream the view (`forEachDisplayRow`/`forEachDataRow`) and project to used columns instead of materializing `currentDisplayRows`, cutting peak memory from O(rows × allColumns) to O(rows × few).
 
+- ~~Clean up temporary files~~ — done: clipboard import files and Excel/SQLite temp-CSV bridge dirs are swept on launch with an age gate.
+- ~~Prune per-file persistence maps~~ — done: saved views prune deleted files (parent-dir heuristic), column-order and pinned maps prune on write, hidden columns are a single global array.
+
 Remaining:
 
 1. Add repeatable in-app benchmark runs to the performance dashboard.
 2. Add theme and font controls beyond system light/dark mode.
 3. Improve export UX with encoding selection, open-after-export, and large JSON progress behavior.
-4. Clean up temporary files created by clipboard quick import and by Excel/SQLite temp-CSV bridges.
-5. Prune per-file persistence maps (saved views, hidden columns) for files that no longer exist (column order and pinned maps already pruned).
 
 ## Release Guidance
 
