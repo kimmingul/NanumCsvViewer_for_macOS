@@ -1212,14 +1212,20 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     public func findDuplicates(columns: [Int], cancellation: CancellationFlag) throws -> [DuplicateGroup] {
         let columns = columns.filter { $0 >= 0 && $0 < columnCount }
         guard !columns.isEmpty else { return [] }
-        let bound = analysisRowScanBound
-        var rows: [(fields: [String], sourceRow: Int64)] = []
-        rows.reserveCapacity(bound)
-        for viewRow in 0..<bound {
-            if viewRow & 0x3FFF == 0 { try cancellation.check() }
-            rows.append((try getDisplayRow(viewRow), getSourceRowNumber(viewRow)))
+        var indexMap: [Int: Int] = [:]
+        var ordered: [Int] = []
+        for column in columns where indexMap[column] == nil {
+            indexMap[column] = ordered.count
+            ordered.append(column)
         }
-        return CsvAnalytics.findDuplicates(rows: rows, columns: columns)
+        // Project to only the compared columns while streaming; still holds one
+        // reduced row per scanned row (duplicate groups reference every member).
+        var rows: [(fields: [String], sourceRow: Int64)] = []
+        rows.reserveCapacity(min(displayRowCount, Self.analysisRowLimit))
+        try forEachDataRow(cancellation: cancellation) { dataRow, full in
+            rows.append((ordered.map { $0 >= 0 && $0 < full.count ? full[$0] : "" }, Int64(dataRow) + 1))
+        }
+        return CsvAnalytics.findDuplicates(rows: rows, columns: columns.map { indexMap[$0] ?? 0 })
     }
 
     public func groupBy(groupColumns: [Int], valueColumn: Int, functions: [AggregationFunction], cancellation: CancellationFlag) throws -> GroupByResult {
@@ -1227,25 +1233,40 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         guard !groupColumns.isEmpty, valueColumn >= 0, valueColumn < columnCount else {
             return GroupByResult(groupColumns: groupColumns, valueColumn: valueColumn, functions: functions, rows: [])
         }
-        let rows = try currentDisplayRows(cancellation: cancellation)
-        return CsvAnalytics.groupBy(rows: rows, groupColumns: groupColumns, valueColumn: valueColumn, functions: functions)
+        let projected = try projectedDisplayRows(columns: groupColumns + [valueColumn], cancellation: cancellation)
+        let result = CsvAnalytics.groupBy(
+            rows: projected.rows,
+            groupColumns: groupColumns.map { projected.indexMap[$0] ?? 0 },
+            valueColumn: projected.indexMap[valueColumn] ?? 0,
+            functions: functions
+        )
+        // Report original column indices, not the projected positions.
+        return GroupByResult(groupColumns: groupColumns, valueColumn: valueColumn, functions: result.functions, rows: result.rows)
     }
 
     public func numericDistribution(column: Int, binCount: Int = 10, cancellation: CancellationFlag) throws -> NumericDistribution {
         guard column >= 0, column < columnCount else {
             return CsvAnalytics.numericDistribution(values: [], column: column, binCount: binCount)
         }
-        let values = try currentDisplayRows(cancellation: cancellation).compactMap { row -> Double? in
-            guard column < row.count else { return nil }
-            return Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines))
+        var values: [Double] = []
+        try forEachDisplayRow(cancellation: cancellation) { row in
+            guard column < row.count,
+                  let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+            values.append(value)
         }
         return CsvAnalytics.numericDistribution(values: values, column: column, binCount: binCount)
     }
 
     public func dateHistogram(dateColumn: Int, valueColumn: Int? = nil, period: DateBinPeriod, cancellation: CancellationFlag) throws -> DateHistogram {
-        let rows = try currentDisplayRows(cancellation: cancellation)
         let valueColumn = valueColumn.flatMap { $0 >= 0 && $0 < columnCount ? $0 : nil }
-        return CsvAnalytics.dateHistogram(rows: rows, dateColumn: dateColumn, valueColumn: valueColumn, period: period)
+        let projected = try projectedDisplayRows(columns: [dateColumn] + (valueColumn.map { [$0] } ?? []), cancellation: cancellation)
+        let result = CsvAnalytics.dateHistogram(
+            rows: projected.rows,
+            dateColumn: projected.indexMap[dateColumn] ?? 0,
+            valueColumn: valueColumn.flatMap { projected.indexMap[$0] },
+            period: period
+        )
+        return DateHistogram(dateColumn: dateColumn, valueColumn: valueColumn, period: result.period, bins: result.bins)
     }
 
     public func pivotTable(
@@ -1273,16 +1294,35 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 values: [:]
             )
         }
-        return try CsvAnalytics.pivotTable(
-            rows: try currentDisplayRows(cancellation: cancellation),
+        // Project to only the columns the pivot references and remap every
+        // column-index parameter, so the scan stays at O(rows × usedColumns).
+        let usedColumns = rowColumns + columnColumns + [valueColumn] + filters.map(\.column) + Array(dateGroupings.keys)
+        let projected = try projectedDisplayRows(columns: usedColumns, cancellation: cancellation)
+        func remap(_ column: Int) -> Int { projected.indexMap[column] ?? 0 }
+        let remappedFilters = filters.map { PivotFilter(column: remap($0.column), selectedValue: $0.selectedValue) }
+        let remappedDateGroupings = Dictionary(uniqueKeysWithValues: dateGroupings.map { (remap($0.key), $0.value) })
+        let rowColumnNames = rowColumns.map { header[$0].isEmpty ? "Column \($0 + 1)" : header[$0] }
+        let result = try CsvAnalytics.pivotTable(
+            rows: projected.rows,
+            rowColumns: rowColumns.map(remap),
+            rowColumnNames: rowColumnNames,
+            columnColumns: columnColumns.map(remap),
+            valueColumn: remap(valueColumn),
+            function: function,
+            filters: remappedFilters,
+            dateGroupings: remappedDateGroupings,
+            cancellation: cancellation
+        )
+        // Report original column indices; keys/values are data, not indices.
+        return PivotTableResult(
             rowColumns: rowColumns,
-            rowColumnNames: rowColumns.map { header[$0].isEmpty ? "Column \($0 + 1)" : header[$0] },
+            rowColumnNames: rowColumnNames,
             columnColumns: columnColumns,
             valueColumn: valueColumn,
-            function: function,
-            filters: filters,
-            dateGroupings: dateGroupings,
-            cancellation: cancellation
+            function: result.function,
+            rowKeys: result.rowKeys,
+            columnKeys: result.columnKeys,
+            values: result.values
         )
     }
 
@@ -1311,13 +1351,12 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
 
     public func correlation(xColumn: Int, yColumn: Int, method: CorrelationMethod, cancellation: CancellationFlag) throws -> CorrelationResult {
-        let pairs = try currentDisplayRows(cancellation: cancellation).compactMap { row -> (Double, Double)? in
+        var pairs: [(Double, Double)] = []
+        try forEachDisplayRow(cancellation: cancellation) { row in
             guard xColumn < row.count, yColumn < row.count,
                   let x = Double(row[xColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  let y = Double(row[yColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                return nil
-            }
-            return (x, y)
+                  let y = Double(row[yColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+            pairs.append((x, y))
         }
         return CsvStatistics.correlation(pairs: pairs, method: method)
     }
@@ -1325,11 +1364,9 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     public func independentTTest(groupColumn: Int, valueColumn: Int, groupA: String, groupB: String, cancellation: CancellationFlag) throws -> IndependentTTestResult {
         var a: [Double] = []
         var b: [Double] = []
-        for row in try currentDisplayRows(cancellation: cancellation) {
+        try forEachDisplayRow(cancellation: cancellation) { row in
             guard groupColumn < row.count, valueColumn < row.count,
-                  let value = Double(row[valueColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                continue
-            }
+                  let value = Double(row[valueColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
             if row[groupColumn] == groupA {
                 a.append(value)
             } else if row[groupColumn] == groupB {
@@ -1342,12 +1379,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     public func pairedTTest(beforeColumn: Int, afterColumn: Int, cancellation: CancellationFlag) throws -> PairedTTestResult {
         var before: [Double] = []
         var after: [Double] = []
-        for row in try currentDisplayRows(cancellation: cancellation) {
+        try forEachDisplayRow(cancellation: cancellation) { row in
             guard beforeColumn < row.count, afterColumn < row.count,
                   let b = Double(row[beforeColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  let a = Double(row[afterColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                continue
-            }
+                  let a = Double(row[afterColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
             before.append(b)
             after.append(a)
         }
@@ -1355,9 +1390,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     }
 
     public func chiSquareTest(rowColumn: Int, columnColumn: Int, cancellation: CancellationFlag) throws -> ChiSquareResult {
-        let pairs = try currentDisplayRows(cancellation: cancellation).compactMap { row -> (String, String)? in
-            guard rowColumn < row.count, columnColumn < row.count else { return nil }
-            return (row[rowColumn], row[columnColumn])
+        var pairs: [(String, String)] = []
+        try forEachDisplayRow(cancellation: cancellation) { row in
+            guard rowColumn < row.count, columnColumn < row.count else { return }
+            pairs.append((row[rowColumn], row[columnColumn]))
         }
         return CsvStatistics.chiSquare(rows: pairs)
     }
@@ -1582,15 +1618,54 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         setViewMap(nil)
     }
 
-    func currentDisplayRows(cancellation: CancellationFlag) throws -> [[String]] {
-        let bound = analysisRowScanBound
-        var rows: [[String]] = []
-        rows.reserveCapacity(bound)
-        for viewRow in 0..<bound {
-            if viewRow & 0x3FFF == 0 { try cancellation.check() }
-            rows.append(try getDisplayRow(viewRow))
+    /// Streams display rows (current filter/sort order) up to the analysis cap,
+    /// one at a time, so an analysis/chart/pivot scan never materializes the
+    /// whole view. Reads bypass the row cache (like `distinctValues` and
+    /// `facetSummaries`) so a full scan does not evict the visible-row cache.
+    public func forEachDisplayRow(cancellation: CancellationFlag, _ body: ([String]) throws -> Void) throws {
+        // Avoids materializing an identity map for huge unfiltered files — that
+        // allocation is exactly what this streaming API exists to prevent.
+        try forEachDataRow(cancellation: cancellation) { _, row in try body(row) }
+    }
+
+    /// Like `forEachDisplayRow` but also yields each row's underlying data-row
+    /// index (for callers that need the source row number).
+    func forEachDataRow(cancellation: CancellationFlag, _ body: (Int, [String]) throws -> Void) throws {
+        let limit = Self.analysisRowLimit
+        if let baseMap = viewMapSnapshot() {
+            let bound = min(baseMap.count, limit)
+            for index in 0..<bound {
+                if index & 0xFFF == 0 { try cancellation.check() }
+                let dataRow = baseMap[index]
+                try body(dataRow, try getDataRowUncached(dataRow))
+            }
+        } else {
+            let bound = min(dataRowsAvailable, limit)
+            for dataRow in 0..<bound {
+                if dataRow & 0xFFF == 0 { try cancellation.check() }
+                try body(dataRow, try getDataRowUncached(dataRow))
+            }
         }
-        return rows
+    }
+
+    /// Streams the view and keeps only `columns` (deduplicated, in the given
+    /// order) per row, so aggregators that consume `[[String]]` run at
+    /// O(rows × usedColumns) memory instead of O(rows × allColumns). Returns
+    /// the reduced rows and a map from original column index to its position
+    /// in the projected rows.
+    func projectedDisplayRows(columns: [Int], cancellation: CancellationFlag) throws -> (rows: [[String]], indexMap: [Int: Int]) {
+        var indexMap: [Int: Int] = [:]
+        var ordered: [Int] = []
+        for column in columns where indexMap[column] == nil {
+            indexMap[column] = ordered.count
+            ordered.append(column)
+        }
+        var rows: [[String]] = []
+        rows.reserveCapacity(min(displayRowCount, Self.analysisRowLimit))
+        try forEachDisplayRow(cancellation: cancellation) { row in
+            rows.append(ordered.map { $0 >= 0 && $0 < row.count ? row[$0] : "" })
+        }
+        return (rows, indexMap)
     }
 
     private static func csvEscaped(_ value: String) -> String {
