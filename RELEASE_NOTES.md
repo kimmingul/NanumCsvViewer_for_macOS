@@ -4,6 +4,47 @@
 
 No unreleased changes.
 
+## v1.8.2 - 2026-07-06
+
+A maintenance release focused on large-file robustness and cleanup. No
+user-facing feature changes — analytics, charts, and pivots produce identical
+results.
+
+### Improvements
+
+- Analysis, chart, and pivot scans now stream the current view one row at a
+  time and read only the columns each computation needs, instead of
+  materializing the whole filtered view (up to 2,000,000 rows × every column)
+  in memory. This removes a memory spike / out-of-memory risk on wide files at
+  the advertised row scale, and a full analysis scan no longer evicts the
+  visible-row cache.
+- Temporary files are cleaned up: the Excel/SQLite temp-CSV bridge directories
+  and clipboard quick-import files, which previously accumulated under the user
+  temp directory across sessions, are now swept on launch (with an age gate so
+  a document opened at launch is never affected).
+- Saved-view bookmarks for deleted files are pruned when their folder still
+  exists, while bookmarks on temporarily-unmounted volumes are kept.
+
+### Validation
+
+- `swift test`: 352 tests passing.
+- Adversarial review by Codex (approach) and Grok (implementation) of the
+  streaming refactor; findings adjudicated and fixed.
+- App bundle and DMG Gatekeeper checks: accepted as Notarized Developer ID.
+- Apple notarization:
+  - App ZIP submission `2f2fcf54-7fda-46ef-bcd8-0f41a3ab0a9c` and DMG submission `ddf3d6a7-8181-46d0-aaee-25aceb3e9f27`: Accepted.
+- Bumped bundle metadata to version `1.8.2(182)`.
+
+### Distribution
+
+- Bundle version: `1.8.2`
+- Bundle build: `182`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application, notarized and stapled
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.8.2.dmg`: `7c5b5a59e864cdb0d83bce173fa8f23c977a149aba265aaa52c51681b81409de`
+  - `Nanum-CSV-Viewer-v1.8.2.zip`: `67ed901c65a3c1255df7f7770803e1538d316909738e3f2c9bd652c25c57b63e`
+
 ## v1.8.1 - 2026-07-05
 
 This release adds the v1 roadmap's remaining column, saved-view, and layout
