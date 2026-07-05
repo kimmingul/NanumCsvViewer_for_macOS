@@ -80,6 +80,12 @@ cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
+## v1.8.2 Notes
+
+- Analysis, charts, and pivots now stream the current view instead of loading it entirely into memory, so large-file analysis stays within a bounded memory footprint. Results are unchanged.
+- The app cleans up its temporary Excel/SQLite bridge files and clipboard-import files on launch, and prunes saved-view bookmarks for deleted files.
+- App bundle metadata now uses version `1.8.2(182)`.
+
 ## v1.8.1 User Workflows
 
 - Save several named views per file with `View > Save View As...`, switch between them from `Restore Saved View...`, and enable `Restore View on Open` to reapply the most recent one automatically.
