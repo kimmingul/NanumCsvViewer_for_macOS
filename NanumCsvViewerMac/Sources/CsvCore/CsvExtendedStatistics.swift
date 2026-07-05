@@ -379,16 +379,6 @@ extension CsvStatistics {
 }
 
 extension VirtualCsvDocument {
-    /// Streams display rows and extracts single-column values without
-    /// materializing the full row set (rows x columns) in memory.
-    private func forEachDisplayRow(cancellation: CancellationFlag, _ body: ([String]) -> Void) throws {
-        let total = analysisRowScanBound
-        for viewRow in 0..<total {
-            if viewRow & 0xFFF == 0 { try cancellation.check() }
-            body(try getDisplayRow(viewRow))
-        }
-    }
-
     public func descriptiveStatistics(column: Int, cancellation: CancellationFlag) throws -> DescriptiveStatisticsResult {
         let results = try descriptiveStatisticsBatch(columns: [column], cancellation: cancellation)
         return results[column] ?? CsvStatistics.descriptive(values: [], missingCount: 0)

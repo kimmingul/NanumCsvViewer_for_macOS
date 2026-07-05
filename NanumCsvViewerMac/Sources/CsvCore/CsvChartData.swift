@@ -254,10 +254,10 @@ extension VirtualCsvDocument {
     public func boxplotChartData(groupColumn: Int?, valueColumn: Int, cancellation: CancellationFlag) throws -> BoxplotChartData {
         var grouped: [String: [Double]] = [:]
         var order: [String] = []
-        for row in try currentDisplayRows(cancellation: cancellation) {
+        try forEachDisplayRow(cancellation: cancellation) { row in
             guard valueColumn < row.count,
                   let value = Double(row[valueColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  value.isFinite else { continue }
+                  value.isFinite else { return }
             let key: String
             if let groupColumn {
                 key = groupColumn < row.count ? row[groupColumn] : ""
@@ -288,11 +288,11 @@ extension VirtualCsvDocument {
         cancellation: CancellationFlag
     ) throws -> ScatterChartData {
         var pairs: [(Double, Double)] = []
-        for row in try currentDisplayRows(cancellation: cancellation) {
+        try forEachDisplayRow(cancellation: cancellation) { row in
             guard xColumn < row.count, yColumn < row.count,
                   let x = Double(row[xColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
                   let y = Double(row[yColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  x.isFinite, y.isFinite else { continue }
+                  x.isFinite, y.isFinite else { return }
             pairs.append((x, y))
         }
         let regression = CsvChartMath.linearRegression(pairs: pairs)
@@ -314,14 +314,16 @@ extension VirtualCsvDocument {
 
     public func correlationMatrixChartData(columns: [Int], cancellation: CancellationFlag) throws -> CorrelationMatrixChartData {
         let targets = columns.filter { $0 >= 0 && $0 < columnCount }
-        var series: [Int: [Double?]] = [:]
-        let rows = try currentDisplayRows(cancellation: cancellation)
-        for column in targets {
-            series[column] = rows.map { row in
-                guard column < row.count,
-                      let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
-                      value.isFinite else { return nil }
-                return value
+        var series: [Int: [Double?]] = Dictionary(uniqueKeysWithValues: targets.map { ($0, []) })
+        try forEachDisplayRow(cancellation: cancellation) { row in
+            for column in targets {
+                if column < row.count,
+                   let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
+                   value.isFinite {
+                    series[column]?.append(value)
+                } else {
+                    series[column]?.append(nil)
+                }
             }
         }
         var values = [Double?](repeating: nil, count: targets.count * targets.count)
@@ -357,9 +359,9 @@ extension VirtualCsvDocument {
 
     public func paretoChartData(column: Int, limit: Int = 20, cancellation: CancellationFlag) throws -> ParetoChartData {
         var counts: [String: Int] = [:]
-        for row in try currentDisplayRows(cancellation: cancellation) {
+        try forEachDisplayRow(cancellation: cancellation) { row in
             let value = column >= 0 && column < row.count ? row[column] : ""
-            guard !value.isEmpty else { continue }
+            guard !value.isEmpty else { return }
             counts[value, default: 0] += 1
         }
         let sorted = counts.sorted { lhs, rhs in
@@ -382,11 +384,13 @@ extension VirtualCsvDocument {
 
     private func numericColumnValues(column: Int, cancellation: CancellationFlag) throws -> [Double] {
         guard column >= 0, column < columnCount else { return [] }
-        return try currentDisplayRows(cancellation: cancellation).compactMap { row in
+        var values: [Double] = []
+        try forEachDisplayRow(cancellation: cancellation) { row in
             guard column < row.count,
                   let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  value.isFinite else { return nil }
-            return value
+                  value.isFinite else { return }
+            values.append(value)
         }
+        return values
     }
 }
