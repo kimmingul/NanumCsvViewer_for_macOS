@@ -82,14 +82,15 @@ Done in the v1.8 line (2026-07-04):
 - ~~Performance dashboard memory metrics~~ — process physical-memory footprint added; repeatable benchmark UI still pending.
 - ~~Row-density controls~~ — Compact/Regular/Comfortable shipped; theme and font controls still pending.
 
+- ~~Reduce analytics memory pressure~~ — done: analysis, charts, and pivot now stream the view (`forEachDisplayRow`/`forEachDataRow`) and project to used columns instead of materializing `currentDisplayRows`, cutting peak memory from O(rows × allColumns) to O(rows × few).
+
 Remaining:
 
 1. Add repeatable in-app benchmark runs to the performance dashboard.
 2. Add theme and font controls beyond system light/dark mode.
-3. Reduce analytics memory pressure by streaming or sampling instead of materializing `currentDisplayRows` for every analysis, chart, and pivot (flagged again in the v1.8 adversarial reviews).
-4. Improve export UX with encoding selection, open-after-export, and large JSON progress behavior.
-5. Clean up temporary files created by clipboard quick import and by Excel/SQLite temp-CSV bridges.
-6. Prune per-file persistence maps (saved views, column order, hidden columns) for files that no longer exist.
+3. Improve export UX with encoding selection, open-after-export, and large JSON progress behavior.
+4. Clean up temporary files created by clipboard quick import and by Excel/SQLite temp-CSV bridges.
+5. Prune per-file persistence maps (saved views, hidden columns) for files that no longer exist (column order and pinned maps already pruned).
 
 ## Release Guidance
 
