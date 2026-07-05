@@ -1508,7 +1508,7 @@ extension MainWindowController {
         guard !sheets.isEmpty else { return }
         let base = url.deletingPathExtension().lastPathComponent
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("NanumCsvViewerXlsx", isDirectory: true)
+            .appendingPathComponent(TempFileCleanup.bridgeDirectoryNames[0], isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         operationCancellation?.cancel()
         let cancellation = CancellationFlag()
@@ -1601,7 +1601,7 @@ extension MainWindowController {
         guard !tables.isEmpty else { return }
         let base = url.deletingPathExtension().lastPathComponent
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("NanumCsvViewerSqlite", isDirectory: true)
+            .appendingPathComponent(TempFileCleanup.bridgeDirectoryNames[1], isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         operationCancellation?.cancel()
         let cancellation = CancellationFlag()
@@ -4536,7 +4536,7 @@ extension MainWindowController {
             currentColumn: currentDataColumn,
             columnFilters: columnFilterState
         )
-        var store = savedViewStore()
+        var store = prunedSavedViewStore(savedViewStore())
         store.save(saved, forPath: path)
         persistSavedViewStore(store)
         statusLabel.stringValue = L.t("Saved view \"\(name)\".", "\"\(name)\" 보기를 저장했습니다.")
@@ -4663,6 +4663,19 @@ extension MainWindowController {
         if let data = try? JSONEncoder().encode(store) {
             UserDefaults.standard.set(data, forKey: Self.savedViewStoreDefaultsKey)
         }
+    }
+
+    /// Drops bookmarks for files that were deleted — but only when the parent
+    /// directory still exists, so a temporarily-unmounted volume keeps its
+    /// bookmarks. Called opportunistically when the store is next saved.
+    private func prunedSavedViewStore(_ store: SavedViewStore) -> SavedViewStore {
+        var store = store
+        let fileManager = FileManager.default
+        store.removePaths { path in
+            let parent = (path as NSString).deletingLastPathComponent
+            return fileManager.fileExists(atPath: parent) && !fileManager.fileExists(atPath: path)
+        }
+        return store
     }
 
     private func promptForBookmarkName(default suggestion: String, existing: [String]) -> String? {
