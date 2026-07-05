@@ -85,6 +85,23 @@ final class StreamingAnalyticsTests: XCTestCase {
         XCTAssertEqual(corr.sampleSize, 3)
     }
 
+    func testFrequencyFromCountsMatchesValueBasedResult() {
+        let values = ["a", "b", "a", "c", "a", "b", ""]
+        let fromValues = CsvStatistics.frequencyAnalysis(values: values, blankLabel: "(Blank)")
+        var counts: [String: Int] = [:]
+        for value in values { counts[value, default: 0] += 1 }
+        let fromCounts = CsvStatistics.frequencyAnalysis(counts: counts, total: values.count, blankLabel: "(Blank)")
+        XCTAssertEqual(fromCounts, fromValues, "streaming count path matches the value-list path")
+    }
+
+    func testStreamedFrequencyAnalysisCountsColumn() throws {
+        let (doc, path) = try openIndexed("city\nNY\nLA\nNY\nNY\nLA\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let result = try doc.frequencyAnalysis(column: 0, blankLabel: "(Blank)", cancellation: CancellationFlag())
+        XCTAssertEqual(result.entries.first?.value, "NY")
+        XCTAssertEqual(result.entries.first?.count, 3)
+    }
+
     func testForEachDisplayRowThrowsOnCancellation() throws {
         let (doc, path) = try openIndexed("a\n1\n2\n3\n")
         defer { try? FileManager.default.removeItem(atPath: path) }

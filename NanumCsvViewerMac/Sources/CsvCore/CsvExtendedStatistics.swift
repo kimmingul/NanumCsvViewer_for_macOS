@@ -160,7 +160,12 @@ extension CsvStatistics {
         for value in values {
             counts[value, default: 0] += 1
         }
-        let total = values.count
+        return frequencyAnalysis(counts: counts, total: values.count, blankLabel: blankLabel, limit: limit)
+    }
+
+    /// Frequency result from pre-tallied counts, so a full column can be
+    /// streamed into a count dictionary instead of materialized as `[String]`.
+    static func frequencyAnalysis(counts: [String: Int], total: Int, blankLabel: String, limit: Int? = nil) -> FrequencyAnalysisResult {
         var ordered = counts.sorted { lhs, rhs in
             if lhs.value != rhs.value { return lhs.value > rhs.value }
             return lhs.key.localizedCaseInsensitiveCompare(rhs.key) == .orderedAscending
@@ -410,11 +415,15 @@ extension VirtualCsvDocument {
     }
 
     public func frequencyAnalysis(column: Int, blankLabel: String, limit: Int? = nil, cancellation: CancellationFlag) throws -> FrequencyAnalysisResult {
-        var values: [String] = []
+        // Tally into a count dictionary while streaming instead of retaining
+        // one String per row (frequency only needs distinct-value counts).
+        var counts: [String: Int] = [:]
+        var total = 0
         try forEachDisplayRow(cancellation: cancellation) { row in
-            values.append(column >= 0 && column < row.count ? row[column] : "")
+            counts[column >= 0 && column < row.count ? row[column] : "", default: 0] += 1
+            total += 1
         }
-        return CsvStatistics.frequencyAnalysis(values: values, blankLabel: blankLabel, limit: limit)
+        return CsvStatistics.frequencyAnalysis(counts: counts, total: total, blankLabel: blankLabel, limit: limit)
     }
 
     public func oneWayAnova(groupColumn: Int, valueColumn: Int, cancellation: CancellationFlag) throws -> OneWayAnovaResult {

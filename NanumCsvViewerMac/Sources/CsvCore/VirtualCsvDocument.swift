@@ -1221,6 +1221,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         // Project to only the compared columns while streaming; still holds one
         // reduced row per scanned row (duplicate groups reference every member).
         var rows: [(fields: [String], sourceRow: Int64)] = []
+        rows.reserveCapacity(min(displayRowCount, Self.analysisRowLimit))
         try forEachDataRow(cancellation: cancellation) { dataRow, full in
             rows.append((ordered.map { $0 >= 0 && $0 < full.count ? full[$0] : "" }, Int64(dataRow) + 1))
         }
@@ -1634,14 +1635,14 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         if let baseMap = viewMapSnapshot() {
             let bound = min(baseMap.count, limit)
             for index in 0..<bound {
-                if index & 0x3FFF == 0 { try cancellation.check() }
+                if index & 0xFFF == 0 { try cancellation.check() }
                 let dataRow = baseMap[index]
                 try body(dataRow, try getDataRowUncached(dataRow))
             }
         } else {
             let bound = min(dataRowsAvailable, limit)
             for dataRow in 0..<bound {
-                if dataRow & 0x3FFF == 0 { try cancellation.check() }
+                if dataRow & 0xFFF == 0 { try cancellation.check() }
                 try body(dataRow, try getDataRowUncached(dataRow))
             }
         }
@@ -1660,6 +1661,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             ordered.append(column)
         }
         var rows: [[String]] = []
+        rows.reserveCapacity(min(displayRowCount, Self.analysisRowLimit))
         try forEachDisplayRow(cancellation: cancellation) { row in
             rows.append(ordered.map { $0 >= 0 && $0 < row.count ? row[$0] : "" })
         }
