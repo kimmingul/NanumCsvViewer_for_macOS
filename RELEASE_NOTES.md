@@ -4,6 +4,48 @@
 
 No unreleased changes.
 
+## v1.9.0 - 2026-07-08
+
+A feature release adding export, appearance, and benchmarking controls.
+
+### New features
+
+- **Export options.** The export save panel now offers an encoding choice
+  (UTF-8, UTF-8 with BOM, or CP949 / EUC-KR) and a "Reveal in Finder after
+  export" checkbox, and shows export progress. The encoding and BOM apply to
+  CSV only — JSON, HTML, and Markdown are always written as UTF-8. A CSV export
+  to CP949 that has to substitute an unrepresentable character now warns
+  instead of dropping it silently.
+- **Appearance control.** A View ▸ Appearance submenu forces System, Light, or
+  Dark mode app-wide; the choice is remembered across launches.
+- **Font size control.** A View ▸ Font Size submenu (Small / Medium / Large)
+  scales the grid text and the row-number gutter, independently of row density,
+  with the row height growing as needed so text never clips.
+- **Benchmark.** View ▸ Run Benchmark (⌥⌘B) times a set of read-only scans over
+  the current view — full scan, search, and distinct values — and reports each
+  operation's time, rows processed, and rows/second, plus a total. It changes
+  nothing in the view and can be re-run repeatedly.
+
+### Validation
+
+- `swift test`: 370 tests passing.
+- Adversarial review by Codex and Grok of all three features; findings
+  adjudicated and fixed.
+- App bundle and DMG Gatekeeper checks: accepted as Notarized Developer ID.
+- Apple notarization:
+  - App ZIP submission `2df776c9-a5e9-448e-aabb-b14536dae0dd` and DMG submission `f52f2afe-e878-4f03-a965-29c7bf319272`: Accepted.
+- Bumped bundle metadata to version `1.9.0(190)`.
+
+### Distribution
+
+- Bundle version: `1.9.0`
+- Bundle build: `190`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application, notarized and stapled
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.9.0.dmg`: `3fc618bae73bca1b083b6ae7d963c139a899589e648a5003d75dd987985c8fe5`
+  - `Nanum-CSV-Viewer-v1.9.0.zip`: `1d93c32c356cf4e4ec19e142f80060ef3b4444f0523dca436ccb67e5e8ceac44`
+
 ## v1.8.2 - 2026-07-06
 
 A maintenance release focused on large-file robustness and cleanup. No

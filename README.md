@@ -80,6 +80,13 @@ cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
+## v1.9.0 User Workflows
+
+- **Choose an export encoding.** File ▸ Export… now shows an encoding popup (UTF-8, UTF-8 with BOM, or CP949 / EUC-KR) and an option to reveal the file in Finder afterward. Encoding applies to CSV; JSON/HTML/Markdown stay UTF-8. A CP949 export warns if any character could not be represented.
+- **Switch appearance and font size.** View ▸ Appearance sets System / Light / Dark for the whole app; View ▸ Font Size sets Small / Medium / Large grid text. Both are remembered across launches and combine with Row Density.
+- **Benchmark the current view.** View ▸ Run Benchmark (⌥⌘B) times full-scan, search, and distinct-value passes and reports rows/second — repeatable and read-only.
+- App bundle metadata now uses version `1.9.0(190)`.
+
 ## v1.8.2 Notes
 
 - Analysis, charts, and pivots now stream the current view instead of loading it entirely into memory, so large-file analysis stays within a bounded memory footprint. Results are unchanged.
