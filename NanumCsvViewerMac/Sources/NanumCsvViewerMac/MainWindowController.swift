@@ -70,6 +70,13 @@ final class MainWindowController: NSWindowController {
     private static let analysisPromptLabelWidth: CGFloat = 150
     private static let analysisPromptPopupWidth: CGFloat = 340
     private static let analysisPromptButtonWidth: CGFloat = 96
+    private static let sasImportEnabledKey = "NanumCsvViewerMac.SasImportEnabled"
+    private static var sasImportEnabled: Bool {
+        if UserDefaults.standard.object(forKey: sasImportEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: sasImportEnabledKey)
+    }
 
     private let tableView = CsvTableView()
     private let scrollView = NSScrollView()
@@ -88,6 +95,7 @@ final class MainWindowController: NSWindowController {
     private let analysisExportButton = NSButton()
     private let analysisCancelButton = NSButton()
     private let statusLabel = NSTextField(labelWithString: L.t("Open a CSV or text file.", "CSV 또는 텍스트 파일을 여세요."))
+    private let importWarningLabel = NSTextField(labelWithString: "")
     private let documentInfoLabel = NSTextField(labelWithString: L.t("No file", "파일 없음"))
     private let storageModeLabel = NSTextField(labelWithString: "")
     private let progressLabel = NSTextField(labelWithString: "")
@@ -150,6 +158,7 @@ final class MainWindowController: NSWindowController {
     private var columnStatisticsReport: ColumnStatisticsReport?
     private var baseColumnStatisticsReport: ColumnStatisticsReport?
     private var columnTypeOverrides: [Int: ColumnValueType] = [:]
+    private var currentImportMetadata: ImportMetadata?
     private var columnStatisticsCancellation: CancellationFlag?
     private var analysisCancellation: CancellationFlag?
     private var currentAnalysisReport: AnalysisReport?
@@ -572,6 +581,14 @@ final class MainWindowController: NSWindowController {
         statusLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         stack.addArrangedSubview(statusLabel)
+
+        importWarningLabel.textColor = .systemOrange
+        importWarningLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        importWarningLabel.lineBreakMode = .byTruncatingTail
+        importWarningLabel.isHidden = true
+        importWarningLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        importWarningLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        stack.addArrangedSubview(importWarningLabel)
 
         progressLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         progressLabel.alignment = .right
@@ -1515,6 +1532,18 @@ extension MainWindowController {
     }
 
     func openFileURL(_ url: URL) {
+        if BinaryImportRouting.isLegacyXls(url: url) {
+            openXlsWorkbook(url)
+            return
+        }
+        if BinaryImportRouting.isSpssSav(url: url) {
+            openSavFile(url)
+            return
+        }
+        if BinaryImportRouting.isSas7bdat(url: url, enabled: Self.sasImportEnabled) {
+            openSasFile(url)
+            return
+        }
         if SqliteWorkbook.hasSqliteExtension(url.path) || SqliteWorkbook.isSqliteFile(path: url.path) {
             openSqliteDatabase(url)
             return
@@ -1524,6 +1553,137 @@ extension MainWindowController {
             return
         }
         openFile(url)
+    }
+
+    private func openSavFile(_ url: URL) {
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NanumCsvViewerSav", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        setBusy(true, message: L.t("Converting SPSS file...", "SPSS 파일 변환 중..."))
+
+        ImportClient().importSav(sourceURL: url, destinationDir: tempDir, limits: .phase2Default) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.operationCancellation === cancellation else { return }
+                self.operationCancellation = nil
+                self.setBusy(false)
+                switch result {
+                case .success(let importResult):
+                    let metadata = importResult.metadataURL.flatMap { try? self.loadImportMetadata(from: $0) }
+                    self.openFile(importResult.csvURL, importMetadata: metadata)
+                    self.statusLabel.stringValue = L.t("Opened SPSS file read-only.", "SPSS 파일을 읽기 전용으로 열었습니다.")
+                case .failure(let error):
+                    self.presentError(error)
+                    self.statusLabel.stringValue = L.t("SPSS import failed.", "SPSS 가져오기에 실패했습니다.")
+                }
+            }
+        }
+    }
+
+    private func openSasFile(_ url: URL) {
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NanumCsvViewerSas", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        setBusy(true, message: L.t("Converting SAS file...", "SAS 파일 변환 중..."))
+
+        ImportClient().importSas7bdat(sourceURL: url, destinationDir: tempDir, limits: .phase3Default) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.operationCancellation === cancellation else { return }
+                self.operationCancellation = nil
+                self.setBusy(false)
+                switch result {
+                case .success(let importResult):
+                    let metadata = importResult.metadataURL.flatMap { try? self.loadImportMetadata(from: $0) }
+                    let warning = importResult.warnings.first?.message ?? L.t(
+                        "SAS import is best-effort; verify critical data against SAS.",
+                        "SAS 가져오기는 best-effort입니다. 중요한 데이터는 SAS에서 확인하세요."
+                    )
+                    self.openFile(importResult.csvURL, importMetadata: metadata, importWarningText: warning)
+                    self.statusLabel.stringValue = L.t("Opened SAS file read-only.", "SAS 파일을 읽기 전용으로 열었습니다.")
+                case .failure(let error):
+                    self.presentError(error)
+                    self.statusLabel.stringValue = L.t("SAS import failed.", "SAS 가져오기에 실패했습니다.")
+                }
+            }
+        }
+    }
+
+    private func openXlsWorkbook(_ url: URL) {
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: L.t("Inspecting Excel workbook...", "Excel 통합 문서 확인 중..."))
+
+        ImportClient().inspectXls(sourceURL: url, limits: .phase1Default) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.operationCancellation === cancellation else { return }
+                self.setBusy(false)
+                switch result {
+                case .success(let inspection):
+                    guard !inspection.sheetNames.isEmpty else {
+                        self.operationCancellation = nil
+                        self.statusLabel.stringValue = L.t("No sheets found in the workbook.", "통합 문서에 시트가 없습니다.")
+                        return
+                    }
+                    if inspection.sheetNames.count == 1 {
+                        self.openXlsSheet(url, sheetName: inspection.sheetNames[0], cancellation: cancellation)
+                    } else {
+                        self.operationCancellation = nil
+                        self.presentXlsSheetPicker(url: url, sheets: inspection.sheetNames)
+                    }
+                case .failure(let error):
+                    self.operationCancellation = nil
+                    self.presentError(error)
+                    self.statusLabel.stringValue = L.t("Excel import failed.", "Excel 가져오기에 실패했습니다.")
+                }
+            }
+        }
+    }
+
+    private func presentXlsSheetPicker(url: URL, sheets: [String]) {
+        let alert = NSAlert()
+        alert.messageText = L.t("Open Excel Sheet", "Excel 시트 열기")
+        alert.informativeText = L.t(
+            "\(url.lastPathComponent) contains \(sheets.count) sheets. The workbook is opened read-only.",
+            "\(url.lastPathComponent)에 시트가 \(sheets.count)개 있습니다. 통합 문서는 읽기 전용으로 열립니다."
+        )
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25))
+        popup.addItems(withTitles: sheets)
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L.t("Open", "열기"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            let cancellation = CancellationFlag()
+            operationCancellation = cancellation
+            openXlsSheet(url, sheetName: popup.titleOfSelectedItem ?? sheets[0], cancellation: cancellation)
+        }
+    }
+
+    private func openXlsSheet(_ url: URL, sheetName: String, cancellation: CancellationFlag) {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NanumCsvViewerXls", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        setBusy(true, message: L.t("Converting Excel sheet...", "Excel 시트 변환 중..."))
+
+        ImportClient().importXls(sourceURL: url, destinationDir: tempDir, sheetName: sheetName, limits: .phase1Default) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.operationCancellation === cancellation else { return }
+                self.operationCancellation = nil
+                self.setBusy(false)
+                switch result {
+                case .success(let importResult):
+                    self.openFile(importResult.csvURL)
+                case .failure(let error):
+                    self.presentError(error)
+                    self.statusLabel.stringValue = L.t("Excel import failed.", "Excel 가져오기에 실패했습니다.")
+                }
+            }
+        }
     }
 
     private func openXlsxWorkbook(_ url: URL) {
@@ -1748,7 +1908,7 @@ extension MainWindowController {
         }
     }
 
-    private func openFile(_ url: URL) {
+    private func openFile(_ url: URL, importMetadata: ImportMetadata? = nil, importWarningText: String? = nil) {
         cancelAll()
         closeAllChartWindows()
         do {
@@ -1758,7 +1918,10 @@ extension MainWindowController {
             indexingElapsed = nil
             columnStatisticsReport = nil
             baseColumnStatisticsReport = nil
-            columnTypeOverrides = [:]
+            currentImportMetadata = importMetadata
+            columnTypeOverrides = importMetadata?.columnTypeOverrides() ?? [:]
+            importWarningLabel.stringValue = importWarningText ?? ""
+            importWarningLabel.isHidden = importWarningText == nil
             currentAnalysisReport = nil
             currentDataQualityReport = nil
             analysisCancellation?.cancel()
@@ -1783,11 +1946,18 @@ extension MainWindowController {
         } catch {
             indexingElapsed = nil
             currentFilePath = nil
+            currentImportMetadata = nil
+            importWarningLabel.stringValue = ""
+            importWarningLabel.isHidden = true
             presentError(error)
             statusLabel.stringValue = L.t("Open failed.", "열기에 실패했습니다.")
             updateEmptyState()
             updateFeatureState()
         }
+    }
+
+    private func loadImportMetadata(from url: URL) throws -> ImportMetadata {
+        try JSONDecoder().decode(ImportMetadata.self, from: Data(contentsOf: url))
     }
 
     private func startIndexing(csvDocument doc: VirtualCsvDocument) {
@@ -3819,7 +3989,12 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             let column = columnIndex(from: identifier)
             do {
                 let fields = try doc.getDisplayRow(row)
-                cell.textField?.stringValue = column < fields.count ? tableCellPreview(fields[column]) : ""
+                if column < fields.count {
+                    let value = currentImportMetadata?.displayValue(rawValue: fields[column], columnIndex: column) ?? fields[column]
+                    cell.textField?.stringValue = tableCellPreview(value)
+                } else {
+                    cell.textField?.stringValue = ""
+                }
             } catch {
                 cell.textField?.stringValue = ""
             }
@@ -5548,6 +5723,14 @@ extension MainWindowController {
         openFile(url)
     }
 
+    func openImportedCsvForTesting(csvURL: URL, metadataURL: URL) {
+        openFile(csvURL, importMetadata: try? loadImportMetadata(from: metadataURL))
+    }
+
+    func openImportedCsvForTesting(csvURL: URL, metadataURL: URL, warningText: String) {
+        openFile(csvURL, importMetadata: try? loadImportMetadata(from: metadataURL), importWarningText: warningText)
+    }
+
     func makePivotBuilderForTesting() -> PivotBuilderWindowController? {
         makePivotBuilder()
     }
@@ -5592,6 +5775,10 @@ extension MainWindowController {
 
     var statusTextForTesting: String {
         statusLabel.stringValue
+    }
+
+    var importWarningTextForTesting: String {
+        importWarningLabel.isHidden ? "" : importWarningLabel.stringValue
     }
 
     var hasCurrentColumnFilterValuesLoadForTesting: Bool {

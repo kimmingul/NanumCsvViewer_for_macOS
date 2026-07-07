@@ -63,6 +63,9 @@ final class TempFileCleanupTests: XCTestCase {
     func testBridgeDirectoryNamesAreStableConstants() {
         XCTAssertTrue(TempFileCleanup.bridgeDirectoryNames.contains("NanumCsvViewerXlsx"))
         XCTAssertTrue(TempFileCleanup.bridgeDirectoryNames.contains("NanumCsvViewerSqlite"))
+        XCTAssertTrue(TempFileCleanup.bridgeDirectoryNames.contains("NanumCsvViewerXls"))
+        XCTAssertTrue(TempFileCleanup.bridgeDirectoryNames.contains("NanumCsvViewerSav"))
+        XCTAssertTrue(TempFileCleanup.bridgeDirectoryNames.contains("NanumCsvViewerSas"))
         XCTAssertEqual(TempFileCleanup.clipboardFilePrefix, "nanum-csv-clipboard-")
     }
 }

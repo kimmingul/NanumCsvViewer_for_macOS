@@ -7,6 +7,10 @@ struct NanumCsvViewerMacApp {
     @MainActor private static var retainedDelegate: AppDelegate?
 
     @MainActor static func main() {
+        if CommandLineEchoImport.runIfRequested() {
+            return
+        }
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         retainedDelegate = delegate

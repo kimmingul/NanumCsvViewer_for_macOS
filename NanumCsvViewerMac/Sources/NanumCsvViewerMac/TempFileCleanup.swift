@@ -5,7 +5,7 @@ import Foundation
 /// quick-import CSVs. These live under the user temp directory, which macOS
 /// only sweeps occasionally, so without this they accumulate across sessions.
 enum TempFileCleanup {
-    static let bridgeDirectoryNames = ["NanumCsvViewerXlsx", "NanumCsvViewerSqlite"]
+    static let bridgeDirectoryNames = ["NanumCsvViewerXlsx", "NanumCsvViewerSqlite", "NanumCsvViewerXls", "NanumCsvViewerSav", "NanumCsvViewerSas"]
     static let clipboardFilePrefix = "nanum-csv-clipboard-"
 
     /// Deletes leftover bridge directories and clipboard files older than

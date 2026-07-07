@@ -165,18 +165,21 @@ Excel workbook import, on top of the Swift 6 migration and grid scroll fixes.
 - Excel workbook import: .xlsx/.xlsm files open through a dependency-free ZIP
   and XML reader with a sheet picker (open one sheet or all sheets in tabs),
   shared strings, cached formula values, booleans, and date-styled serials
-  (1900 and 1904 systems) rendered as ISO dates. Legacy .xls remains
-  unsupported.
+  (1900 and 1904 systems) rendered as ISO dates. Legacy .xls opens read-only
+  through the sandboxed binary import service.
 - The detail panel (inspector) is now visible by default on first launch and
   remembers its visibility; Toggle Inspector moved to F4 to match the twin.
 - Analysis, chart, and pivot scans cap at 2,000,000 rows and reports state
   "showing first N rows" when the cap applies. Exports and filtering still
   process the full view; Data Quality always scans the whole file.
 
-### Scope Notes
+### Binary Import Notes
 
-- SPSS .sav and SAS .sas7bdat import (Windows v1.10-1.12) are documented as a
-  known gap; see ROADMAP_STATUS.md for the decision record.
+- SPSS .sav/.zsav opens read-only through the sandboxed binary import service.
+  Value labels are displayed in grid cells and declared types feed the existing
+  column type override path.
+- SAS .sas7bdat opens read-only as best-effort, with a persistent warning to
+  verify critical data against SAS.
 
 ### Validation
 

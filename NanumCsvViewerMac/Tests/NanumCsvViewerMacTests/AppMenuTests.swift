@@ -130,7 +130,7 @@ final class AppMenuTests: XCTestCase {
             "CEO",
             "Nanum Space Co., Ltd."
         ])
-        XCTAssertEqual(content.footerText, "© 2026 김민걸")
+        XCTAssertEqual(content.footerText, "© 2026 김민걸 · Third-party notices: THIRD_PARTY_NOTICES.md")
     }
 
     func testAboutWindowUsesCompactTypography() {

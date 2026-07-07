@@ -29,7 +29,7 @@ struct AboutWindowContent {
                 "CEO",
                 "Nanum Space Co., Ltd."
             ],
-            footerText: "© 2026 김민걸"
+            footerText: "© 2026 김민걸 · Third-party notices: THIRD_PARTY_NOTICES.md"
         )
     }
 }

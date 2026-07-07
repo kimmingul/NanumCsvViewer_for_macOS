@@ -33,7 +33,8 @@ Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting 
 - Visualization menu with seven statistical chart windows: histogram with KDE and a Shapiro-Wilk badge, grouped boxplot with ANOVA, scatter with OLS fit and density-grid fallback, correlation heatmap, normal Q-Q plot, date-binned time series, and Pareto
 - Extended statistics engine (descriptive statistics, frequency analysis, one-way ANOVA, Shapiro-Wilk normality) with scipy-verified results, plus manual column type override from the header context menu
 - Data Quality menu (Cmd+Shift+P): full-file profiler with sentinel, type-validity, key-uniqueness, ragged-row, and duplicate-row rules, a categorical codebook, a 0-100 score, and Markdown/HTML/JSON report export
-- Excel .xlsx/.xlsm import with a multi-sheet picker (open one sheet or all sheets in tabs), built on a dependency-free ZIP/XML reader with shared strings and 1900/1904 date serial support
+- Excel .xlsx/.xlsm import with a multi-sheet picker (open one sheet or all sheets in tabs), built on a dependency-free ZIP/XML reader with shared strings and 1900/1904 date serial support; legacy .xls opens read-only through a sandboxed XPC importer
+- SPSS .sav/.zsav read-only import with value-label display and declared type metadata, plus best-effort SAS .sas7bdat read-only import with an explicit verification warning
 - SQLite .db/.sqlite/.sqlite3 read-only import with a table/view picker through the same temp-CSV bridge
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
@@ -155,7 +156,7 @@ swift run NanumCsvViewerMac
 
 ## Roadmap Audit Status
 
-The v1.8 release reaches feature parity with the Windows twin v1.15: facet analysis, a graphical statistical chart suite, a data quality module, Excel and SQLite import, extended statistics, and manual column type override, on top of the Swift 6 language-mode migration. SPSS .sav and SAS .sas7bdat import are documented as a known gap (no dependable Swift readers exist; see the scope decision in `ROADMAP_STATUS.md`). Some GitHub v1 roadmap items remain partial: column management does not yet include frozen columns, saved views are one per file rather than multiple named bookmarks, and UI customization controls for theme, font, and row density remain follow-up work.
+The v1.8 release reached feature parity with the Windows twin v1.15. The binary import follow-up adds read-only legacy `.xls`, SPSS `.sav`/`.zsav`, and best-effort SAS `.sas7bdat` through a sandboxed XPC service with vendored C parsers; the main app and `CsvCore` do not link those parser targets. Some GitHub v1 roadmap items remain partial: column management does not yet include frozen columns, saved views are one per file rather than multiple named bookmarks, and UI customization controls for theme, font, and row density remain follow-up work.
 
 See `ROADMAP_STATUS.md` for the detailed issue-by-issue audit and follow-up list.
 

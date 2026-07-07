@@ -1,0 +1,4 @@
+module CReadStat {
+  header "readstat.h"
+  export *
+}

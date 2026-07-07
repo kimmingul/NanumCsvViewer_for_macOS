@@ -75,6 +75,7 @@ Scripts/upload-appstore.sh
 - 전용 분석 조건 sheet와 텍스트 기반 분석 결과
 - SwiftUI Charts 기반 피벗 차트
 - Excel 스타일 피벗 빌더
+- 샌드박스 XPC importer를 통한 legacy `.xls`, SPSS `.sav`/`.zsav`, best-effort SAS `.sas7bdat` 읽기 전용 열기
 - 라이트/다크 시스템 외형 대응
 
 ## Structure

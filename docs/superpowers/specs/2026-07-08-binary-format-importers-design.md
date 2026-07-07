@@ -69,11 +69,14 @@ The main app **must not** depend on `CLibXLS` / `CReadStat` / `ImportService`. I
   connection, with its **own** `Info.plist` and **own, tighter** sandbox entitlements:
   `com.apple.security.app-sandbox` = YES, **no** `network.client`, hardened runtime, no JIT.
   File access limited to the handed-in source file and the shared temp bridge directory.
-- Interface (`@objc public protocol ImportServiceProtocol`), one call:
+- Interface (`@objc public protocol ImportServiceProtocol`):
+  `inspectFile(_ handle: NSFileHandle, kind: ImportKind, limits: ImportLimits,
+   reply: (ImportInspection?, ImportError?) -> Void)` for lightweight workbook metadata needed
+  before import, currently `.xls` sheet names only.
   `importFile(_ handle: NSFileHandle, kind: ImportKind, limits: ImportLimits,
    destinationDir: URL, reply: (ImportResult?, ImportError?) -> Void)`.
-  `ImportResult` = temp CSV URL + optional metadata sidecar URL + `[ImportWarning]` + row/col
-  counts. All DTOs are `Sendable` and `NSSecureCoding`.
+  `ImportInspection` = sheet names. `ImportResult` = temp CSV URL + optional metadata sidecar
+  URL + `[ImportWarning]` + row/col counts. All DTOs are `Sendable` and `NSSecureCoding`.
 - The connection client owns `interruptionHandler`/`invalidationHandler`: a parser crash
   surfaces as a clean, user-facing "could not read this file" (fail-closed), and the main app
   stays alive.
@@ -165,11 +168,66 @@ no sidecar (plain grid), which is exactly why it is Phase 1.
 
 ## Open Decisions to Verify During Implementation
 
-- `NSXPCConnection` (serviceName) vs. the newer `XPCSession` API (macOS 14+) — pick during
-  Phase 0 against current Apple docs.
-- Exact service `Info.plist` keys and `ServiceType`.
-- Transferring file access across the XPC boundary under sandbox (`NSFileHandle` transfer vs.
-  security-scoped bookmark) — confirm the service can actually read the file.
-- `iconv` / `zlib` link flags for `ReadStat` on macOS.
-- Whether SAS ships enabled or behind a preference (defer to Phase 3 evidence).
-```
+- **Phase 0 decision, 2026-07-08:** use `NSXPCConnection(serviceName:)` rather than
+  `XPCSession`. Apple documents `NSXPCConnection` as the Foundation RPC API for bundled XPC
+  services, with `@objc` protocol interfaces, `NSSecureCoding` arguments/replies,
+  `NSXPCListener.serviceListener`, and `interruptionHandler`/`invalidationHandler`. The current
+  macOS SDK exposes `XPCSession`, but its public Swift interface is dictionary/Codable-message
+  oriented; it does not match this design's load-bearing `@objc` protocol boundary as directly.
+- **Phase 0 decision, 2026-07-08:** assemble
+  `Contents/XPCServices/com.nanum.csvviewer.ImportService.xpc` with top-level
+  `CFBundleIdentifier`, `CFBundleExecutable`, `CFBundlePackageType=XPC!`, and an `XPCService`
+  dictionary. Use `ServiceType=Application` (the default for app-embedded private services) and
+  `RunLoopType=NSRunLoop` so the Swift service's `NSXPCListener.serviceListener` can own the
+  process lifetime.
+- **Phase 0 decision, 2026-07-08:** pass explicit POSIX file descriptors wrapped in
+  `NSSecureCoding` DTOs that use `NSXPCCoder.encodeXPCObject(xpc_fd_create(...))` /
+  `decodeXPCObject(ofType: XPC_TYPE_FD, ...)`. The initial direct `NSFileHandle` spike failed in
+  the real bundled app: `NSFileHandle` attempted secure-coder serialization and threw
+  `NSFileHandleOperationException` before the message reached the service. A bookmark fallback was
+  also unsuitable for headless/non-user-selected sources. The final Phase 0 bridge has the app
+  pre-create the temp CSV and hand the service only a read descriptor for the source and a write
+  descriptor for the bridge file; the sandboxed service does not need broad path access.
+- **Phase 2 decision, 2026-07-08:** `CReadStat` links system `libiconv` and `libz` from SPM
+  with `.linkedLibrary("iconv")` and `.linkedLibrary("z")`, plus `HAVE_ZLIB=1`. `swift build
+  --target ImportService` proves the target compiles and links without adding any external
+  `.package(...)` dependency.
+- **Phase 3 decision, 2026-07-08:** SAS `.sas7bdat` import is enabled by default because this
+  feature branch was explicitly requested through Phase 3, but it remains gated by the
+  `NanumCsvViewerMac.SasImportEnabled` user default and always shows a persistent best-effort
+  verification warning.
+
+## Phase 1 Implementation Notes — legacy `.xls`
+
+- `libxls` is vendored at `v1.6.3`
+  (`c199d132494833da696b58aa4acf3fc5a36d930b`) under
+  `NanumCsvViewerMac/Sources/CLibXLS`. The vendored target contains reader library sources only;
+  the upstream `xls2csv` CLI is not linked into the app.
+- Only `ImportService` depends on `CLibXLS`. The app target depends on `ImportServiceProtocol`
+  and uses OLE2 magic-byte detection plus XPC calls for `.xls`.
+- `.xls` sheet selection matches the `.xlsx` workflow for supported BIFF workbooks: the app asks
+  the XPC service for sheet names through `inspectFile`; a single-sheet workbook opens directly,
+  while a multi-sheet workbook shows a read-only sheet picker before importing the selected sheet
+  to the temp-CSV bridge.
+- The upstream libxls fuzz corpus is bundled as importer test fixtures. The Phase 1 smoke test
+  feeds each corpus file through the wrapper with resource caps and verifies parser failures leave
+  no partial CSV.
+
+## Phase 2 Implementation Notes — SPSS `.sav`
+
+- `ReadStat` is vendored at
+  `3c68974fbb35c5bf0888fd603cd99b8253477359` under
+  `NanumCsvViewerMac/Sources/CReadStat`. The SPM target compiles the binary reader sources needed
+  for SPSS/SAS and excludes format-specific writer implementations.
+- Only `ImportService` depends on `CReadStat`. The app target routes `.sav` by `$FL2` magic bytes
+  and depends only on `ImportServiceProtocol`.
+- `.sav` and `.zsav` import write a temp CSV plus `import.csv.metadata.json`. The sidecar preserves
+  column labels, declared types, value labels, row count, encoding, and warnings. The app applies
+  declared types through `ColumnTypeOverride` and displays value labels in grid cells.
+
+## Phase 3 Implementation Notes — SAS `.sas7bdat`
+
+- `.sas7bdat` reuses the same `CReadStat` target and sidecar bridge. The app detects the SAS magic
+  bytes at offset 12 and routes only when `NanumCsvViewerMac.SasImportEnabled` is true.
+- SAS import is read-only and best-effort. Imported documents show a persistent warning:
+  "SAS import is best-effort; verify critical data against SAS."

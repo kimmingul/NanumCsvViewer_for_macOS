@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Nanum CSV Viewer"
 APP_PATH="${APP_PATH:-$ROOT/dist/$APP_NAME.app}"
 ENTITLEMENTS="${ENTITLEMENTS:-$ROOT/Config/Release.entitlements}"
+SERVICE_ENTITLEMENTS="${SERVICE_ENTITLEMENTS:-$ROOT/Config/ImportService.entitlements}"
 
 if [[ ! -d "$APP_PATH" ]]; then
   echo "App bundle not found: $APP_PATH" >&2
@@ -28,10 +29,29 @@ fi
 echo "Signing: $APP_PATH"
 echo "Identity: $IDENTITY"
 
+while IFS= read -r -d '' service; do
+  echo "Signing XPC service: $service"
+  if [[ "$IDENTITY" == "-" ]]; then
+    codesign \
+      --force \
+      --options runtime \
+      --entitlements "$SERVICE_ENTITLEMENTS" \
+      --sign "$IDENTITY" \
+      "$service"
+  else
+    codesign \
+      --force \
+      --timestamp \
+      --options runtime \
+      --entitlements "$SERVICE_ENTITLEMENTS" \
+      --sign "$IDENTITY" \
+      "$service"
+  fi
+done < <(find "$APP_PATH/Contents/XPCServices" -name '*.xpc' -type d -print0 2>/dev/null || true)
+
 if [[ "$IDENTITY" == "-" ]]; then
   codesign \
     --force \
-    --deep \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \
     --sign "$IDENTITY" \
@@ -39,7 +59,6 @@ if [[ "$IDENTITY" == "-" ]]; then
 else
   codesign \
     --force \
-    --deep \
     --timestamp \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \
