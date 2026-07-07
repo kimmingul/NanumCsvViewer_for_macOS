@@ -1262,19 +1262,67 @@ extension MainWindowController {
             .html
         ]
         panel.nameFieldStringValue = defaultName
+        let accessory = makeExportAccessoryView()
+        panel.accessoryView = accessory.view
         panel.beginSheetModal(for: window!) { [weak self, weak doc] response in
             guard response == .OK, let url = panel.url, let doc else { return }
+            let encodingName = accessory.encodingPopup.titleOfSelectedItem ?? CsvEncodingName.utf8
+            let reveal = accessory.revealCheckbox.state == .on
             Task { @MainActor in
                 let resolvedFormat = self?.exportFormat(for: url, fallback: format) ?? format
                 let selectedColumns = self?.visibleColumnIndexesForExport()
                 self?.runViewOperation(message: L.t("Exporting...", "내보내는 중...")) { flag, progress in
-                    try doc.exportCurrentView(to: url.path, format: resolvedFormat, selectedColumns: selectedColumns, cancellation: flag)
-                    progress(100)
+                    try doc.exportCurrentView(
+                        to: url.path,
+                        format: resolvedFormat,
+                        encodingName: encodingName,
+                        selectedColumns: selectedColumns,
+                        progress: progress,
+                        cancellation: flag
+                    )
                 } completion: { [weak self] in
                     self?.statusLabel.stringValue = L.t("Exported current view.", "현재 보기를 내보냈습니다.")
+                    if reveal {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
                 }
             }
         }
+    }
+
+    private struct ExportAccessory {
+        let view: NSView
+        let encodingPopup: NSPopUpButton
+        let revealCheckbox: NSButton
+    }
+
+    private func makeExportAccessoryView() -> ExportAccessory {
+        let encodingLabel = NSTextField(labelWithString: L.t("Encoding:", "인코딩:"))
+        let popup = NSPopUpButton()
+        popup.addItems(withTitles: CsvEncodingName.selectable)
+        popup.selectItem(withTitle: CsvEncodingName.utf8)
+        let reveal = NSButton(checkboxWithTitle: L.t("Reveal in Finder after export", "내보낸 뒤 Finder에서 보기"), target: nil, action: nil)
+        reveal.state = .off
+
+        let row = NSStackView(views: [encodingLabel, popup])
+        row.orientation = .horizontal
+        row.spacing = 8
+        let stack = NSStackView(views: [row, reveal])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 380)
+        ])
+        return ExportAccessory(view: container, encodingPopup: popup, revealCheckbox: reveal)
     }
 
     private func exportFormat(for url: URL, fallback: VirtualCsvDocument.ExportFormat) -> VirtualCsvDocument.ExportFormat {
@@ -5628,6 +5676,10 @@ extension MainWindowController {
 
     var tableRowHeightForTesting: CGFloat {
         tableView.rowHeight
+    }
+
+    func exportAccessoryEncodingsForTesting() -> [String] {
+        makeExportAccessoryView().encodingPopup.itemTitles
     }
 
     func exportColumnOrderForTesting() -> [Int]? {

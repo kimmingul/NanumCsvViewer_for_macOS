@@ -1113,15 +1113,37 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         try exportCurrentView(to: outputPath, format: .csv, selectedColumns: selectedColumns, cancellation: cancellation)
     }
 
-    public func exportCurrentView(to outputPath: String, format: ExportFormat, selectedColumns: [Int]? = nil, cancellation: CancellationFlag) throws {
+    public func exportCurrentView(
+        to outputPath: String,
+        format: ExportFormat,
+        encodingName: String = CsvEncodingName.utf8,
+        selectedColumns: [Int]? = nil,
+        progress: ((Int) -> Void)? = nil,
+        cancellation: CancellationFlag
+    ) throws {
         let columns = (selectedColumns ?? Array(0..<columnCount)).filter { $0 >= 0 && $0 < columnCount }
+        let (encoding, byteOrderMark) = EncodingDetector.exportEncoding(named: encodingName)
         FileManager.default.createFile(atPath: outputPath, contents: nil)
         let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: outputPath))
         defer { try? handle.close() }
 
-        func write(_ text: String) throws {
-            try handle.write(contentsOf: Data(text.utf8))
+        if byteOrderMark {
+            try handle.write(contentsOf: Data([0xEF, 0xBB, 0xBF]))
         }
+        func write(_ text: String) throws {
+            // Lossy for non-UTF-8 targets (e.g. CP949) so an unrepresentable
+            // character cannot fail the whole export.
+            let data = text.data(using: encoding, allowLossyConversion: encoding != .utf8) ?? Data(text.utf8)
+            try handle.write(contentsOf: data)
+        }
+
+        let totalRows = displayRowCount
+        func reportProgress(_ row: Int) {
+            if row & 0x3FFF == 0 {
+                progress?(totalRows > 0 ? Int(Int64(row) * 100 / Int64(totalRows)) : 100)
+            }
+        }
+        defer { progress?(100) }
 
         func writeCsvLine(_ fields: [String]) throws {
             let line = fields.map(Self.csvEscaped).joined(separator: ",") + "\n"
@@ -1136,6 +1158,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             for row in 0..<displayRowCount {
                 if row & 0x3FFF == 0 { try cancellation.check() }
                 let fields = try getDisplayRow(row)
+                reportProgress(row)
                 try writeCsvLine(columns.map { $0 < fields.count ? fields[$0] : "" })
             }
         case .markdown:
@@ -1144,6 +1167,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             for row in 0..<displayRowCount {
                 if row & 0x3FFF == 0 { try cancellation.check() }
                 let fields = try getDisplayRow(row)
+                reportProgress(row)
                 let selected = columns.map { $0 < fields.count ? fields[$0] : "" }
                 try write("| " + selected.map(Self.markdownEscaped).joined(separator: " | ") + " |\n")
             }
@@ -1152,6 +1176,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             for row in 0..<displayRowCount {
                 if row & 0x3FFF == 0 { try cancellation.check() }
                 let fields = try getDisplayRow(row)
+                reportProgress(row)
                 var object: [String: String] = [:]
                 for (index, column) in columns.enumerated() {
                     object[jsonHeaders[index]] = column < fields.count ? fields[column] : ""
@@ -1171,6 +1196,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             for row in 0..<displayRowCount {
                 if row & 0x3FFF == 0 { try cancellation.check() }
                 let fields = try getDisplayRow(row)
+                reportProgress(row)
                 let selected = columns.map { $0 < fields.count ? fields[$0] : "" }
                 try write("<tr>" + selected.map { "<td>\(Self.htmlEscaped($0))</td>" }.joined() + "</tr>\n")
             }

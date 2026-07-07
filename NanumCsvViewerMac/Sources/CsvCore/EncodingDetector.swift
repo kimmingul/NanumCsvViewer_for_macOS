@@ -23,6 +23,19 @@ public enum EncodingDetector {
         return .utf8
     }
 
+    /// Resolves an export encoding name to the text encoding and whether a byte
+    /// order mark should be written.
+    public static func exportEncoding(named name: String) -> (encoding: String.Encoding, byteOrderMark: Bool) {
+        switch name {
+        case CsvEncodingName.utf8Bom:
+            return (.utf8, true)
+        case CsvEncodingName.cp949:
+            return (cp949Encoding, false)
+        default:
+            return (.utf8, false)
+        }
+    }
+
     public static func detect(path: String) throws -> EncodingDetectionResult {
         let source = try FileByteSource(path: path)
         defer { source.close() }
