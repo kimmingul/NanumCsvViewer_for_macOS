@@ -57,6 +57,7 @@ final class MainWindowController: NSWindowController {
     private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
     private static let gridFontSizeDefaultsKey = "NanumCsvViewerMac.GridFontSize"
     private static let appearanceDefaultsKey = "NanumCsvViewerMac.Appearance"
+    private var benchmarkIteration = 0
     private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
     private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
@@ -1102,6 +1103,8 @@ extension MainWindowController: NSMenuItemValidation {
                 return ready
             case #selector(showPerformanceDashboard(_:)):
                 return hasDocument
+            case #selector(runBenchmark(_:)):
+                return ready
             case #selector(showAllColumns(_:)):
                 return hasDocument && !hiddenColumnIndexes.isEmpty
             case #selector(saveCurrentView(_:)), #selector(restoreSavedView(_:)):
@@ -2561,6 +2564,61 @@ extension MainWindowController {
         detailTextView.string = snapshot.formattedLines().joined(separator: "\n")
         currentInspectorContentKind = .performance
         updateInspectorCopyButtons()
+    }
+
+    /// Times a few read-only scans over the current view (no view mutation) and
+    /// shows the results in the performance inspector. Repeatable — each run
+    /// increments the run counter shown in the report.
+    @objc func runBenchmark(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        benchmarkIteration += 1
+        let iteration = benchmarkIteration
+        setInspectorVisible(true, animated: true)
+        detailHeaderLabel.stringValue = L.t("Performance", "성능")
+        currentInspectorContentKind = .performance
+        let box = BenchmarkResultsBox()
+        runViewOperation(message: L.t("Benchmarking...", "벤치마크 중...")) { flag, progress in
+            box.results = try Self.runBenchmarkOperations(doc: doc, cancellation: flag, progress: progress)
+        } completion: { [weak self] in
+            guard let self else { return }
+            self.detailTextView.string = BenchmarkReport.lines(results: box.results, iteration: iteration).joined(separator: "\n")
+            self.updateInspectorCopyButtons()
+            self.statusLabel.stringValue = L.t("Benchmark complete.", "벤치마크 완료.")
+        }
+    }
+
+    private nonisolated static func runBenchmarkOperations(
+        doc: VirtualCsvDocument,
+        cancellation: CancellationFlag,
+        progress: @escaping (Int) -> Void
+    ) throws -> [BenchmarkResult] {
+        let clock = ContinuousClock()
+        let rows = doc.displayRowCount
+        var results: [BenchmarkResult] = []
+
+        var scanned = 0
+        let scan = try clock.measure {
+            try doc.forEachDisplayRow(cancellation: cancellation) { _ in scanned += 1 }
+        }
+        results.append(BenchmarkResult(name: L.t("Full scan", "전체 스캔"), milliseconds: scan.milliseconds, rowsProcessed: scanned))
+        progress(40)
+
+        // A token unlikely to exist forces the search to scan every row.
+        let query = try CsvSearchQuery(text: "\u{FFFF}\u{FFFF}nanum-benchmark-miss", mode: .contains, column: nil)
+        let search = try clock.measure {
+            _ = try doc.findNext(query: query, start: 0, wrap: false, cancellation: cancellation)
+        }
+        results.append(BenchmarkResult(name: L.t("Search", "검색"), milliseconds: search.milliseconds, rowsProcessed: rows))
+        progress(75)
+
+        if doc.columnCount > 0 {
+            let distinct = try clock.measure {
+                _ = try doc.distinctValues(column: 0, withinCurrentView: true, limit: nil, progress: nil, cancellation: cancellation)
+            }
+            results.append(BenchmarkResult(name: L.t("Distinct (col 1)", "고유값 (1열)"), milliseconds: distinct.milliseconds, rowsProcessed: rows))
+        }
+        progress(100)
+        return results
     }
 
     @objc func showNumericDistribution(_ sender: Any?) {

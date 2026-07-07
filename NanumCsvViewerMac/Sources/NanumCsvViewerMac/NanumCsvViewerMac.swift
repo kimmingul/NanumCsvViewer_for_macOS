@@ -193,6 +193,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let performance = NSMenuItem(title: L.t("Performance Dashboard", "성능 대시보드"), action: #selector(MainWindowController.showPerformanceDashboard(_:)), keyEquivalent: "p")
         performance.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(performance)
+        let benchmark = NSMenuItem(title: L.t("Run Benchmark", "벤치마크 실행"), action: #selector(MainWindowController.runBenchmark(_:)), keyEquivalent: "b")
+        benchmark.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(benchmark)
         let columnsItem = NSMenuItem(title: L.t("Columns", "컬럼"), action: nil, keyEquivalent: "")
         let columnsMenu = NSMenu(title: columnsItem.title)
         columnsMenu.delegate = self
@@ -426,6 +429,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "chart.bar.doc.horizontal"
         case #selector(MainWindowController.showPerformanceDashboard(_:)):
             return "speedometer"
+        case #selector(MainWindowController.runBenchmark(_:)):
+            return "stopwatch"
         case #selector(MainWindowController.showAllColumns(_:)):
             return "tablecells"
         case #selector(MainWindowController.changeRowDensity(_:)):
