@@ -1113,6 +1113,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         try exportCurrentView(to: outputPath, format: .csv, selectedColumns: selectedColumns, cancellation: cancellation)
     }
 
+    /// Exports the current view. Returns `true` if any character could not be
+    /// represented in the target encoding and was substituted (only possible
+    /// for a non-UTF-8 CSV export), so the caller can warn about lossy output.
+    @discardableResult
     public func exportCurrentView(
         to outputPath: String,
         format: ExportFormat,
@@ -1120,9 +1124,14 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         selectedColumns: [Int]? = nil,
         progress: ((Int) -> Void)? = nil,
         cancellation: CancellationFlag
-    ) throws {
+    ) throws -> Bool {
         let columns = (selectedColumns ?? Array(0..<columnCount)).filter { $0 >= 0 && $0 < columnCount }
-        let (encoding, byteOrderMark) = EncodingDetector.exportEncoding(named: encodingName)
+        // Encoding/BOM only apply to CSV (the format opened by Korean tools);
+        // JSON/HTML/Markdown are conventionally UTF-8 and a BOM would corrupt
+        // JSON, so they are always written as plain UTF-8.
+        let (encoding, byteOrderMark) = format == .csv
+            ? EncodingDetector.exportEncoding(named: encodingName)
+            : (String.Encoding.utf8, false)
         FileManager.default.createFile(atPath: outputPath, contents: nil)
         let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: outputPath))
         defer { try? handle.close() }
@@ -1130,11 +1139,17 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         if byteOrderMark {
             try handle.write(contentsOf: Data([0xEF, 0xBB, 0xBF]))
         }
+        var lossy = false
         func write(_ text: String) throws {
-            // Lossy for non-UTF-8 targets (e.g. CP949) so an unrepresentable
-            // character cannot fail the whole export.
-            let data = text.data(using: encoding, allowLossyConversion: encoding != .utf8) ?? Data(text.utf8)
-            try handle.write(contentsOf: data)
+            if let exact = text.data(using: encoding, allowLossyConversion: false) {
+                try handle.write(contentsOf: exact)
+            } else {
+                // A character is unrepresentable in the target encoding (e.g. an
+                // emoji in CP949). Substitute rather than fail the whole export,
+                // but record it so the caller can warn.
+                lossy = true
+                try handle.write(contentsOf: text.data(using: encoding, allowLossyConversion: true) ?? Data(text.utf8))
+            }
         }
 
         let totalRows = displayRowCount
@@ -1143,7 +1158,6 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 progress?(totalRows > 0 ? Int(Int64(row) * 100 / Int64(totalRows)) : 100)
             }
         }
-        defer { progress?(100) }
 
         func writeCsvLine(_ fields: [String]) throws {
             let line = fields.map(Self.csvEscaped).joined(separator: ",") + "\n"
@@ -1202,6 +1216,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             }
             try write("</tbody>\n</table>\n</body>\n</html>")
         }
+        // Only report 100% on success — a thrown write/encode error or a
+        // cancellation must not leave a failed export reading as complete.
+        progress?(100)
+        return lossy
     }
 
     public func findNext(query: CsvSearchQuery, start: Int, wrap: Bool, cancellation: CancellationFlag) throws -> CsvSearchMatch? {

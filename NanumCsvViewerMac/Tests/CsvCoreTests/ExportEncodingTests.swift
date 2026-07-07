@@ -60,6 +60,49 @@ final class ExportEncodingTests: XCTestCase {
         XCTAssertNotEqual(String(data: bytes, encoding: .utf8), "도시\n서울\n부산\n")
     }
 
+    func testBomNotWrittenForJsonEvenWhenBomEncodingChosen() throws {
+        let (doc, path) = try openIndexed("a\n1\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let out = exportOut()
+        defer { try? FileManager.default.removeItem(atPath: out) }
+
+        // JSON is conventionally UTF-8; a BOM corrupts it for many parsers.
+        try doc.exportCurrentView(to: out, format: .json, encodingName: CsvEncodingName.utf8Bom, cancellation: CancellationFlag())
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: out))
+        XCTAssertFalse(bytes.starts(with: [0xEF, 0xBB, 0xBF]), "no BOM on JSON")
+        XCTAssertEqual(bytes.first, UInt8(ascii: "["), "JSON starts with the array bracket, not a BOM")
+    }
+
+    func testCp949ExportIsAlwaysUtf8ForNonCsvFormats() throws {
+        let (doc, path) = try openIndexed("도시\n서울\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let out = exportOut()
+        defer { try? FileManager.default.removeItem(atPath: out) }
+
+        try doc.exportCurrentView(to: out, format: .json, encodingName: CsvEncodingName.cp949, cancellation: CancellationFlag())
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: out))
+        XCTAssertNotNil(String(data: bytes, encoding: .utf8), "non-CSV export stays valid UTF-8 regardless of encoding choice")
+    }
+
+    func testLossyFlagFalseWhenAllRepresentable() throws {
+        let (doc, path) = try openIndexed("도시\n서울\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let out = exportOut()
+        defer { try? FileManager.default.removeItem(atPath: out) }
+        let lossy = try doc.exportCurrentView(to: out, format: .csv, encodingName: CsvEncodingName.cp949, cancellation: CancellationFlag())
+        XCTAssertFalse(lossy, "hangul is representable in CP949")
+    }
+
+    func testLossyFlagTrueWhenCharacterUnrepresentable() throws {
+        // An emoji has no CP949 representation.
+        let (doc, path) = try openIndexed("v\n🎉\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let out = exportOut()
+        defer { try? FileManager.default.removeItem(atPath: out) }
+        let lossy = try doc.exportCurrentView(to: out, format: .csv, encodingName: CsvEncodingName.cp949, cancellation: CancellationFlag())
+        XCTAssertTrue(lossy, "emoji cannot be encoded in CP949 and is flagged lossy")
+    }
+
     func testExportReportsProgressToCompletion() throws {
         let rows = (0..<500).map { "\($0)" }.joined(separator: "\n")
         let (doc, path) = try openIndexed("v\n\(rows)\n")

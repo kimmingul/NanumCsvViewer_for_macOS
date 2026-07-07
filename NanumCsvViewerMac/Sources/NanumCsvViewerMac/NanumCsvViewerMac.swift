@@ -40,9 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        MainWindowController.applyAppearancePreference(
-            AppearancePreference.from(rawValue: UserDefaults.standard.string(forKey: "NanumCsvViewerMac.Appearance"))
-        )
+        MainWindowController.applyStoredAppearance()
         // Sweep leftover temp-CSV bridge dirs and clipboard files from prior
         // sessions off the main thread so it never delays launch. The 10-minute
         // age gate protects anything a document opened at launch just created.

@@ -28,8 +28,10 @@ enum AppearancePreference: String, CaseIterable {
     }
 }
 
-/// Grid text size, applied to data cells and headers independently of row
-/// density (the user can combine either freely).
+/// Grid text size, applied to data cells and the row-number gutter
+/// independently of row density (the user can combine either freely). Column
+/// headers keep their fixed size so the type badges and sort glyphs stay
+/// aligned.
 enum GridFontSize: String, CaseIterable {
     case small
     case medium

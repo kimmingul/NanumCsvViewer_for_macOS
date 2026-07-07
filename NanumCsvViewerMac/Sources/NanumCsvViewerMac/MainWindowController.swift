@@ -642,7 +642,7 @@ final class MainWindowController: NSWindowController {
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
         tableView.rowSizeStyle = .custom
-        tableView.rowHeight = currentRowDensity.rowHeight
+        tableView.rowHeight = effectiveRowHeight
         tableView.allowsMultipleSelection = false
         tableView.allowsColumnResizing = true
         tableView.allowsColumnReordering = true
@@ -1282,7 +1282,7 @@ extension MainWindowController {
             Task { @MainActor in
                 let resolvedFormat = self?.exportFormat(for: url, fallback: format) ?? format
                 let selectedColumns = self?.visibleColumnIndexesForExport()
-                self?.runViewOperation(message: L.t("Exporting...", "내보내는 중...")) { flag, progress in
+                self?.runViewOperation(message: L.t("Exporting...", "내보내는 중..."), mutatesView: false) { flag, progress in
                     try doc.exportCurrentView(
                         to: url.path,
                         format: resolvedFormat,
@@ -1291,8 +1291,11 @@ extension MainWindowController {
                         progress: progress,
                         cancellation: flag
                     )
-                } completion: { [weak self] in
-                    self?.statusLabel.stringValue = L.t("Exported current view.", "현재 보기를 내보냈습니다.")
+                } completion: { [weak self] lossy in
+                    self?.statusLabel.stringValue = lossy
+                        ? L.t("Exported — some characters were not representable in \(encodingName) and were substituted.",
+                              "내보냄 — 일부 문자가 \(encodingName)(으)로 표현되지 않아 대체되었습니다.")
+                        : L.t("Exported current view.", "현재 보기를 내보냈습니다.")
                     if reveal {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
@@ -2576,12 +2579,11 @@ extension MainWindowController {
         setInspectorVisible(true, animated: true)
         detailHeaderLabel.stringValue = L.t("Performance", "성능")
         currentInspectorContentKind = .performance
-        let box = BenchmarkResultsBox()
-        runViewOperation(message: L.t("Benchmarking...", "벤치마크 중...")) { flag, progress in
-            box.results = try Self.runBenchmarkOperations(doc: doc, cancellation: flag, progress: progress)
-        } completion: { [weak self] in
+        runViewOperation(message: L.t("Benchmarking...", "벤치마크 중..."), mutatesView: false) { flag, progress in
+            try Self.runBenchmarkOperations(doc: doc, cancellation: flag, progress: progress)
+        } completion: { [weak self] results in
             guard let self else { return }
-            self.detailTextView.string = BenchmarkReport.lines(results: box.results, iteration: iteration).joined(separator: "\n")
+            self.detailTextView.string = BenchmarkReport.lines(results: results, iteration: iteration).joined(separator: "\n")
             self.updateInspectorCopyButtons()
             self.statusLabel.stringValue = L.t("Benchmark complete.", "벤치마크 완료.")
         }
@@ -3679,6 +3681,62 @@ extension MainWindowController {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(json, forType: .string)
         statusLabel.stringValue = L.t("Copied inspector JSON.", "인스펙터 JSON을 복사했습니다.")
+    }
+
+    /// Value-returning variant: the operation's result is handed to the
+    /// completion, avoiding a shared mutable box across the thread hop. Set
+    /// `mutatesView: false` for read-only work (benchmark, export) so it skips
+    /// the row-count refresh and full table reload.
+    private func runViewOperation<T: Sendable>(
+        message: String,
+        mutatesView: Bool = true,
+        operation: @escaping @Sendable (_ cancellation: CancellationFlag, _ progress: @escaping @Sendable (Int) -> Void) throws -> T,
+        completion: @escaping @MainActor (T) -> Void
+    ) {
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: message)
+        setProgressVisible(true)
+        updateProgress(0)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let result = try operation(cancellation) { pct in
+                    DispatchQueue.main.async {
+                        guard let self, self.operationCancellation === cancellation else { return }
+                        self.updateProgress(pct)
+                    }
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    if mutatesView {
+                        self.refreshRowCount()
+                        self.tableView.reloadData()
+                        self.scheduleVisibleRowPrefetch()
+                    }
+                    completion(result)
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
     }
 
     private func runViewOperation(
@@ -4843,9 +4901,18 @@ extension MainWindowController {
     }
 
     private func applyRowDensity() {
-        tableView.rowHeight = currentRowDensity.rowHeight
+        tableView.rowHeight = effectiveRowHeight
         tableView.reloadData()
         updateTableDocumentWidthForViewport()
+    }
+
+    /// Row density and font size are independent controls, but a large font in
+    /// a compact row would clip — so the row is never shorter than the font
+    /// plus vertical padding. The padding (5) keeps the default medium font at
+    /// the existing compact height (18) while still growing rows for the large
+    /// font.
+    private var effectiveRowHeight: CGFloat {
+        max(currentRowDensity.rowHeight, currentGridFontSize.pointSize + 5)
     }
 
     var currentGridFontSize: GridFontSize {
@@ -4857,6 +4924,7 @@ extension MainWindowController {
               let raw = item.representedObject as? String,
               let value = GridFontSize(rawValue: raw) else { return }
         UserDefaults.standard.set(value.rawValue, forKey: Self.gridFontSizeDefaultsKey)
+        tableView.rowHeight = effectiveRowHeight
         tableView.reloadData()
         updateSortHeaders()
     }
@@ -4876,6 +4944,12 @@ extension MainWindowController {
     /// Applies the appearance app-wide. `nil` restores following the system.
     static func applyAppearancePreference(_ preference: AppearancePreference) {
         NSApplication.shared.appearance = preference.nsAppearance
+    }
+
+    /// Applies the persisted appearance preference; call at launch so the key
+    /// lives in exactly one place.
+    static func applyStoredAppearance() {
+        applyAppearancePreference(AppearancePreference.from(rawValue: UserDefaults.standard.string(forKey: appearanceDefaultsKey)))
     }
 
     @objc func toggleAutoRestoreView(_ sender: Any?) {

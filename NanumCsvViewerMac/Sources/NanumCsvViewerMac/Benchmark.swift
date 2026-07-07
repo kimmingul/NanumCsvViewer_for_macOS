@@ -32,13 +32,6 @@ enum BenchmarkReport {
     }
 }
 
-/// Carries benchmark results from the background operation to the main-thread
-/// completion. Writes and the later read are sequenced (completion runs after
-/// the operation), so the unchecked conformance is safe.
-final class BenchmarkResultsBox: @unchecked Sendable {
-    var results: [BenchmarkResult] = []
-}
-
 extension Duration {
     /// Elapsed milliseconds as a Double (seconds + attoseconds fraction).
     /// 1 s = 1e18 attoseconds = 1e3 ms, so attoseconds → ms is ÷1e15.
