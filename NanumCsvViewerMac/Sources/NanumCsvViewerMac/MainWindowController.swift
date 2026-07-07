@@ -55,6 +55,9 @@ final class MainWindowController: NSWindowController {
     private static let savedViewStoreDefaultsKey = "NanumCsvViewerMac.SavedViewStore"
     private static let autoRestoreViewDefaultsKey = "NanumCsvViewerMac.AutoRestoreView"
     private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
+    private static let gridFontSizeDefaultsKey = "NanumCsvViewerMac.GridFontSize"
+    private static let appearanceDefaultsKey = "NanumCsvViewerMac.Appearance"
+    private var benchmarkIteration = 0
     private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
     private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
@@ -639,7 +642,7 @@ final class MainWindowController: NSWindowController {
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
         tableView.rowSizeStyle = .custom
-        tableView.rowHeight = currentRowDensity.rowHeight
+        tableView.rowHeight = effectiveRowHeight
         tableView.allowsMultipleSelection = false
         tableView.allowsColumnResizing = true
         tableView.allowsColumnReordering = true
@@ -1100,6 +1103,8 @@ extension MainWindowController: NSMenuItemValidation {
                 return ready
             case #selector(showPerformanceDashboard(_:)):
                 return hasDocument
+            case #selector(runBenchmark(_:)):
+                return ready
             case #selector(showAllColumns(_:)):
                 return hasDocument && !hiddenColumnIndexes.isEmpty
             case #selector(saveCurrentView(_:)), #selector(restoreSavedView(_:)):
@@ -1109,6 +1114,12 @@ extension MainWindowController: NSMenuItemValidation {
                 return true
             case #selector(changeRowDensity(_:)):
                 menuItem.state = (menuItem.representedObject as? String) == currentRowDensity.rawValue ? .on : .off
+                return true
+            case #selector(changeGridFontSize(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == currentGridFontSize.rawValue ? .on : .off
+                return true
+            case #selector(changeAppearance(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == currentAppearancePreference.rawValue ? .on : .off
                 return true
             case #selector(hideCurrentColumn(_:)):
                 return hasDocument && currentDataColumn >= 0
@@ -1262,19 +1273,70 @@ extension MainWindowController {
             .html
         ]
         panel.nameFieldStringValue = defaultName
+        let accessory = makeExportAccessoryView()
+        panel.accessoryView = accessory.view
         panel.beginSheetModal(for: window!) { [weak self, weak doc] response in
             guard response == .OK, let url = panel.url, let doc else { return }
+            let encodingName = accessory.encodingPopup.titleOfSelectedItem ?? CsvEncodingName.utf8
+            let reveal = accessory.revealCheckbox.state == .on
             Task { @MainActor in
                 let resolvedFormat = self?.exportFormat(for: url, fallback: format) ?? format
                 let selectedColumns = self?.visibleColumnIndexesForExport()
-                self?.runViewOperation(message: L.t("Exporting...", "내보내는 중...")) { flag, progress in
-                    try doc.exportCurrentView(to: url.path, format: resolvedFormat, selectedColumns: selectedColumns, cancellation: flag)
-                    progress(100)
-                } completion: { [weak self] in
-                    self?.statusLabel.stringValue = L.t("Exported current view.", "현재 보기를 내보냈습니다.")
+                self?.runViewOperation(message: L.t("Exporting...", "내보내는 중..."), mutatesView: false) { flag, progress in
+                    try doc.exportCurrentView(
+                        to: url.path,
+                        format: resolvedFormat,
+                        encodingName: encodingName,
+                        selectedColumns: selectedColumns,
+                        progress: progress,
+                        cancellation: flag
+                    )
+                } completion: { [weak self] lossy in
+                    self?.statusLabel.stringValue = lossy
+                        ? L.t("Exported — some characters were not representable in \(encodingName) and were substituted.",
+                              "내보냄 — 일부 문자가 \(encodingName)(으)로 표현되지 않아 대체되었습니다.")
+                        : L.t("Exported current view.", "현재 보기를 내보냈습니다.")
+                    if reveal {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
                 }
             }
         }
+    }
+
+    private struct ExportAccessory {
+        let view: NSView
+        let encodingPopup: NSPopUpButton
+        let revealCheckbox: NSButton
+    }
+
+    private func makeExportAccessoryView() -> ExportAccessory {
+        let encodingLabel = NSTextField(labelWithString: L.t("Encoding:", "인코딩:"))
+        let popup = NSPopUpButton()
+        popup.addItems(withTitles: CsvEncodingName.selectable)
+        popup.selectItem(withTitle: CsvEncodingName.utf8)
+        let reveal = NSButton(checkboxWithTitle: L.t("Reveal in Finder after export", "내보낸 뒤 Finder에서 보기"), target: nil, action: nil)
+        reveal.state = .off
+
+        let row = NSStackView(views: [encodingLabel, popup])
+        row.orientation = .horizontal
+        row.spacing = 8
+        let stack = NSStackView(views: [row, reveal])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 380)
+        ])
+        return ExportAccessory(view: container, encodingPopup: popup, revealCheckbox: reveal)
     }
 
     private func exportFormat(for url: URL, fallback: VirtualCsvDocument.ExportFormat) -> VirtualCsvDocument.ExportFormat {
@@ -2507,6 +2569,60 @@ extension MainWindowController {
         updateInspectorCopyButtons()
     }
 
+    /// Times a few read-only scans over the current view (no view mutation) and
+    /// shows the results in the performance inspector. Repeatable — each run
+    /// increments the run counter shown in the report.
+    @objc func runBenchmark(_ sender: Any?) {
+        guard let doc = csvDocument, doc.indexingComplete, !busy else { return }
+        benchmarkIteration += 1
+        let iteration = benchmarkIteration
+        setInspectorVisible(true, animated: true)
+        detailHeaderLabel.stringValue = L.t("Performance", "성능")
+        currentInspectorContentKind = .performance
+        runViewOperation(message: L.t("Benchmarking...", "벤치마크 중..."), mutatesView: false) { flag, progress in
+            try Self.runBenchmarkOperations(doc: doc, cancellation: flag, progress: progress)
+        } completion: { [weak self] results in
+            guard let self else { return }
+            self.detailTextView.string = BenchmarkReport.lines(results: results, iteration: iteration).joined(separator: "\n")
+            self.updateInspectorCopyButtons()
+            self.statusLabel.stringValue = L.t("Benchmark complete.", "벤치마크 완료.")
+        }
+    }
+
+    private nonisolated static func runBenchmarkOperations(
+        doc: VirtualCsvDocument,
+        cancellation: CancellationFlag,
+        progress: @escaping (Int) -> Void
+    ) throws -> [BenchmarkResult] {
+        let clock = ContinuousClock()
+        let rows = doc.displayRowCount
+        var results: [BenchmarkResult] = []
+
+        var scanned = 0
+        let scan = try clock.measure {
+            try doc.forEachDisplayRow(cancellation: cancellation) { _ in scanned += 1 }
+        }
+        results.append(BenchmarkResult(name: L.t("Full scan", "전체 스캔"), milliseconds: scan.milliseconds, rowsProcessed: scanned))
+        progress(40)
+
+        // A token unlikely to exist forces the search to scan every row.
+        let query = try CsvSearchQuery(text: "\u{FFFF}\u{FFFF}nanum-benchmark-miss", mode: .contains, column: nil)
+        let search = try clock.measure {
+            _ = try doc.findNext(query: query, start: 0, wrap: false, cancellation: cancellation)
+        }
+        results.append(BenchmarkResult(name: L.t("Search", "검색"), milliseconds: search.milliseconds, rowsProcessed: rows))
+        progress(75)
+
+        if doc.columnCount > 0 {
+            let distinct = try clock.measure {
+                _ = try doc.distinctValues(column: 0, withinCurrentView: true, limit: nil, progress: nil, cancellation: cancellation)
+            }
+            results.append(BenchmarkResult(name: L.t("Distinct (col 1)", "고유값 (1열)"), milliseconds: distinct.milliseconds, rowsProcessed: rows))
+        }
+        progress(100)
+        return results
+    }
+
     @objc func showNumericDistribution(_ sender: Any?) {
         beginAnalysis(.numericDistribution, sender: sender)
     }
@@ -3567,6 +3683,62 @@ extension MainWindowController {
         statusLabel.stringValue = L.t("Copied inspector JSON.", "인스펙터 JSON을 복사했습니다.")
     }
 
+    /// Value-returning variant: the operation's result is handed to the
+    /// completion, avoiding a shared mutable box across the thread hop. Set
+    /// `mutatesView: false` for read-only work (benchmark, export) so it skips
+    /// the row-count refresh and full table reload.
+    private func runViewOperation<T: Sendable>(
+        message: String,
+        mutatesView: Bool = true,
+        operation: @escaping @Sendable (_ cancellation: CancellationFlag, _ progress: @escaping @Sendable (Int) -> Void) throws -> T,
+        completion: @escaping @MainActor (T) -> Void
+    ) {
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: message)
+        setProgressVisible(true)
+        updateProgress(0)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let result = try operation(cancellation) { pct in
+                    DispatchQueue.main.async {
+                        guard let self, self.operationCancellation === cancellation else { return }
+                        self.updateProgress(pct)
+                    }
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    if mutatesView {
+                        self.refreshRowCount()
+                        self.tableView.reloadData()
+                        self.scheduleVisibleRowPrefetch()
+                    }
+                    completion(result)
+                }
+            } catch CsvError.cancelled {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.operationCancellation === cancellation else { return }
+                    self.operationCancellation = nil
+                    self.setProgressVisible(false)
+                    self.setBusy(false)
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
     private func runViewOperation(
         message: String,
         operation: @escaping @Sendable (_ cancellation: CancellationFlag, _ progress: @escaping @Sendable (Int) -> Void) throws -> Void,
@@ -3637,7 +3809,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             if identifier.rawValue == "rowNumber" {
                 cell.textField?.stringValue = doc.getSourceRowNumber(row).formatted()
                 cell.textField?.alignment = .right
-                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+                cell.textField?.font = .monospacedDigitSystemFont(ofSize: currentGridFontSize.gutterPointSize, weight: .regular)
                 cell.textField?.textColor = .secondaryLabelColor
                 cell.wantsLayer = true
                 cell.layer?.backgroundColor = nil
@@ -3652,7 +3824,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 cell.textField?.stringValue = ""
             }
             cell.textField?.alignment = .left
-            cell.textField?.font = .systemFont(ofSize: 13)
+            cell.textField?.font = .systemFont(ofSize: currentGridFontSize.pointSize)
             cell.textField?.textColor = .labelColor
             cell.wantsLayer = true
             if isGridCellSelected(row: row, column: column) {
@@ -4729,9 +4901,55 @@ extension MainWindowController {
     }
 
     private func applyRowDensity() {
-        tableView.rowHeight = currentRowDensity.rowHeight
+        tableView.rowHeight = effectiveRowHeight
         tableView.reloadData()
         updateTableDocumentWidthForViewport()
+    }
+
+    /// Row density and font size are independent controls, but a large font in
+    /// a compact row would clip — so the row is never shorter than the font
+    /// plus vertical padding. The padding (5) keeps the default medium font at
+    /// the existing compact height (18) while still growing rows for the large
+    /// font.
+    private var effectiveRowHeight: CGFloat {
+        max(currentRowDensity.rowHeight, currentGridFontSize.pointSize + 5)
+    }
+
+    var currentGridFontSize: GridFontSize {
+        GridFontSize.from(rawValue: UserDefaults.standard.string(forKey: Self.gridFontSizeDefaultsKey))
+    }
+
+    @objc func changeGridFontSize(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let raw = item.representedObject as? String,
+              let value = GridFontSize(rawValue: raw) else { return }
+        UserDefaults.standard.set(value.rawValue, forKey: Self.gridFontSizeDefaultsKey)
+        tableView.rowHeight = effectiveRowHeight
+        tableView.reloadData()
+        updateSortHeaders()
+    }
+
+    var currentAppearancePreference: AppearancePreference {
+        AppearancePreference.from(rawValue: UserDefaults.standard.string(forKey: Self.appearanceDefaultsKey))
+    }
+
+    @objc func changeAppearance(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let raw = item.representedObject as? String,
+              let value = AppearancePreference(rawValue: raw) else { return }
+        UserDefaults.standard.set(value.rawValue, forKey: Self.appearanceDefaultsKey)
+        Self.applyAppearancePreference(value)
+    }
+
+    /// Applies the appearance app-wide. `nil` restores following the system.
+    static func applyAppearancePreference(_ preference: AppearancePreference) {
+        NSApplication.shared.appearance = preference.nsAppearance
+    }
+
+    /// Applies the persisted appearance preference; call at launch so the key
+    /// lives in exactly one place.
+    static func applyStoredAppearance() {
+        applyAppearancePreference(AppearancePreference.from(rawValue: UserDefaults.standard.string(forKey: appearanceDefaultsKey)))
     }
 
     @objc func toggleAutoRestoreView(_ sender: Any?) {
@@ -5628,6 +5846,10 @@ extension MainWindowController {
 
     var tableRowHeightForTesting: CGFloat {
         tableView.rowHeight
+    }
+
+    func exportAccessoryEncodingsForTesting() -> [String] {
+        makeExportAccessoryView().encodingPopup.itemTitles
     }
 
     func exportColumnOrderForTesting() -> [Int]? {

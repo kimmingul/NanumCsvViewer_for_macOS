@@ -210,3 +210,13 @@ final class ColumnManagementControllerTests: XCTestCase {
         return directory.appendingPathComponent("nanumcsv_colmgmt_\(UUID().uuidString).csv").path
     }
 }
+
+@MainActor
+final class ExportAccessoryTests: XCTestCase {
+    func testExportAccessoryOffersThreeEncodings() {
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+        XCTAssertEqual(controller.exportAccessoryEncodingsForTesting(), ["UTF-8", "UTF-8 (BOM)", "CP949 / EUC-KR"])
+    }
+}
