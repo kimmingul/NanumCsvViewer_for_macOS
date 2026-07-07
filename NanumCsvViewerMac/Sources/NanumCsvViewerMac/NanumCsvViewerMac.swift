@@ -40,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        MainWindowController.applyAppearancePreference(
+            AppearancePreference.from(rawValue: UserDefaults.standard.string(forKey: "NanumCsvViewerMac.Appearance"))
+        )
         // Sweep leftover temp-CSV bridge dirs and clipboard files from prior
         // sessions off the main thread so it never delays launch. The 10-minute
         // age gate protects anything a document opened at launch just created.
@@ -207,6 +210,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             rowDensityMenu.addItem(item)
         }
         viewMenu.addItem(rowDensityItem)
+
+        let fontSizeItem = NSMenuItem(title: L.t("Font Size", "글자 크기"), action: nil, keyEquivalent: "")
+        let fontSizeMenu = NSMenu(title: fontSizeItem.title)
+        fontSizeItem.submenu = fontSizeMenu
+        for size in GridFontSize.allCases {
+            let item = NSMenuItem(title: size.title, action: #selector(MainWindowController.changeGridFontSize(_:)), keyEquivalent: "")
+            item.representedObject = size.rawValue
+            fontSizeMenu.addItem(item)
+        }
+        viewMenu.addItem(fontSizeItem)
+
+        let appearanceItem = NSMenuItem(title: L.t("Appearance", "화면 모드"), action: nil, keyEquivalent: "")
+        let appearanceMenu = NSMenu(title: appearanceItem.title)
+        appearanceItem.submenu = appearanceMenu
+        for preference in AppearancePreference.allCases {
+            let item = NSMenuItem(title: preference.title, action: #selector(MainWindowController.changeAppearance(_:)), keyEquivalent: "")
+            item.representedObject = preference.rawValue
+            appearanceMenu.addItem(item)
+        }
+        viewMenu.addItem(appearanceItem)
+
         viewMenu.addItem(.separator())
         let saveView = NSMenuItem(title: L.t("Save View As...", "다른 이름으로 보기 저장..."), action: #selector(MainWindowController.saveCurrentView(_:)), keyEquivalent: "s")
         saveView.keyEquivalentModifierMask = [.command, .option]
@@ -491,6 +515,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "textformat"
         case L.t("Row Density", "행 밀도"):
             return "arrow.up.and.down.text.horizontal"
+        case L.t("Font Size", "글자 크기"):
+            return "textformat.size"
+        case L.t("Appearance", "화면 모드"):
+            return "circle.lefthalf.filled"
         case L.t("Columns", "컬럼"):
             return "checklist"
         case L.t("Analysis", "분석"):

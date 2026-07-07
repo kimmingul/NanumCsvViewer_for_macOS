@@ -55,6 +55,8 @@ final class MainWindowController: NSWindowController {
     private static let savedViewStoreDefaultsKey = "NanumCsvViewerMac.SavedViewStore"
     private static let autoRestoreViewDefaultsKey = "NanumCsvViewerMac.AutoRestoreView"
     private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
+    private static let gridFontSizeDefaultsKey = "NanumCsvViewerMac.GridFontSize"
+    private static let appearanceDefaultsKey = "NanumCsvViewerMac.Appearance"
     private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
     private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
     private static var facetRowCap: Int { VirtualCsvDocument.analysisRowLimit }
@@ -1109,6 +1111,12 @@ extension MainWindowController: NSMenuItemValidation {
                 return true
             case #selector(changeRowDensity(_:)):
                 menuItem.state = (menuItem.representedObject as? String) == currentRowDensity.rawValue ? .on : .off
+                return true
+            case #selector(changeGridFontSize(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == currentGridFontSize.rawValue ? .on : .off
+                return true
+            case #selector(changeAppearance(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == currentAppearancePreference.rawValue ? .on : .off
                 return true
             case #selector(hideCurrentColumn(_:)):
                 return hasDocument && currentDataColumn >= 0
@@ -3685,7 +3693,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             if identifier.rawValue == "rowNumber" {
                 cell.textField?.stringValue = doc.getSourceRowNumber(row).formatted()
                 cell.textField?.alignment = .right
-                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+                cell.textField?.font = .monospacedDigitSystemFont(ofSize: currentGridFontSize.gutterPointSize, weight: .regular)
                 cell.textField?.textColor = .secondaryLabelColor
                 cell.wantsLayer = true
                 cell.layer?.backgroundColor = nil
@@ -3700,7 +3708,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 cell.textField?.stringValue = ""
             }
             cell.textField?.alignment = .left
-            cell.textField?.font = .systemFont(ofSize: 13)
+            cell.textField?.font = .systemFont(ofSize: currentGridFontSize.pointSize)
             cell.textField?.textColor = .labelColor
             cell.wantsLayer = true
             if isGridCellSelected(row: row, column: column) {
@@ -4780,6 +4788,36 @@ extension MainWindowController {
         tableView.rowHeight = currentRowDensity.rowHeight
         tableView.reloadData()
         updateTableDocumentWidthForViewport()
+    }
+
+    var currentGridFontSize: GridFontSize {
+        GridFontSize.from(rawValue: UserDefaults.standard.string(forKey: Self.gridFontSizeDefaultsKey))
+    }
+
+    @objc func changeGridFontSize(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let raw = item.representedObject as? String,
+              let value = GridFontSize(rawValue: raw) else { return }
+        UserDefaults.standard.set(value.rawValue, forKey: Self.gridFontSizeDefaultsKey)
+        tableView.reloadData()
+        updateSortHeaders()
+    }
+
+    var currentAppearancePreference: AppearancePreference {
+        AppearancePreference.from(rawValue: UserDefaults.standard.string(forKey: Self.appearanceDefaultsKey))
+    }
+
+    @objc func changeAppearance(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let raw = item.representedObject as? String,
+              let value = AppearancePreference(rawValue: raw) else { return }
+        UserDefaults.standard.set(value.rawValue, forKey: Self.appearanceDefaultsKey)
+        Self.applyAppearancePreference(value)
+    }
+
+    /// Applies the appearance app-wide. `nil` restores following the system.
+    static func applyAppearancePreference(_ preference: AppearancePreference) {
+        NSApplication.shared.appearance = preference.nsAppearance
     }
 
     @objc func toggleAutoRestoreView(_ sender: Any?) {
