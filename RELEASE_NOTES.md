@@ -4,6 +4,56 @@
 
 No unreleased changes.
 
+## v1.10.0 - 2026-07-08
+
+A feature release adding read-only binary format importers through a sandboxed
+XPC service.
+
+### New features
+
+- **Legacy Excel `.xls` import.** BIFF workbooks now open read-only through a
+  vendored libxls parser that runs only inside the `ImportService` XPC service.
+  The existing pure-Swift `.xlsx`/`.xlsm` reader is unchanged.
+- **SPSS `.sav`/`.zsav` import.** SPSS files open read-only through vendored
+  ReadStat in the XPC service. Value labels are displayed in grid cells and
+  declared type metadata feeds the existing column type override path.
+- **SAS `.sas7bdat` import.** SAS data sets open read-only as best-effort
+  imports, with a persistent warning to verify critical data against SAS.
+
+### Architecture and Safety
+
+- The main app and `CsvCore` link only `ImportServiceProtocol`; C parser
+  targets are linked only by the XPC service.
+- Imports enforce byte, row, column, cell, and timeout caps before or during
+  parsing and fail closed without presenting partial garbage as data.
+- Parser source is vendored into SwiftPM C targets with pinned upstream commits
+  and bundled licenses; no new external package dependency was added.
+
+### Validation
+
+- `swift test`: 405 tests passing.
+- `Scripts/build-app.sh`: release app bundle builds with the embedded XPC
+  service.
+- `SIGN_IDENTITY=- Scripts/sign-app.sh`: ad-hoc codesign verified the app and
+  XPC service locally.
+- Bundled app/XPC smoke tests produced CSV outputs for `.xls`, `.sav`, and
+  `.sas7bdat` fixtures.
+- Link audit confirmed the main app has no `xls_`/`readstat_`/`CLibXLS`/
+  `CReadStat` symbols and no iconv/z parser linkage; the XPC service owns the
+  parser symbols and iconv/z linkage.
+
+### Distribution
+
+- Bundle version: `1.10.0`
+- Bundle build: `200`
+- Minimum macOS: `14.0`
+- Signing: ad-hoc local validation in this workspace. Developer ID
+  notarization requires a Developer ID Application identity, which is not
+  installed on this machine.
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.10.0.dmg`: `4cf6b61a0ef012d9a0e977b186c54278b4169da30038c1583b2f0328737c85b2`
+  - `Nanum-CSV-Viewer-v1.10.0.zip`: `d60340b54f77d37fd28e251525406da1b5aa003a28d8a0682f3b7614cbddf586`
+
 ## v1.9.0 - 2026-07-08
 
 A feature release adding export, appearance, and benchmarking controls.

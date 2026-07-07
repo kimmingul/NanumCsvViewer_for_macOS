@@ -81,6 +81,13 @@ cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
+## v1.10.0 User Workflows
+
+- **Open legacy `.xls` files.** BIFF workbooks now open read-only through a sandboxed XPC importer while the existing pure-Swift `.xlsx`/`.xlsm` reader remains unchanged.
+- **Open SPSS files.** `.sav` and `.zsav` files import read-only through the same temp-CSV bridge, preserving value labels for display and declared type metadata for grid type badges.
+- **Open SAS files.** `.sas7bdat` files import read-only as best-effort and show a persistent warning to verify critical data against SAS.
+- App bundle metadata now uses version `1.10.0(200)`.
+
 ## v1.9.0 User Workflows
 
 - **Choose an export encoding.** File ▸ Export… now shows an encoding popup (UTF-8, UTF-8 with BOM, or CP949 / EUC-KR) and an option to reveal the file in Finder afterward. Encoding applies to CSV; JSON/HTML/Markdown stay UTF-8. A CP949 export warns if any character could not be represented.
