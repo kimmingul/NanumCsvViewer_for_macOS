@@ -87,11 +87,11 @@ Done in the v1.8 line (2026-07-04):
 - ~~Clean up temporary files~~ — done: clipboard import files and Excel/SQLite temp-CSV bridge dirs are swept on launch with an age gate.
 - ~~Prune per-file persistence maps~~ — done: saved views prune deleted files (parent-dir heuristic), column-order and pinned maps prune on write, hidden columns are a single global array.
 
-Remaining:
+- ~~Repeatable in-app benchmark runs~~ — done: View > Run Benchmark times read-only scans (full scan, search, distinct) and shows ms / rows / rows·s⁻¹, repeatable.
+- ~~Theme and font controls~~ — done: View menu Appearance (System/Light/Dark) and Font Size (Small/Medium/Large, font-aware row height).
+- ~~Export UX~~ — done: encoding choice (UTF-8 / BOM / CP949, CSV only), reveal-after-export, incremental progress, lossy-substitution warning.
 
-1. Add repeatable in-app benchmark runs to the performance dashboard.
-2. Add theme and font controls beyond system light/dark mode.
-3. Improve export UX with encoding selection, open-after-export, and large JSON progress behavior.
+All v1 roadmap follow-ups are complete. Deferred/scoped-out only: full Excel freeze panes, Mac App Store submission, SPSS/SAS, .xls BIFF.
 
 ## Release Guidance
 
