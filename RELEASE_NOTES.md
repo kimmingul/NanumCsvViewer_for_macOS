@@ -34,8 +34,9 @@ XPC service.
 - `swift test`: 405 tests passing.
 - `Scripts/build-app.sh`: release app bundle builds with the embedded XPC
   service.
-- `Scripts/sign-app.sh`: Developer ID Application codesign verified the app
-  and XPC service locally.
+- `Scripts/sign-app.sh` and `Scripts/notarize-app.sh`: Developer ID
+  Application signing, notarization, and stapling verified the app and XPC
+  service locally.
 - Bundled app/XPC smoke tests produced CSV outputs for `.xls`, `.sav`, and
   `.sas7bdat` fixtures.
 - Link audit confirmed the main app has no `xls_`/`readstat_`/`CLibXLS`/
@@ -47,12 +48,12 @@ XPC service.
 - Bundle version: `1.10.0`
 - Bundle build: `200`
 - Minimum macOS: `14.0`
-- Signing: Developer ID Application signed with hardened runtime and timestamp.
-  Notarization is not completed because no notarytool credentials/profile are
-  configured in this session.
+- Signing: Developer ID Application signed with hardened runtime and timestamp,
+  notarized by Apple, and stapled. Gatekeeper accepts the app and DMG as
+  `Notarized Developer ID`.
 - SHA-256:
-  - `Nanum-CSV-Viewer-v1.10.0.dmg`: `2e42d3626e83188b497de35cf8b784cca3d9f4e6e86372ecf9d4d9b16dce7ee3`
-  - `Nanum-CSV-Viewer-v1.10.0.zip`: `05fc3e01bafb018376f77d6a6c75257548610df9892e43fbdacb3f0b8e191085`
+  - `Nanum-CSV-Viewer-v1.10.0.dmg`: `121bb10c66e7d7057699c32fff0025ee6c38204c16fded88eb70111ffdc1b508`
+  - `Nanum-CSV-Viewer-v1.10.0.zip`: `b2e1378e591f9b8170036b2b8da84a512cea72b804a1295b7ef4ad81cd9385a4`
 
 ## v1.9.0 - 2026-07-08
 
