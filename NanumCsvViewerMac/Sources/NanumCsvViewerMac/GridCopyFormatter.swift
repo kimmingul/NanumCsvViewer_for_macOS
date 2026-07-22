@@ -1,7 +1,8 @@
+import CsvCore
 import Foundation
 
 enum GridCopyFormatter {
-    static func tsv(rows: [[String]], selection: Set<GridCellCoordinate>) -> String {
+    static func tsv(rows: [[String]], selection: Set<GridCellCoordinate>, sanitizeFormulas: Bool = false) -> String {
         guard let range = boundingRect(for: selection) else { return "" }
         var lines: [String] = []
         for row in range.rows {
@@ -13,21 +14,26 @@ enum GridCopyFormatter {
                       column < rows[row].count else {
                     return ""
                 }
-                return tsvEscaped(rows[row][column])
+                return cell(rows[row][column], sanitizeFormulas: sanitizeFormulas)
             }
             lines.append(values.joined(separator: "\t"))
         }
         return lines.joined(separator: "\n") + "\n"
     }
 
-    static func tsv(row: [String], columns: [Int]) -> String {
+    static func tsv(row: [String], columns: [Int], sanitizeFormulas: Bool = false) -> String {
         columns.map { column in
-            column >= 0 && column < row.count ? tsvEscaped(row[column]) : ""
+            column >= 0 && column < row.count ? cell(row[column], sanitizeFormulas: sanitizeFormulas) : ""
         }.joined(separator: "\t") + "\n"
     }
 
-    static func tsv(columnName: String, values: [String]) -> String {
-        ([tsvEscaped(columnName)] + values.map(tsvEscaped)).joined(separator: "\n") + "\n"
+    static func tsv(columnName: String, values: [String], sanitizeFormulas: Bool = false) -> String {
+        ([cell(columnName, sanitizeFormulas: sanitizeFormulas)]
+            + values.map { cell($0, sanitizeFormulas: sanitizeFormulas) }).joined(separator: "\n") + "\n"
+    }
+
+    private static func cell(_ value: String, sanitizeFormulas: Bool) -> String {
+        tsvEscaped(sanitizeFormulas ? CsvFormulaSanitizer.sanitize(value) : value)
     }
 
     private static func boundingRect(for selection: Set<GridCellCoordinate>) -> ClosedRangeGrid? {

@@ -66,6 +66,24 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertEqual(GridCopyFormatter.tsv(rows: rows, selection: selection), "A1\t\t\n\t\tC2\n")
     }
 
+    func testGridCopyFormatterSanitizesFormulaCellsWhenEnabled() {
+        let rows = [["=SUM(A1)", "safe"], ["-5", "+2"]]
+        let selection: Set<GridCellCoordinate> = [
+            .init(row: 0, column: 0), .init(row: 0, column: 1),
+            .init(row: 1, column: 0), .init(row: 1, column: 1)
+        ]
+
+        XCTAssertEqual(
+            GridCopyFormatter.tsv(rows: rows, selection: selection, sanitizeFormulas: true),
+            "'=SUM(A1)\tsafe\n'-5\t'+2\n"
+        )
+        XCTAssertEqual(
+            GridCopyFormatter.tsv(rows: rows, selection: selection, sanitizeFormulas: false),
+            "=SUM(A1)\tsafe\n-5\t+2\n",
+            "off by default leaves values untouched"
+        )
+    }
+
     func testControllerSelectsAndExtendsGridCells() throws {
         _ = NSApplication.shared
         let path = try temporaryCsvPath()

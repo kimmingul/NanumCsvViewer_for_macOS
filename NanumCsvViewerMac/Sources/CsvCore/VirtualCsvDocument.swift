@@ -1134,6 +1134,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         format: ExportFormat,
         encodingName: String = CsvEncodingName.utf8,
         selectedColumns: [Int]? = nil,
+        sanitizeFormulas: Bool = false,
         progress: ((Int) -> Void)? = nil,
         cancellation: CancellationFlag
     ) throws -> Bool {
@@ -1172,7 +1173,8 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         func writeCsvLine(_ fields: [String]) throws {
-            let line = fields.map(Self.csvEscaped).joined(separator: ",") + "\n"
+            let prepared = sanitizeFormulas ? fields.map(CsvFormulaSanitizer.sanitize) : fields
+            let line = prepared.map(Self.csvEscaped).joined(separator: ",") + "\n"
             try write(line)
         }
 

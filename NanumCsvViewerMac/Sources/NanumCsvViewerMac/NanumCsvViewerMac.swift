@@ -264,6 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsMenu.addItem(persistentIndex)
         let deleteIndexCacheOnClose = NSMenuItem(title: L.t("Delete Index Cache on Close", "CSV 닫을 때 인덱스 캐시 삭제"), action: #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)), keyEquivalent: "")
         settingsMenu.addItem(deleteIndexCacheOnClose)
+        let sanitizeFormulas = NSMenuItem(title: L.t("Sanitize Formulas on Export/Copy", "내보내기/복사 시 수식 살균"), action: #selector(MainWindowController.toggleSanitizeFormulas(_:)), keyEquivalent: "")
+        settingsMenu.addItem(sanitizeFormulas)
         settingsMenu.addItem(.separator())
         let showIndexFolder = NSMenuItem(title: L.t("Show Index Folder", "인덱스 폴더 보기"), action: #selector(MainWindowController.showIndexFolder(_:)), keyEquivalent: "")
         settingsMenu.addItem(showIndexFolder)
@@ -447,6 +449,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "internaldrive"
         case #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)):
             return "trash"
+        case #selector(MainWindowController.toggleSanitizeFormulas(_:)):
+            return "shield.lefthalf.filled"
         case #selector(MainWindowController.showIndexFolder(_:)):
             return "folder"
         case #selector(MainWindowController.clearIndexFolder(_:)):

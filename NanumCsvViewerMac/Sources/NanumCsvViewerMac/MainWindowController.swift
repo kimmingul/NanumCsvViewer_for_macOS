@@ -58,6 +58,7 @@ final class MainWindowController: NSWindowController {
     private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
     private static let gridFontSizeDefaultsKey = "NanumCsvViewerMac.GridFontSize"
     private static let appearanceDefaultsKey = "NanumCsvViewerMac.Appearance"
+    private static let sanitizeFormulasDefaultsKey = "NanumCsvViewerMac.SanitizeFormulas"
     private var benchmarkIteration = 0
     private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
     private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
@@ -1160,6 +1161,9 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(toggleAutoRestoreView(_:)):
                 menuItem.state = UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey) ? .on : .off
                 return true
+            case #selector(toggleSanitizeFormulas(_:)):
+                menuItem.state = sanitizeFormulasEnabled ? .on : .off
+                return true
             case #selector(changeRowDensity(_:)):
                 menuItem.state = (menuItem.representedObject as? String) == currentRowDensity.rawValue ? .on : .off
                 return true
@@ -1330,12 +1334,14 @@ extension MainWindowController {
             Task { @MainActor in
                 let resolvedFormat = self?.exportFormat(for: url, fallback: format) ?? format
                 let selectedColumns = self?.visibleColumnIndexesForExport()
+                let sanitize = self?.sanitizeFormulasEnabled ?? false
                 self?.runViewOperation(message: L.t("Exporting...", "내보내는 중..."), mutatesView: false) { flag, progress in
                     try doc.exportCurrentView(
                         to: url.path,
                         format: resolvedFormat,
                         encodingName: encodingName,
                         selectedColumns: selectedColumns,
+                        sanitizeFormulas: sanitize,
                         progress: progress,
                         cancellation: flag
                     )
@@ -4377,14 +4383,14 @@ extension MainWindowController {
                 rows.append((try? doc.getDisplayRow(rowIndex)) ?? [])
             }
         }
-        return GridCopyFormatter.tsv(rows: rows, selection: selection)
+        return GridCopyFormatter.tsv(rows: rows, selection: selection, sanitizeFormulas: sanitizeFormulasEnabled)
     }
 
     func rowCopyString(row: Int) -> String? {
         guard let doc = csvDocument, row >= 0, row < doc.displayRowCount else { return nil }
         let visibleColumns = columnNames.indices.filter { !hiddenColumnIndexes.contains($0) }
         guard let fields = try? doc.getDisplayRow(row) else { return nil }
-        return GridCopyFormatter.tsv(row: fields, columns: visibleColumns)
+        return GridCopyFormatter.tsv(row: fields, columns: visibleColumns, sanitizeFormulas: sanitizeFormulasEnabled)
     }
 
     func columnCopyString(column: Int, includeHeader: Bool) -> String? {
@@ -4394,9 +4400,10 @@ extension MainWindowController {
             return fields[column]
         }
         if includeHeader {
-            return GridCopyFormatter.tsv(columnName: columnNames[column], values: values)
+            return GridCopyFormatter.tsv(columnName: columnNames[column], values: values, sanitizeFormulas: sanitizeFormulasEnabled)
         }
-        return values.joined(separator: "\n") + "\n"
+        let prepared = sanitizeFormulasEnabled ? values.map(CsvFormulaSanitizer.sanitize) : values
+        return prepared.joined(separator: "\n") + "\n"
     }
 
     func inspectorTextCopyString() -> String {
@@ -5193,6 +5200,21 @@ extension MainWindowController {
         statusLabel.stringValue = enabled
             ? L.t("Saved views will restore on open.", "파일을 열 때 저장된 보기를 복원합니다.")
             : L.t("Saved views will not restore on open.", "파일을 열 때 저장된 보기를 복원하지 않습니다.")
+    }
+
+    /// Whether export/clipboard cells starting with = + - @ are prefixed with an
+    /// apostrophe so a spreadsheet can't execute them (CSV injection). Off by
+    /// default because it also alters legitimate values (leading-minus numbers).
+    var sanitizeFormulasEnabled: Bool {
+        UserDefaults.standard.bool(forKey: Self.sanitizeFormulasDefaultsKey)
+    }
+
+    @objc func toggleSanitizeFormulas(_ sender: Any?) {
+        let enabled = !sanitizeFormulasEnabled
+        UserDefaults.standard.set(enabled, forKey: Self.sanitizeFormulasDefaultsKey)
+        statusLabel.stringValue = enabled
+            ? L.t("Formula cells will be neutralized on export and copy.", "내보내기·복사 시 수식 셀을 무력화합니다.")
+            : L.t("Formula cells will be exported and copied as-is.", "내보내기·복사 시 수식 셀을 그대로 둡니다.")
     }
 
     private func autoRestoreSavedViewIfEnabled() {
