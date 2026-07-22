@@ -59,6 +59,7 @@ final class MainWindowController: NSWindowController {
     private static let gridFontSizeDefaultsKey = "NanumCsvViewerMac.GridFontSize"
     private static let appearanceDefaultsKey = "NanumCsvViewerMac.Appearance"
     private static let sanitizeFormulasDefaultsKey = "NanumCsvViewerMac.SanitizeFormulas"
+    private static let numberFormatDefaultsKey = "NanumCsvViewerMac.NumberFormat"
     private var benchmarkIteration = 0
     private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
     private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
@@ -201,6 +202,7 @@ final class MainWindowController: NSWindowController {
         // Own the window's close so teardown runs on a red-button/Cmd-W close,
         // not only when someone calls `close()` explicitly.
         window.delegate = self
+        CsvNumber.format = Self.numberFormatChoice
         VirtualCsvDocument.persistentIndexEnabled = UserDefaults.standard.object(forKey: Self.persistentIndexDefaultsKey) as? Bool ?? true
         VirtualCsvDocument.deletePersistentIndexOnClose = UserDefaults.standard.object(forKey: Self.deleteIndexCacheOnCloseDefaultsKey) as? Bool ?? false
         hiddenColumnIndexes = Set(UserDefaults.standard.array(forKey: Self.hiddenColumnsDefaultsKey) as? [Int] ?? [])
@@ -1163,6 +1165,9 @@ extension MainWindowController: NSMenuItemValidation {
                 return true
             case #selector(toggleSanitizeFormulas(_:)):
                 menuItem.state = sanitizeFormulasEnabled ? .on : .off
+                return true
+            case #selector(changeNumberFormat(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == Self.numberFormatChoice.rawValue ? .on : .off
                 return true
             case #selector(changeRowDensity(_:)):
                 menuItem.state = (menuItem.representedObject as? String) == currentRowDensity.rawValue ? .on : .off
@@ -5215,6 +5220,23 @@ extension MainWindowController {
         statusLabel.stringValue = enabled
             ? L.t("Formula cells will be neutralized on export and copy.", "내보내기·복사 시 수식 셀을 무력화합니다.")
             : L.t("Formula cells will be exported and copied as-is.", "내보내기·복사 시 수식 셀을 그대로 둡니다.")
+    }
+
+    /// The user's chosen number format (may be `.auto`); the concrete format
+    /// stored in `CsvNumber.format` is this resolved against the locale.
+    static var numberFormatChoice: CsvNumberFormat {
+        CsvNumberFormat(rawValue: UserDefaults.standard.string(forKey: numberFormatDefaultsKey) ?? "") ?? .auto
+    }
+
+    @objc func changeNumberFormat(_ sender: Any?) {
+        guard let raw = (sender as? NSMenuItem)?.representedObject as? String,
+              let format = CsvNumberFormat(rawValue: raw) else { return }
+        CsvNumber.format = format
+        UserDefaults.standard.set(raw, forKey: Self.numberFormatDefaultsKey)
+        statusLabel.stringValue = L.t(
+            "Number format changed. Re-run analysis to apply it.",
+            "숫자 형식을 변경했습니다. 분석을 다시 실행하면 적용됩니다."
+        )
     }
 
     private func autoRestoreSavedViewIfEnabled() {

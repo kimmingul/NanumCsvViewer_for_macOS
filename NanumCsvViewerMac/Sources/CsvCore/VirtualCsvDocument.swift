@@ -968,7 +968,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 }
                 if request.wantsHistogram {
                     let trimmed = value.trimmingCharacters(in: .whitespaces)
-                    if let number = Double(trimmed), number.isFinite {
+                    if let number = CsvNumber.parse(trimmed), number.isFinite {
                         accumulators[slot].numericCount += 1
                         accumulators[slot].minValue = Swift.min(accumulators[slot].minValue, number)
                         accumulators[slot].maxValue = Swift.max(accumulators[slot].maxValue, number)
@@ -1009,7 +1009,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             parsed.reserveCapacity(accumulator.counts.count)
             for (key, count) in accumulator.counts {
                 let trimmed = key.trimmingCharacters(in: .whitespaces)
-                guard let number = Double(trimmed), number.isFinite else { continue }
+                guard let number = CsvNumber.parse(trimmed), number.isFinite else { continue }
                 parsed.append((number, count))
             }
             return parsed
@@ -1070,7 +1070,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                     guard let bounds = histogramBounds(accumulator) else { continue }
                     let value = request.column < fields.count ? fields[request.column] : ""
                     let trimmed = value.trimmingCharacters(in: .whitespaces)
-                    guard let number = Double(trimmed), number.isFinite else { continue }
+                    guard let number = CsvNumber.parse(trimmed), number.isFinite else { continue }
                     let width = (bounds.max - bounds.min) / Double(binCount)
                     binStorage[slot]?[binIndex(for: number, min: bounds.min, width: width, binCount: binCount)] += 1
                 }
@@ -1309,7 +1309,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         var values: [Double] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard column < row.count,
-                  let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let value = CsvNumber.parse(row[column]),
                   value.isFinite else { return }
             values.append(value)
         }
@@ -1413,8 +1413,8 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         var pairs: [(Double, Double)] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard xColumn < row.count, yColumn < row.count,
-                  let x = Double(row[xColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  let y = Double(row[yColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+                  let x = CsvNumber.parse(row[xColumn]),
+                  let y = CsvNumber.parse(row[yColumn]) else { return }
             pairs.append((x, y))
         }
         return CsvStatistics.correlation(pairs: pairs, method: method)
@@ -1425,7 +1425,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         var b: [Double] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard groupColumn < row.count, valueColumn < row.count,
-                  let value = Double(row[valueColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+                  let value = CsvNumber.parse(row[valueColumn]) else { return }
             if row[groupColumn] == groupA {
                 a.append(value)
             } else if row[groupColumn] == groupB {
@@ -1440,8 +1440,8 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         var after: [Double] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard beforeColumn < row.count, afterColumn < row.count,
-                  let b = Double(row[beforeColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  let a = Double(row[afterColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+                  let b = CsvNumber.parse(row[beforeColumn]),
+                  let a = CsvNumber.parse(row[afterColumn]) else { return }
             before.append(b)
             after.append(a)
         }
@@ -1586,7 +1586,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 if allNumeric[j] {
                     if key.isEmpty {
                         numericKeys[j][i] = -Double.infinity
-                    } else if let value = Double(key.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    } else if let value = CsvNumber.parse(key) {
                         numericKeys[j][i] = value
                     } else {
                         allNumeric[j] = false
@@ -1635,7 +1635,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             if allNumeric {
                 if key.isEmpty {
                     numericKeys[i] = -Double.infinity
-                } else if let value = Double(key.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                } else if let value = CsvNumber.parse(key) {
                     numericKeys[i] = value
                 } else {
                     allNumeric = false

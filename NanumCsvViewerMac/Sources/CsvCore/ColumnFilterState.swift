@@ -97,7 +97,7 @@ public struct ColumnFilterState: Equatable, Codable, Sendable {
                     return true
                 case .numericRange(let column, let lower, let upper, let includesUpperBound):
                     guard column < row.count,
-                          let number = Double(row[column].trimmingCharacters(in: .whitespaces)),
+                          let number = CsvNumber.parse(row[column]),
                           number.isFinite else {
                         return false
                     }

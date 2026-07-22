@@ -256,7 +256,7 @@ extension VirtualCsvDocument {
         var order: [String] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard valueColumn < row.count,
-                  let value = Double(row[valueColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let value = CsvNumber.parse(row[valueColumn]),
                   value.isFinite else { return }
             let key: String
             if let groupColumn {
@@ -290,8 +290,8 @@ extension VirtualCsvDocument {
         var pairs: [(Double, Double)] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard xColumn < row.count, yColumn < row.count,
-                  let x = Double(row[xColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
-                  let y = Double(row[yColumn].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let x = CsvNumber.parse(row[xColumn]),
+                  let y = CsvNumber.parse(row[yColumn]),
                   x.isFinite, y.isFinite else { return }
             pairs.append((x, y))
         }
@@ -318,7 +318,7 @@ extension VirtualCsvDocument {
         try forEachDisplayRow(cancellation: cancellation) { row in
             for column in targets {
                 if column < row.count,
-                   let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
+                   let value = CsvNumber.parse(row[column]),
                    value.isFinite {
                     series[column]?.append(value)
                 } else {
@@ -387,7 +387,7 @@ extension VirtualCsvDocument {
         var values: [Double] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard column < row.count,
-                  let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let value = CsvNumber.parse(row[column]),
                   value.isFinite else { return }
             values.append(value)
         }

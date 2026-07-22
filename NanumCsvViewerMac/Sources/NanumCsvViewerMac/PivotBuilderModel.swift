@@ -216,7 +216,9 @@ struct PivotResultTableModel: Equatable {
     }
 
     private static func numberValue(_ text: String) -> Double? {
-        Double(text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ""))
+        // Use the same locale-aware parser as the aggregation so the result
+        // table sorts numerically on exactly the values it aggregated.
+        CsvNumber.parse(text)
     }
 
     private static func csvEscaped(_ value: String) -> String {

@@ -15,7 +15,7 @@ public enum NumericInference {
     /// Returns the numeric value of `value`, or `nil` when it parses as a number
     /// but should be kept as text (an identifier-like token).
     public static func number(from value: String) -> Double? {
-        guard let parsed = Double(value) else { return nil }
+        guard let parsed = CsvNumber.parse(value) else { return nil }
         return isIdentifierLike(value) ? nil : parsed
     }
 
