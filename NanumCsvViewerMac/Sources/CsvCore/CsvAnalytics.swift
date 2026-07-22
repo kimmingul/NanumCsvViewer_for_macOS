@@ -167,7 +167,10 @@ enum CsvAnalytics {
     }
 
     static func numericDistribution(values: [Double], column: Int, binCount: Int) -> NumericDistribution {
-        let sorted = values.sorted()
+        // Non-finite values (inf/NaN, e.g. from "inf" or an overflowing literal
+        // like "1e400") would make bin width inf/NaN and trap in `Int(...)`
+        // inside `histogram`. They carry no distribution meaning — drop them.
+        let sorted = values.filter { $0.isFinite }.sorted()
         let count = sorted.count
         let minValue = sorted.first ?? 0
         let maxValue = sorted.last ?? 0

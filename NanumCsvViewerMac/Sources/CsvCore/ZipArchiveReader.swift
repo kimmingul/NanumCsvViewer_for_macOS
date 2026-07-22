@@ -39,8 +39,15 @@ struct ZipArchiveReader {
         let lowerBound = data.count - maxCommentScan
         while offset >= lowerBound {
             if Self.readUInt32(data, at: offset) == 0x06054b50 {
-                eocdOffset = offset
-                break
+                // Only accept a signature whose declared comment length accounts
+                // for exactly the trailing bytes; otherwise a `50 4B 05 06`
+                // sequence planted inside the archive comment would be picked up
+                // instead of the real end-of-central-directory record.
+                let commentLength = Int(Self.readUInt16(data, at: offset + 20))
+                if offset + 22 + commentLength == data.count {
+                    eocdOffset = offset
+                    break
+                }
             }
             offset -= 1
         }

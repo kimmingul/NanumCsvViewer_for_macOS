@@ -10,6 +10,13 @@ public enum XlsxWorkbookError: Error, Equatable {
 /// temporary CSV files so the existing CSV engine works unchanged — the same
 /// temp-CSV bridge SqliteWorkbook uses.
 public enum XlsxWorkbook {
+    /// Excel's hard sheet bounds. References beyond these are invalid in any
+    /// real workbook; rejecting them keeps a crafted worksheet from driving an
+    /// unbounded column index (OOM on row padding / `Int` overflow trap) or an
+    /// astronomically large row number (disk-filling vertical gap fill).
+    static let maxColumns = 16_384
+    static let maxRows = 1_048_576
+
     public static func hasXlsxExtension(_ path: String) -> Bool {
         let ext = (path as NSString).pathExtension.lowercased()
         return ["xlsx", "xlsm"].contains(ext)
@@ -32,6 +39,30 @@ public enum XlsxWorkbook {
         path: String,
         sheet: String,
         destination: URL,
+        limits: WorkbookImportLimits = .unlimited,
+        cancellation: CancellationFlag = CancellationFlag()
+    ) throws -> Int {
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: destination)
+        defer { try? handle.close() }
+        do {
+            return try exportSheetToCsv(path: path, sheet: sheet, output: handle, limits: limits, cancellation: cancellation)
+        } catch {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    /// Exports one sheet into an already-open file handle (e.g. the write end of
+    /// an XPC-provided descriptor) and returns the number of rows written. The
+    /// caller owns the handle and any cleanup on failure.
+    @discardableResult
+    public static func exportSheetToCsv(
+        path: String,
+        sheet: String,
+        output handle: FileHandle,
+        limits: WorkbookImportLimits = .unlimited,
         cancellation: CancellationFlag = CancellationFlag()
     ) throws -> Int {
         let archive: ZipArchiveReader
@@ -61,10 +92,9 @@ public enum XlsxWorkbook {
         guard widthParser.parse() else {
             throw XlsxWorkbookError.invalidWorkbook(widthParser.parserError.map { "\($0)" } ?? "worksheet parse failed")
         }
-
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: destination)
-        defer { try? handle.close() }
+        guard widthScanner.maxColumnCount <= limits.maxColumns else {
+            throw WorkbookImportError.maxColumnsExceeded
+        }
 
         let writer = SheetCsvWriter(
             handle: handle,
@@ -72,6 +102,7 @@ public enum XlsxWorkbook {
             dateStyles: dateStyles,
             date1904: info.date1904,
             sheetColumnCount: widthScanner.maxColumnCount,
+            limits: limits,
             cancellation: cancellation
         )
         let parser = XMLParser(data: sheetData)
@@ -228,15 +259,19 @@ public enum XlsxWorkbook {
         var sawLetter = false
         for character in reference {
             guard let ascii = character.asciiValue else { return nil }
+            let digit: Int
             if ascii >= 65, ascii <= 90 {
-                value = value * 26 + Int(ascii - 64)
-                sawLetter = true
+                digit = Int(ascii - 64)
             } else if ascii >= 97, ascii <= 122 {
-                value = value * 26 + Int(ascii - 96)
-                sawLetter = true
+                digit = Int(ascii - 96)
             } else {
                 break
             }
+            value = value * 26 + digit
+            sawLetter = true
+            // Reject absurd references before the accumulator can overflow or
+            // blow up the sheet width; a valid column never exceeds XFD.
+            if value > maxColumns { return nil }
         }
         return sawLetter ? value - 1 : nil
     }
@@ -421,6 +456,7 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
     private let sharedStrings: [String]
     private let dateStyles: [Bool]
     private let date1904: Bool
+    private let limits: WorkbookImportLimits
     private let cancellation: CancellationFlag
 
     private var currentRowNumber = 0
@@ -443,6 +479,7 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
         dateStyles: [Bool],
         date1904: Bool,
         sheetColumnCount: Int,
+        limits: WorkbookImportLimits,
         cancellation: CancellationFlag
     ) {
         self.handle = handle
@@ -450,6 +487,7 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
         self.dateStyles = dateStyles
         self.date1904 = date1904
         self.maxColumnCount = sheetColumnCount
+        self.limits = limits
         self.cancellation = cancellation
     }
 
@@ -544,13 +582,23 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
     private func emitCurrentRow(parser: XMLParser) {
         do {
             try cancellation.check()
+            try limits.checkDeadline()
+
+            // A row number beyond Excel's ceiling can only come from a crafted
+            // file; honoring it would drive the vertical gap fill below to write
+            // billions of empty rows (disk exhaustion / UI hang).
+            guard currentRowNumber <= XlsxWorkbook.maxRows else {
+                throw XlsxWorkbookError.invalidWorkbook("row \(currentRowNumber) exceeds the \(XlsxWorkbook.maxRows)-row limit")
+            }
 
             // Fill vertical gaps left by empty rows the XML omits entirely.
             while lastWrittenRowNumber + 1 < currentRowNumber {
+                try limits.checkRowBudget(alreadyWritten: rowsWritten, columnCount: maxColumnCount)
                 try writeLine([String](repeating: "", count: maxColumnCount))
                 lastWrittenRowNumber += 1
             }
 
+            try limits.checkRowBudget(alreadyWritten: rowsWritten, columnCount: maxColumnCount)
             var padded = rowValues
             while padded.count < maxColumnCount {
                 padded.append("")

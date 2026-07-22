@@ -76,6 +76,35 @@ final class CsvAnalyticsTests: XCTestCase {
         XCTAssertEqual(distribution.bins.map(\.count), [2, 3])
     }
 
+    func testNumericDistributionDropsNonFiniteValues() {
+        // Before the fix these trapped in `Int((value - min) / width)` inside
+        // `histogram` (Double → Int on inf/NaN is a hard crash).
+        let distribution = CsvAnalytics.numericDistribution(
+            values: [1, 2, 3, .infinity, -.infinity, .nan],
+            column: 0,
+            binCount: 4
+        )
+
+        XCTAssertEqual(distribution.count, 3, "only the finite values are counted")
+        XCTAssertEqual(distribution.min, 1)
+        XCTAssertEqual(distribution.max, 3)
+        XCTAssertFalse(distribution.bins.isEmpty)
+        XCTAssertEqual(distribution.bins.map(\.count).reduce(0, +), 3)
+    }
+
+    func testNumericDistributionSurvivesInfinityInColumn() throws {
+        // A single "inf" cell (Double("inf") parses successfully) reaching the
+        // document-level feeder used to crash the whole app.
+        let (doc, path) = try openIndexed("value\n1\n2\ninf\n3\n4\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let distribution = try doc.numericDistribution(column: 0, binCount: 2, cancellation: CancellationFlag())
+
+        XCTAssertEqual(distribution.count, 4, "the non-finite cell is excluded")
+        XCTAssertEqual(distribution.min, 1)
+        XCTAssertEqual(distribution.max, 4)
+    }
+
     func testDateHistogramBinsByMonth() throws {
         let (doc, path) = try openIndexed("""
         visit_date,value

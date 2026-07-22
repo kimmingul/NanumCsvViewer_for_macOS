@@ -199,6 +199,39 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertTrue(controller.headerFilterActiveForTesting(column: 0))
     }
 
+    func testFilterClearsStaleGridSelection() throws {
+        _ = NSApplication.shared
+        let path = try temporaryCsvPath()
+        try """
+        site,value
+        A,10
+        B,20
+        A,30
+
+        """.data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        defer { controller.close() }
+
+        controller.openFileForTesting(URL(fileURLWithPath: path))
+        try waitUntilIndexed(controller)
+
+        // Select the last row, then filter to a view that no longer contains it.
+        controller.selectGridCellForTesting(row: 2, column: 1)
+        XCTAssertFalse(controller.selectedGridCellsForTesting.isEmpty)
+
+        controller.applyColumnFilterForTesting(.selectedValues(column: 0, values: ["A"], includeBlanks: false))
+        try waitUntilNotBusy(controller)
+
+        XCTAssertEqual(controller.renderedRowCountForTesting, 2)
+        XCTAssertTrue(
+            controller.selectedGridCellsForTesting.isEmpty,
+            "stale view-space selection must be cleared when the view map changes"
+        )
+    }
+
     func testCancelledColumnFilterValueCompletionClearsLoadingState() throws {
         _ = NSApplication.shared
         let path = try temporaryCsvPath()

@@ -829,6 +829,18 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                         i += 1
                         continue
                     }
+                    // Normalize CR / CRLF inside a quoted field to LF, matching
+                    // CsvRowParser, so filter/sort comparisons agree with the
+                    // value the grid displays.
+                    if byte == cr {
+                        field.append(lf)
+                        if i + 1 < raw.count, base[i + 1] == lf {
+                            i += 2
+                        } else {
+                            i += 1
+                        }
+                        continue
+                    }
                     field.append(byte)
                     i += 1
                     continue
@@ -1295,7 +1307,8 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         var values: [Double] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard column < row.count,
-                  let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+                  let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  value.isFinite else { return }
             values.append(value)
         }
         return CsvAnalytics.numericDistribution(values: values, column: column, binCount: binCount)
