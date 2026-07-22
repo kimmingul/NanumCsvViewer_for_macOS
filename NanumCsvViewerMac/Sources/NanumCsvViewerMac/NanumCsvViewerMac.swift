@@ -282,6 +282,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         numberFormatItem.submenu = numberFormatMenu
         settingsMenu.addItem(numberFormatItem)
+
+        let dateOrderItem = NSMenuItem(title: L.t("Date Format", "날짜 형식"), action: nil, keyEquivalent: "")
+        let dateOrderMenu = NSMenu(title: dateOrderItem.title)
+        let dateOrderTitles: [(CsvDateOrder, String)] = [
+            (.auto, L.t("Automatic (Locale)", "자동 (로케일)")),
+            (.monthFirst, L.t("Month first (MM/DD)", "월 먼저 (MM/DD)")),
+            (.dayFirst, L.t("Day first (DD/MM)", "일 먼저 (DD/MM)"))
+        ]
+        for (order, title) in dateOrderTitles {
+            let item = NSMenuItem(title: title, action: #selector(MainWindowController.changeDateOrder(_:)), keyEquivalent: "")
+            item.representedObject = order.rawValue
+            dateOrderMenu.addItem(item)
+        }
+        dateOrderItem.submenu = dateOrderMenu
+        settingsMenu.addItem(dateOrderItem)
         settingsMenu.addItem(.separator())
         let showIndexFolder = NSMenuItem(title: L.t("Show Index Folder", "인덱스 폴더 보기"), action: #selector(MainWindowController.showIndexFolder(_:)), keyEquivalent: "")
         settingsMenu.addItem(showIndexFolder)
@@ -469,6 +484,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "shield.lefthalf.filled"
         case #selector(MainWindowController.changeNumberFormat(_:)):
             return "number"
+        case #selector(MainWindowController.changeDateOrder(_:)):
+            return "calendar"
         case #selector(MainWindowController.showIndexFolder(_:)):
             return "folder"
         case #selector(MainWindowController.clearIndexFolder(_:)):
