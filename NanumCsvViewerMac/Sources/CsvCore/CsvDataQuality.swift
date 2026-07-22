@@ -168,9 +168,9 @@ extension VirtualCsvDocument {
                     accumulators[column].sentinelCount += 1
                     continue
                 }
-                if let number = Double(trimmed), number.isFinite {
+                if let number = NumericInference.number(from: trimmed), number.isFinite {
                     accumulators[column].numericCount += 1
-                } else if CsvDateParser.parse(trimmed, allowCompactNumeric: false) != nil {
+                } else if CsvDateParser.parse(trimmed, allowCompactNumeric: true) != nil {
                     accumulators[column].dateCount += 1
                 } else {
                     accumulators[column].textCount += 1
