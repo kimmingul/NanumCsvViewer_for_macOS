@@ -358,6 +358,56 @@ final class XlsxWorkbookTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: urlOut, encoding: .utf8), try String(contentsOf: fhOut, encoding: .utf8))
     }
 
+    func testExportEnforcesCellCharLimit() throws {
+        let sheet = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+        <row r="1"><c r="A1" t="inlineStr"><is><t>abcdefghij</t></is></c></row>
+        </sheetData>
+        </worksheet>
+        """
+        let path = try writeFixtureXlsx(sheets: [("S", sheet)])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: .max, maxCellChars: 4)
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxCellCharsExceeded)
+        }
+    }
+
+    func testExportEnforcesSharedStringCountViaMaxCells() throws {
+        let sheet = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData>
+        </worksheet>
+        """
+        let path = try writeFixtureXlsx(sheets: [("S", sheet)], sharedStrings: ["a", "b", "c"])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: 2)
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxCellsExceeded)
+        }
+    }
+
+    func testExportEnforcesTotalUncompressedBudget() throws {
+        let path = try writeFixtureXlsx(sheets: [("S", sheetXml(rows: [["hello", "world"]]))])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: .max, maxTotalUncompressedBytes: 8)
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxUncompressedBytesExceeded)
+        }
+    }
+
     // MARK: - Fixture construction
 
     private func sheetXml(rows: [[String]]) -> String {

@@ -122,6 +122,19 @@ final class SqliteWorkbookTests: XCTestCase {
         }
     }
 
+    func testExportEnforcesCellCharLimit() throws {
+        let path = try makeSampleDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let csvURL = URL(fileURLWithPath: NSTemporaryDirectory() + "/sqlite-cellchar-\(UUID().uuidString).csv")
+        defer { try? FileManager.default.removeItem(at: csvURL) }
+
+        // 'Comma, "Quoted"' is longer than 4 characters.
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: .max, maxCellChars: 4)
+        XCTAssertThrowsError(try SqliteWorkbook.exportTableToCsv(path: path, table: "people", destination: csvURL, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxCellCharsExceeded)
+        }
+    }
+
     func testExportToFileHandleMatchesUrlVariant() throws {
         let path = try makeSampleDatabase()
         defer { try? FileManager.default.removeItem(atPath: path) }

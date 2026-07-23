@@ -50,6 +50,109 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(doc.getSourceRowNumber(0), 2)
     }
 
+    func testRamBufferSurvivesSourceTruncation() throws {
+        let (doc, path) = try openIndexed("a,b\nAlice,1\nBob,2\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertTrue(doc.inMemory, "a small file is copied into an owned RAM buffer")
+
+        // Truncate the source out from under the buffer. Before the owned copy,
+        // reads went through the aliased mmap and this would SIGBUS.
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+        try handle.truncate(atOffset: 0)
+        try handle.close()
+
+        XCTAssertEqual(try doc.getDisplayRow(0), ["Alice", "1"])
+        XCTAssertEqual(try doc.getDisplayRow(1), ["Bob", "2"])
+    }
+
+    func testUnterminatedQuoteAtEofWarns() throws {
+        let (doc, path) = try openIndexed("name,note\nAlice,\"never closed\nmore\nlines\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertNotNil(doc.unterminatedQuoteWarning)
+        XCTAssertTrue(doc.unterminatedQuoteWarning?.contains("ends inside an unterminated quote") == true)
+    }
+
+    func testRecordSwallowingManyLinesWarnsHeuristically() throws {
+        var content = "name,note\nAlice,\"oops\n"
+        for i in 0..<150 { content += "row\(i),x\n" }
+        content += "closed\"\nBob,ok\n"
+        let (doc, path) = try openIndexed(content)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertNotNil(doc.unterminatedQuoteWarning)
+        XCTAssertTrue(doc.unterminatedQuoteWarning?.contains("spans") == true)
+    }
+
+    func testNormalFileHasNoQuoteWarning() throws {
+        let (doc, path) = try openIndexed("name,note\nAlice,\"line1\nline2\"\nBob,plain\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertNil(doc.unterminatedQuoteWarning, "a small legitimate multi-line cell does not warn")
+    }
+
+    func testRunIndexingIsNoOpAfterCompletion() throws {
+        let (doc, path) = try openIndexed("a,b\n1,2\n3,4\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        var progressed = false
+        try doc.runIndexing(progress: { _ in progressed = true }, cancellation: CancellationFlag())
+        XCTAssertTrue(progressed)
+        XCTAssertTrue(doc.indexingComplete)
+        XCTAssertEqual(doc.dataRowsAvailable, 2, "re-indexing a complete document must not duplicate offsets")
+    }
+
+    func testRunIndexingFailsClosedAfterCancellation() throws {
+        let path = try temporaryPath()
+        try "a,b\n1,2\n3,4\n5,6\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let doc = try VirtualCsvDocument.open(path: path)
+
+        let cancelled = CancellationFlag()
+        cancelled.cancel()
+        XCTAssertThrowsError(try doc.runIndexing(progress: { _ in }, cancellation: cancelled)) { error in
+            guard case CsvError.cancelled = error else { return XCTFail("expected cancelled, got \(error)") }
+        }
+        XCTAssertFalse(doc.indexingComplete)
+
+        // A retry on the now-failed document fails closed instead of corrupting.
+        XCTAssertThrowsError(try doc.runIndexing(progress: { _ in }, cancellation: CancellationFlag())) { error in
+            guard case CsvError.indexingFailed = error else { return XCTFail("expected indexingFailed, got \(error)") }
+        }
+    }
+
+    func testRunIndexingRejectsReentryFromProgressCallback() throws {
+        let path = try temporaryPath()
+        try "a,b\n1,2\n3,4\n".data(using: .utf8)!.write(to: URL(fileURLWithPath: path))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let doc = try VirtualCsvDocument.open(path: path)
+
+        let lock = NSLock()
+        var reentryError: Error?
+        try doc.runIndexing(progress: { _ in
+            lock.lock()
+            defer { lock.unlock() }
+            guard reentryError == nil else { return }
+            do { try doc.runIndexing(progress: { _ in }, cancellation: CancellationFlag()) }
+            catch { reentryError = error }
+        }, cancellation: CancellationFlag())
+
+        lock.lock()
+        let captured = reentryError
+        lock.unlock()
+        guard case CsvError.indexingInProgress? = captured else {
+            return XCTFail("expected indexingInProgress from re-entry, got \(String(describing: captured))")
+        }
+        XCTAssertEqual(doc.dataRowsAvailable, 2)
+    }
+
+    func testInMemoryIsVisibleOnceIndexingCompletes() throws {
+        let (doc, path) = try openIndexed("a,b\n1,2\n3,4\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        // The RAM buffer is published before completion is observable, so a
+        // reader that sees `indexingComplete` never races the mmap source.
+        XCTAssertTrue(doc.indexingComplete)
+        XCTAssertTrue(doc.inMemory)
+    }
+
     func testColumnEqualsFilterMatchesDisplayedValueWithEmbeddedNewline() throws {
         // A quoted field with an embedded CRLF is displayed with the CR/LF
         // normalized to LF; filtering by that exact displayed value must match

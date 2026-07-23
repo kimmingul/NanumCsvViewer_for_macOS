@@ -48,9 +48,19 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         Swift.min(displayRowCount, Self.analysisRowLimit)
     }
 
-    public static var ramBufferBudgetBytes: Int64 {
-        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
-        return min(max(1_500_000_000, physical / 4), 8_000_000_000)
+    /// Files at or below this size are copied into an owned in-memory buffer
+    /// during indexing (fast repeated reads, and immune to external truncation
+    /// of the source). Larger files stay mmap-backed: `inMemory` is false and
+    /// reads fault the file. Previously this was 1.5–8 GB but the "RAM" buffer
+    /// merely aliased the mmap (no copy), so it lied about being in memory and
+    /// still SIGBUS'd on truncation. Keep the copy budget genuinely small.
+    public static let ramBufferBudgetBytes: Int64 = 64 * 1024 * 1024
+
+    /// A private, owned copy of `data` so the RAM buffer never aliases the mmap
+    /// (which would fault the file on read and SIGBUS if it were truncated).
+    static func ownedCopy(_ data: Data) -> Data {
+        if data.isEmpty { return Data() }
+        return data.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
     }
 
     public static func persistentIndexDirectoryURL() -> URL {
@@ -119,7 +129,37 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     private var headerEnd: Int64 = 0
     private var viewMap: [Int]?
     private var ramBuffer: MemoryFileBuffer?
-    private var indexingCompleteValue = false
+
+    /// Indexing is single-shot per document. The lock-protected transition
+    /// `idle → running → complete | failed` makes re-entry (including via the
+    /// progress callback) and a post-failure retry fail cleanly instead of
+    /// re-appending offsets onto a partially-built index.
+    private enum IndexingState {
+        case idle
+        case running
+        case complete
+        case failed
+    }
+    private var indexingStateValue: IndexingState = .idle
+
+    // Unterminated-quote telemetry captured from the serial indexer.
+    private var maxRecordPhysicalLinesValue = 0
+    private var finishedInsideQuotedFieldValue = false
+
+    /// A warning when the file's quoting looks damaged: a definite one when the
+    /// file ended inside an open quote, or a heuristic one when a single record
+    /// swallowed an unusual number of physical lines (which may also be a
+    /// legitimate multi-line cell). `nil` when the quoting looks normal.
+    public var unterminatedQuoteWarning: String? {
+        if finishedInsideQuotedFieldValue {
+            return "The file ends inside an unterminated quote; rows after it were merged into the last record."
+        }
+        if maxRecordPhysicalLinesValue > Self.unterminatedQuoteLineThreshold {
+            return "A row spans \(maxRecordPhysicalLinesValue) lines. An unterminated quote can merge rows; this may also be a legitimate multi-line cell."
+        }
+        return nil
+    }
+    private static let unterminatedQuoteLineThreshold = 100
     private var persistentIndexDeleteRequested = false
     private var recoverMalformedHeader = false
 
@@ -139,7 +179,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
     public var indexingComplete: Bool {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return indexingCompleteValue
+        return indexingStateValue == .complete
     }
 
     public var isFiltered: Bool {
@@ -487,81 +527,114 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             }
         }
         index.publish()
-        markIndexingComplete()
 
+        // Publish the RAM buffer BEFORE marking complete (atomic handoff).
         if let pending = ramBufferPending {
             for index in state.chunkData.indices {
                 if let data = state.chunkData[index] {
-                    pending.setChunk(data, at: index)
+                    pending.setChunk(Self.ownedCopy(data), at: index)
                 }
             }
             sourceLock.lock()
             ramBuffer = pending
             sourceLock.unlock()
         }
+        markIndexingComplete()
 
         progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: self.index.count))
         return true
     }
 
+    /// Transitions to `.complete`. Callers MUST publish the RAM buffer (or the
+    /// final source) before calling this, so a reader that observes
+    /// `indexingComplete == true` can never still select the mmap source when a
+    /// RAM buffer was intended.
     private func markIndexingComplete() {
         cache.clear()
         stateLock.lock()
-        indexingCompleteValue = true
+        indexingStateValue = .complete
         stateLock.unlock()
     }
 
     public func runIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws {
-        if indexingComplete {
+        // Atomically claim the single-shot indexing run. `.running` is set here,
+        // before any progress callback fires, so a callback that re-enters
+        // runIndexing sees `.running` and fails instead of corrupting the index.
+        stateLock.lock()
+        switch indexingStateValue {
+        case .complete:
+            stateLock.unlock()
             progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
             return
+        case .running:
+            stateLock.unlock()
+            throw CsvError.indexingInProgress
+        case .failed:
+            stateLock.unlock()
+            throw CsvError.indexingFailed
+        case .idle:
+            indexingStateValue = .running
+            stateLock.unlock()
         }
 
-        if recoverMalformedHeader {
-            try runMalformedHeaderRecoveryIndexing(progress: progress, cancellation: cancellation)
-            schedulePersistentIndexSaveIfNeeded()
-            return
-        }
-
-        if try runParallelSimpleIndexing(progress: progress, cancellation: cancellation) {
-            schedulePersistentIndexSaveIfNeeded()
-            return
-        }
-
-        let indexer = CsvRecordIndexer(index: index, fileLength: fileLength, delimiter: delimiterByte, firstRecordStart: Int64(preamble))
-        var offset: Int64 = 0
-        var chunkIndex = 0
-        var lastReport: Int64 = 0
-
-        while offset < fileLength {
-            try cancellation.check()
-            let length = Int(min(Int64(Self.readUnit), fileLength - offset))
-            let chunk = try diskSource.readData(offset: offset, length: length)
-            ramBufferPending?.setChunk(chunk, at: chunkIndex)
-            indexer.processBuffer(chunk, baseOffset: offset)
-            index.publish()
-
-            let processed = offset + Int64(length)
-            if processed - lastReport >= Int64(Self.readUnit) || processed >= fileLength {
-                lastReport = processed
-                progress(IndexProgress(bytesProcessed: processed, fileLength: fileLength, rowsSoFar: index.count))
+        do {
+            if recoverMalformedHeader {
+                try runMalformedHeaderRecoveryIndexing(progress: progress, cancellation: cancellation)
+                schedulePersistentIndexSaveIfNeeded()
+                return
             }
 
-            offset = processed
-            chunkIndex += 1
+            if try runParallelSimpleIndexing(progress: progress, cancellation: cancellation) {
+                schedulePersistentIndexSaveIfNeeded()
+                return
+            }
+
+            let indexer = CsvRecordIndexer(index: index, fileLength: fileLength, delimiter: delimiterByte, firstRecordStart: Int64(preamble))
+            var offset: Int64 = 0
+            var chunkIndex = 0
+            var lastReport: Int64 = 0
+
+            while offset < fileLength {
+                try cancellation.check()
+                let length = Int(min(Int64(Self.readUnit), fileLength - offset))
+                let chunk = try diskSource.readData(offset: offset, length: length)
+                ramBufferPending?.setChunk(Self.ownedCopy(chunk), at: chunkIndex)
+                indexer.processBuffer(chunk, baseOffset: offset)
+                index.publish()
+
+                let processed = offset + Int64(length)
+                if processed - lastReport >= Int64(Self.readUnit) || processed >= fileLength {
+                    lastReport = processed
+                    progress(IndexProgress(bytesProcessed: processed, fileLength: fileLength, rowsSoFar: index.count))
+                }
+
+                offset = processed
+                chunkIndex += 1
+            }
+
+            indexer.finalizeTelemetry()
+            maxRecordPhysicalLinesValue = indexer.maxRecordPhysicalLines
+            finishedInsideQuotedFieldValue = indexer.finishedInsideQuotedField
+
+            index.publish()
+            // Publish the RAM buffer BEFORE marking complete (atomic handoff).
+            if let pending = ramBufferPending {
+                sourceLock.lock()
+                ramBuffer = pending
+                sourceLock.unlock()
+            }
+            markIndexingComplete()
+
+            progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
+            schedulePersistentIndexSaveIfNeeded()
+        } catch {
+            stateLock.lock()
+            if indexingStateValue == .running {
+                indexingStateValue = .failed
+            }
+            stateLock.unlock()
+            throw error
         }
-
-        index.publish()
-        markIndexingComplete()
-
-        if let pending = ramBufferPending {
-            sourceLock.lock()
-            ramBuffer = pending
-            sourceLock.unlock()
-        }
-
-        progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
-        schedulePersistentIndexSaveIfNeeded()
     }
 
     private func runMalformedHeaderRecoveryIndexing(progress: @escaping (IndexProgress) -> Void, cancellation: CancellationFlag) throws {
@@ -574,7 +647,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             try cancellation.check()
             let length = Int(min(Int64(Self.readUnit), fileLength - offset))
             let chunk = try diskSource.readData(offset: offset, length: length)
-            ramBufferPending?.setChunk(chunk, at: Int(offset / Int64(Self.readUnit)))
+            ramBufferPending?.setChunk(Self.ownedCopy(chunk), at: Int(offset / Int64(Self.readUnit)))
 
             let processed = offset + Int64(length)
             let processStart = max(offset, headerEnd)
@@ -593,13 +666,14 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         }
 
         index.publish()
-        markIndexingComplete()
 
+        // Publish the RAM buffer BEFORE marking complete (atomic handoff).
         if let pending = ramBufferPending {
             sourceLock.lock()
             ramBuffer = pending
             sourceLock.unlock()
         }
+        markIndexingComplete()
 
         progress(IndexProgress(bytesProcessed: fileLength, fileLength: fileLength, rowsSoFar: index.count))
     }

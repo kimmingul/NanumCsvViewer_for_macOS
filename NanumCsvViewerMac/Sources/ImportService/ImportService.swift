@@ -186,6 +186,10 @@ final class ImportService: NSObject, ImportServiceProtocol {
             return ImportError(code: "maxColumnsExceeded", message: "The file exceeds the import column limit.")
         case WorkbookImportError.maxCellsExceeded:
             return ImportError(code: "maxCellsExceeded", message: "The file exceeds the import cell limit.")
+        case WorkbookImportError.maxCellCharsExceeded:
+            return ImportError(code: "maxCellCharsExceeded", message: "A cell in the file is too large to import.")
+        case WorkbookImportError.maxUncompressedBytesExceeded:
+            return ImportError(code: "maxUncompressedBytesExceeded", message: "The file expands too much to import.")
         case let XlsxWorkbookError.sheetNotFound(name):
             return ImportError(code: "parseFailed", message: "Sheet \"\(name)\" was not found.")
         case let XlsxWorkbookError.invalidWorkbook(message):
@@ -273,7 +277,21 @@ final class ImportService: NSObject, ImportServiceProtocol {
 }
 
 final class ImportServiceDelegate: NSObject, NSXPCListenerDelegate {
+    /// Code requirement a connecting peer must satisfy. `nil` accepts any peer
+    /// (the shipping default — see PeerValidator). Enabling enforcement is
+    /// blocked on a Team ID + a signed-build CI smoke test.
+    static let peerRequirement: String? = nil
+
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+        let accepted = PeerValidator.isAcceptable(requirement: Self.peerRequirement) {
+            // Placeholder: fail closed until the peer audit-token accessor is
+            // wired up (SDK doesn't expose NSXPCConnection.auditToken publicly).
+            // The real check is PeerValidator.auditTokenSatisfies; enabling it is
+            // part of the signed-build work. Rejecting here can never ship open.
+            false
+        }
+        guard accepted else { return false }
+
         newConnection.exportedInterface = ImportServiceXPCInterface.make()
         newConnection.exportedObject = ImportService()
         newConnection.activate()

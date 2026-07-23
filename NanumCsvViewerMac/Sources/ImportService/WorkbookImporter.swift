@@ -19,7 +19,7 @@ enum WorkbookImporter {
         defer { try? FileManager.default.removeItem(at: sourceURL) }
         let names = try XlsxWorkbook.sheetNames(path: sourceURL.path)
         guard !names.isEmpty else { throw Failure.noParts }
-        return names
+        return cappedNames(names)
     }
 
     static func inspectSqlite(source: FileHandle, limits: ImportLimits) throws -> [String] {
@@ -28,7 +28,14 @@ enum WorkbookImporter {
         defer { try? FileManager.default.removeItem(at: sourceURL) }
         let names = try SqliteWorkbook.tableNames(path: sourceURL.path)
         guard !names.isEmpty else { throw Failure.noParts }
-        return names
+        return cappedNames(names)
+    }
+
+    /// A crafted workbook.xml can declare an unbounded number of sheets; cap the
+    /// name list returned across the XPC boundary so the picker can't be flooded.
+    static let maxInspectedParts = 1024
+    static func cappedNames(_ names: [String]) -> [String] {
+        names.count > maxInspectedParts ? Array(names.prefix(maxInspectedParts)) : names
     }
 
     static func importXlsx(
@@ -122,11 +129,21 @@ enum WorkbookImporter {
         }
     }
 
+    // Memory budgets for the conversion, chosen deliberately rather than derived
+    // from ImportLimits.maxBytes (which caps the COMPRESSED source; a legitimate
+    // ~100MB xlsx can hold a several-hundred-MB worksheet part).
+    private static let maxCellChars = 4_000_000
+    private static let maxUncompressedEntryBytes = 256 * 1024 * 1024
+    private static let maxTotalUncompressedBytes = 512 * 1024 * 1024
+
     private static func workbookLimits(_ limits: ImportLimits, deadline: Date) -> WorkbookImportLimits {
         WorkbookImportLimits(
             maxRows: clampToInt(limits.maxRows),
             maxColumns: limits.maxColumns,
             maxCells: clampToInt(limits.maxCells),
+            maxCellChars: maxCellChars,
+            maxUncompressedEntryBytes: maxUncompressedEntryBytes,
+            maxTotalUncompressedBytes: maxTotalUncompressedBytes,
             deadline: deadline
         )
     }

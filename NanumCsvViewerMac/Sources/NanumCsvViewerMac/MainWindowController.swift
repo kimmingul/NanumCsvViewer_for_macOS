@@ -1899,6 +1899,13 @@ extension MainWindowController {
     /// through the sandboxed import service — one XPC import per part, run
     /// concurrently — then opens the first in this window and the rest in tabs.
     /// Ordering follows `parts`; the whole batch fails on the first error.
+    /// Upper bound on how many workbook parts "Open All" converts in one batch.
+    /// A crafted workbook.xml can declare thousands of sheets; without a cap the
+    /// old fan-out fired one concurrent XPC import per part.
+    static let maxWorkbookPartsPerBatch = 64
+    /// How many part conversions run concurrently.
+    private static let workbookPartConcurrency = 4
+
     private func importWorkbookParts(
         parts: [String],
         base: String,
@@ -1907,36 +1914,78 @@ extension MainWindowController {
         failureStatus: String,
         importPart: @escaping (_ part: String, _ destinationDir: URL, _ outputFileName: String, _ completion: @escaping (Result<ImportResult, ImportClientError>) -> Void) -> Void
     ) {
+        let selected = Array(parts.prefix(Self.maxWorkbookPartsPerBatch))
+        let truncated = parts.count > selected.count
+        guard !selected.isEmpty else {
+            operationCancellation = nil
+            setBusy(false)
+            return
+        }
+
         let collector = WorkbookPartCollector()
-        let group = DispatchGroup()
-        for (index, part) in parts.enumerated() {
+        let pump = WorkbookPartPump(total: selected.count, concurrency: Self.workbookPartConcurrency)
+
+        func launch(_ index: Int) {
+            let part = selected[index]
             let safeName = part
                 .replacingOccurrences(of: "/", with: "_")
                 .replacingOccurrences(of: ":", with: "_")
             let destinationDir = tempDir.appendingPathComponent("\(index)", isDirectory: true)
             let outputFileName = "\(base).\(safeName).csv"
-            group.enter()
-            importPart(part, destinationDir, outputFileName) { result in
+            importPart(part, destinationDir, outputFileName) { [weak self] result in
                 collector.record(index: index, result: result.map(\.csvURL))
-                group.leave()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if self.operationCancellation !== cancellation || cancellation.isCancelled {
+                        // Cancelled: schedule nothing more; the guard in finish drops results.
+                        if pump.stop() {
+                            self.finishWorkbookImport(collector: collector, count: selected.count, truncated: truncated, cancellation: cancellation, failureStatus: failureStatus)
+                        }
+                        return
+                    }
+                    let (nextIndex, drained) = pump.partFinished()
+                    if let nextIndex {
+                        launch(nextIndex)
+                    }
+                    if drained {
+                        self.finishWorkbookImport(collector: collector, count: selected.count, truncated: truncated, cancellation: cancellation, failureStatus: failureStatus)
+                    }
+                }
             }
         }
-        group.notify(queue: .main) { [weak self] in
-            guard let self, self.operationCancellation === cancellation, !cancellation.isCancelled else { return }
-            self.operationCancellation = nil
-            self.setBusy(false)
-            switch collector.outcome(count: parts.count) {
-            case .success(let urls):
-                guard let first = urls.first else { return }
-                self.openFile(first)
-                let rest = Array(urls.dropFirst())
-                if !rest.isEmpty {
-                    self.openAdditionalFilesHandler?(rest, self.window)
-                }
-            case .failure(let error):
-                self.presentError(error)
-                self.statusLabel.stringValue = failureStatus
+
+        for index in pump.initialBatch() {
+            launch(index)
+        }
+    }
+
+    private func finishWorkbookImport(
+        collector: WorkbookPartCollector,
+        count: Int,
+        truncated: Bool,
+        cancellation: CancellationFlag,
+        failureStatus: String
+    ) {
+        guard operationCancellation === cancellation, !cancellation.isCancelled else { return }
+        operationCancellation = nil
+        setBusy(false)
+        switch collector.outcome(count: count) {
+        case .success(let urls):
+            guard let first = urls.first else { return }
+            openFile(first)
+            let rest = Array(urls.dropFirst())
+            if !rest.isEmpty {
+                openAdditionalFilesHandler?(rest, window)
             }
+            if truncated {
+                statusLabel.stringValue = L.t(
+                    "Opened the first \(count) parts; the rest were skipped.",
+                    "처음 \(count)개 파트만 열었습니다. 나머지는 생략했습니다."
+                )
+            }
+        case .failure(let error):
+            presentError(error)
+            statusLabel.stringValue = failureStatus
         }
     }
 
@@ -2088,7 +2137,11 @@ extension MainWindowController {
         setProgressVisible(false)
         refreshRowCount()
         updateFeatureState()
-        statusLabel.stringValue = ""
+        if let warning = doc.unterminatedQuoteWarning {
+            statusLabel.stringValue = "⚠︎ " + warning
+        } else {
+            statusLabel.stringValue = ""
+        }
         refreshColumnStatistics(for: doc, final: true)
         scheduleFacetRefresh(delay: 0)
         autoRestoreSavedViewIfEnabled()

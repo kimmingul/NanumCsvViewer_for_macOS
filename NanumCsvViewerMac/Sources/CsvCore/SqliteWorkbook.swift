@@ -129,6 +129,11 @@ public enum SqliteWorkbook {
                 try limits.checkDeadline()
             }
             try limits.checkRowBudget(alreadyWritten: rowCount, columnCount: columnCount)
+            if limits.maxCellChars != .max {
+                for index in 0..<columnCount where Int(sqlite3_column_bytes(statement, Int32(index))) > limits.maxCellChars {
+                    throw WorkbookImportError.maxCellCharsExceeded
+                }
+            }
             let fields = (0..<columnCount).map { index -> String in
                 columnText(statement, Int32(index))
             }
