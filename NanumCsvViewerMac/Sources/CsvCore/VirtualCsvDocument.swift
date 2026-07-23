@@ -131,6 +131,25 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         case failed
     }
     private var indexingStateValue: IndexingState = .idle
+
+    // Unterminated-quote telemetry captured from the serial indexer.
+    private var maxRecordPhysicalLinesValue = 0
+    private var finishedInsideQuotedFieldValue = false
+
+    /// A warning when the file's quoting looks damaged: a definite one when the
+    /// file ended inside an open quote, or a heuristic one when a single record
+    /// swallowed an unusual number of physical lines (which may also be a
+    /// legitimate multi-line cell). `nil` when the quoting looks normal.
+    public var unterminatedQuoteWarning: String? {
+        if finishedInsideQuotedFieldValue {
+            return "The file ends inside an unterminated quote; rows after it were merged into the last record."
+        }
+        if maxRecordPhysicalLinesValue > Self.unterminatedQuoteLineThreshold {
+            return "A row spans \(maxRecordPhysicalLinesValue) lines. An unterminated quote can merge rows; this may also be a legitimate multi-line cell."
+        }
+        return nil
+    }
+    private static let unterminatedQuoteLineThreshold = 100
     private var persistentIndexDeleteRequested = false
     private var recoverMalformedHeader = false
 
@@ -582,6 +601,10 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 offset = processed
                 chunkIndex += 1
             }
+
+            indexer.finalizeTelemetry()
+            maxRecordPhysicalLinesValue = indexer.maxRecordPhysicalLines
+            finishedInsideQuotedFieldValue = indexer.finishedInsideQuotedField
 
             index.publish()
             // Publish the RAM buffer BEFORE marking complete (atomic handoff).

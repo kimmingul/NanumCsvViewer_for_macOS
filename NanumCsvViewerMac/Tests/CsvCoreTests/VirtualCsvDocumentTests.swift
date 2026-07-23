@@ -50,6 +50,29 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(doc.getSourceRowNumber(0), 2)
     }
 
+    func testUnterminatedQuoteAtEofWarns() throws {
+        let (doc, path) = try openIndexed("name,note\nAlice,\"never closed\nmore\nlines\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertNotNil(doc.unterminatedQuoteWarning)
+        XCTAssertTrue(doc.unterminatedQuoteWarning?.contains("ends inside an unterminated quote") == true)
+    }
+
+    func testRecordSwallowingManyLinesWarnsHeuristically() throws {
+        var content = "name,note\nAlice,\"oops\n"
+        for i in 0..<150 { content += "row\(i),x\n" }
+        content += "closed\"\nBob,ok\n"
+        let (doc, path) = try openIndexed(content)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertNotNil(doc.unterminatedQuoteWarning)
+        XCTAssertTrue(doc.unterminatedQuoteWarning?.contains("spans") == true)
+    }
+
+    func testNormalFileHasNoQuoteWarning() throws {
+        let (doc, path) = try openIndexed("name,note\nAlice,\"line1\nline2\"\nBob,plain\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertNil(doc.unterminatedQuoteWarning, "a small legitimate multi-line cell does not warn")
+    }
+
     func testRunIndexingIsNoOpAfterCompletion() throws {
         let (doc, path) = try openIndexed("a,b\n1,2\n3,4\n")
         defer { try? FileManager.default.removeItem(atPath: path) }

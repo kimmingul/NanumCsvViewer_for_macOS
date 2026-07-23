@@ -18,6 +18,23 @@ public final class CsvRecordIndexer {
     private var state: State = .fieldStart
     private var awaitingLfAfterCr = false
 
+    // Telemetry for unterminated-quote detection: the most physical newlines
+    // consumed inside a single logical record (0 for normal rows; large when a
+    // stray quote swallowed many rows). Cheap: only counted inside quoted runs.
+    private var currentRecordLines = 0
+    private(set) var maxRecordPhysicalLines = 0
+
+    /// True when the input ended while still inside an unterminated quoted field.
+    public var finishedInsideQuotedField: Bool { state == .inQuoted }
+
+    /// Folds the final (un-terminated) record's line count into the maximum.
+    /// Call once after the last buffer.
+    public func finalizeTelemetry() {
+        if maxRecordPhysicalLines < currentRecordLines {
+            maxRecordPhysicalLines = currentRecordLines
+        }
+    }
+
     public init(index: RecordIndex, fileLength: Int64, delimiter: UInt8, firstRecordStart: Int64, quote: UInt8 = UInt8(ascii: "\"")) {
         self.index = index
         self.fileLength = fileLength
@@ -59,6 +76,7 @@ public final class CsvRecordIndexer {
 
             if state == .inQuoted {
                 while i < count, base[i] != quote {
+                    if base[i] == Self.lf { currentRecordLines += 1 }
                     i += 1
                 }
                 if i >= count { break }
@@ -135,6 +153,11 @@ public final class CsvRecordIndexer {
     }
 
     private func addStart(_ offset: Int64) {
+        // A new logical record begins: fold the record that just ended.
+        if maxRecordPhysicalLines < currentRecordLines {
+            maxRecordPhysicalLines = currentRecordLines
+        }
+        currentRecordLines = 0
         if offset < fileLength {
             index.add(offset)
         }

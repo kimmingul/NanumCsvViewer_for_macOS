@@ -2137,7 +2137,11 @@ extension MainWindowController {
         setProgressVisible(false)
         refreshRowCount()
         updateFeatureState()
-        statusLabel.stringValue = ""
+        if let warning = doc.unterminatedQuoteWarning {
+            statusLabel.stringValue = "⚠︎ " + warning
+        } else {
+            statusLabel.stringValue = ""
+        }
         refreshColumnStatistics(for: doc, final: true)
         scheduleFacetRefresh(delay: 0)
         autoRestoreSavedViewIfEnabled()
