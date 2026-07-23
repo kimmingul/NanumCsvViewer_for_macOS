@@ -48,9 +48,19 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         Swift.min(displayRowCount, Self.analysisRowLimit)
     }
 
-    public static var ramBufferBudgetBytes: Int64 {
-        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
-        return min(max(1_500_000_000, physical / 4), 8_000_000_000)
+    /// Files at or below this size are copied into an owned in-memory buffer
+    /// during indexing (fast repeated reads, and immune to external truncation
+    /// of the source). Larger files stay mmap-backed: `inMemory` is false and
+    /// reads fault the file. Previously this was 1.5–8 GB but the "RAM" buffer
+    /// merely aliased the mmap (no copy), so it lied about being in memory and
+    /// still SIGBUS'd on truncation. Keep the copy budget genuinely small.
+    public static let ramBufferBudgetBytes: Int64 = 64 * 1024 * 1024
+
+    /// A private, owned copy of `data` so the RAM buffer never aliases the mmap
+    /// (which would fault the file on read and SIGBUS if it were truncated).
+    static func ownedCopy(_ data: Data) -> Data {
+        if data.isEmpty { return Data() }
+        return data.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
     }
 
     public static func persistentIndexDirectoryURL() -> URL {
@@ -522,7 +532,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         if let pending = ramBufferPending {
             for index in state.chunkData.indices {
                 if let data = state.chunkData[index] {
-                    pending.setChunk(data, at: index)
+                    pending.setChunk(Self.ownedCopy(data), at: index)
                 }
             }
             sourceLock.lock()
@@ -588,7 +598,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 try cancellation.check()
                 let length = Int(min(Int64(Self.readUnit), fileLength - offset))
                 let chunk = try diskSource.readData(offset: offset, length: length)
-                ramBufferPending?.setChunk(chunk, at: chunkIndex)
+                ramBufferPending?.setChunk(Self.ownedCopy(chunk), at: chunkIndex)
                 indexer.processBuffer(chunk, baseOffset: offset)
                 index.publish()
 
@@ -637,7 +647,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
             try cancellation.check()
             let length = Int(min(Int64(Self.readUnit), fileLength - offset))
             let chunk = try diskSource.readData(offset: offset, length: length)
-            ramBufferPending?.setChunk(chunk, at: Int(offset / Int64(Self.readUnit)))
+            ramBufferPending?.setChunk(Self.ownedCopy(chunk), at: Int(offset / Int64(Self.readUnit)))
 
             let processed = offset + Int64(length)
             let processStart = max(offset, headerEnd)

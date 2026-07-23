@@ -50,6 +50,21 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(doc.getSourceRowNumber(0), 2)
     }
 
+    func testRamBufferSurvivesSourceTruncation() throws {
+        let (doc, path) = try openIndexed("a,b\nAlice,1\nBob,2\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertTrue(doc.inMemory, "a small file is copied into an owned RAM buffer")
+
+        // Truncate the source out from under the buffer. Before the owned copy,
+        // reads went through the aliased mmap and this would SIGBUS.
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+        try handle.truncate(atOffset: 0)
+        try handle.close()
+
+        XCTAssertEqual(try doc.getDisplayRow(0), ["Alice", "1"])
+        XCTAssertEqual(try doc.getDisplayRow(1), ["Bob", "2"])
+    }
+
     func testUnterminatedQuoteAtEofWarns() throws {
         let (doc, path) = try openIndexed("name,note\nAlice,\"never closed\nmore\nlines\n")
         defer { try? FileManager.default.removeItem(atPath: path) }
