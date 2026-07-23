@@ -50,6 +50,21 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertEqual(doc.getSourceRowNumber(0), 2)
     }
 
+    func testColumnEqualsFilterMatchesDisplayedValueWithEmbeddedNewline() throws {
+        // A quoted field with an embedded CRLF is displayed with the CR/LF
+        // normalized to LF; filtering by that exact displayed value must match
+        // the row (it returned zero before the CR-normalization fix).
+        let (doc, path) = try openIndexed("name,note\nAlice,\"line1\r\nline2\"\nBob,plain\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        XCTAssertEqual(try doc.getDisplayRow(0), ["Alice", "line1\nline2"])
+
+        try doc.filterColumnEquals(column: 1, value: "line1\nline2", withinCurrentView: false, progress: nil, cancellation: CancellationFlag())
+
+        XCTAssertEqual(doc.displayRowCount, 1)
+        XCTAssertEqual(try doc.getDisplayRow(0)[0], "Alice")
+    }
+
     func testColumnContainsFilterUsesSelectedColumnOnly() throws {
         let (doc, path) = try openIndexed("name,note\nAlice,\"hello, world\"\nBob,\"a \"\"quoted\"\" value\"\nCarol,plain\n")
         defer { try? FileManager.default.removeItem(atPath: path) }

@@ -1,6 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 @preconcurrency import CsvCore
+import ImportServiceProtocol
 
 private extension NSUserInterfaceItemIdentifier {
     static let analysisPromptRow = NSUserInterfaceItemIdentifier("analysisPromptRow")
@@ -57,6 +58,9 @@ final class MainWindowController: NSWindowController {
     private static let rowDensityDefaultsKey = "NanumCsvViewerMac.RowDensity"
     private static let gridFontSizeDefaultsKey = "NanumCsvViewerMac.GridFontSize"
     private static let appearanceDefaultsKey = "NanumCsvViewerMac.Appearance"
+    private static let sanitizeFormulasDefaultsKey = "NanumCsvViewerMac.SanitizeFormulas"
+    private static let numberFormatDefaultsKey = "NanumCsvViewerMac.NumberFormat"
+    private static let dateOrderDefaultsKey = "NanumCsvViewerMac.DateOrder"
     private var benchmarkIteration = 0
     private static let columnOrderDefaultsKey = "NanumCsvViewerMac.ColumnOrderByPath"
     private static let pinnedColumnsDefaultsKey = "NanumCsvViewerMac.PinnedColumnsByPath"
@@ -178,6 +182,7 @@ final class MainWindowController: NSWindowController {
     private var dataQualityCancellation: CancellationFlag?
     var openAdditionalFilesHandler: (([URL], NSWindow?) -> Void)?
     var closeHandler: ((MainWindowController) -> Void)?
+    private var didPerformTeardown = false
 
     private var hasAnyFilter: Bool {
         textCondition != nil || !columnFilterState.isEmpty
@@ -195,6 +200,11 @@ final class MainWindowController: NSWindowController {
         window.tabbingIdentifier = "NanumCsvViewerMac.Documents"
         window.tabbingMode = .preferred
         super.init(window: window)
+        // Own the window's close so teardown runs on a red-button/Cmd-W close,
+        // not only when someone calls `close()` explicitly.
+        window.delegate = self
+        CsvNumber.format = Self.numberFormatChoice
+        CsvDateSettings.order = Self.dateOrderChoice
         VirtualCsvDocument.persistentIndexEnabled = UserDefaults.standard.object(forKey: Self.persistentIndexDefaultsKey) as? Bool ?? true
         VirtualCsvDocument.deletePersistentIndexOnClose = UserDefaults.standard.object(forKey: Self.deleteIndexCacheOnCloseDefaultsKey) as? Bool ?? false
         hiddenColumnIndexes = Set(UserDefaults.standard.array(forKey: Self.hiddenColumnsDefaultsKey) as? [Int] ?? [])
@@ -208,12 +218,32 @@ final class MainWindowController: NSWindowController {
     }
 
     override func close() {
+        performTeardown()
+        super.close()
+    }
+
+    /// Cancels in-flight work, tears down timers/observers, and drops this
+    /// controller from its owner. Idempotent — runs at most once whether the
+    /// window is closed via the red button (`windowWillClose`) or `close()`.
+    private func performTeardown() {
+        guard !didPerformTeardown else { return }
+        didPerformTeardown = true
         cancelAll()
+        operationCancellation = nil
         rowTimer?.invalidate()
         detailUpdateWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
-        closeHandler?(self)
-        super.close()
+        // Defer removal from the owner's list so we don't deallocate ourselves
+        // (and our window) in the middle of the close notification.
+        DispatchQueue.main.async { [weak self] in
+            self?.notifyOwnerOfClose()
+        }
+    }
+
+    private func notifyOwnerOfClose() {
+        let handler = closeHandler
+        closeHandler = nil
+        handler?(self)
     }
 
     private func buildInterface() {
@@ -865,6 +895,12 @@ private extension NSToolbarItem.Identifier {
     static let detail = NSToolbarItem.Identifier("detail")
 }
 
+extension MainWindowController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        performTeardown()
+    }
+}
+
 extension MainWindowController: NSToolbarDelegate {
     nonisolated func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.openFile, .closeDocument, .sortGroup, .pivot, .findGroup, .filterToggle, .detail, .flexibleSpace, .space]
@@ -1129,6 +1165,15 @@ extension MainWindowController: NSMenuItemValidation {
             case #selector(toggleAutoRestoreView(_:)):
                 menuItem.state = UserDefaults.standard.bool(forKey: Self.autoRestoreViewDefaultsKey) ? .on : .off
                 return true
+            case #selector(toggleSanitizeFormulas(_:)):
+                menuItem.state = sanitizeFormulasEnabled ? .on : .off
+                return true
+            case #selector(changeNumberFormat(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == Self.numberFormatChoice.rawValue ? .on : .off
+                return true
+            case #selector(changeDateOrder(_:)):
+                menuItem.state = (menuItem.representedObject as? String) == Self.dateOrderChoice.rawValue ? .on : .off
+                return true
             case #selector(changeRowDensity(_:)):
                 menuItem.state = (menuItem.representedObject as? String) == currentRowDensity.rawValue ? .on : .off
                 return true
@@ -1299,12 +1344,14 @@ extension MainWindowController {
             Task { @MainActor in
                 let resolvedFormat = self?.exportFormat(for: url, fallback: format) ?? format
                 let selectedColumns = self?.visibleColumnIndexesForExport()
+                let sanitize = self?.sanitizeFormulasEnabled ?? false
                 self?.runViewOperation(message: L.t("Exporting...", "내보내는 중..."), mutatesView: false) { flag, progress in
                     try doc.exportCurrentView(
                         to: url.path,
                         format: resolvedFormat,
                         encodingName: encodingName,
                         selectedColumns: selectedColumns,
+                        sanitizeFormulas: sanitize,
                         progress: progress,
                         cancellation: flag
                     )
@@ -1687,19 +1734,32 @@ extension MainWindowController {
     }
 
     private func openXlsxWorkbook(_ url: URL) {
-        do {
-            let sheets = try XlsxWorkbook.sheetNames(path: url.path)
-            guard !sheets.isEmpty else {
-                statusLabel.stringValue = L.t("No sheets found in the workbook.", "통합 문서에 시트가 없습니다.")
-                return
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: L.t("Reading Excel workbook...", "Excel 통합 문서 읽는 중..."))
+        ImportClient().inspectXlsx(sourceURL: url, limits: .phase1Default) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.operationCancellation === cancellation else { return }
+                self.operationCancellation = nil
+                self.setBusy(false)
+                switch result {
+                case .success(let inspection):
+                    let sheets = inspection.sheetNames
+                    guard !sheets.isEmpty else {
+                        self.statusLabel.stringValue = L.t("No sheets found in the workbook.", "통합 문서에 시트가 없습니다.")
+                        return
+                    }
+                    if sheets.count == 1 {
+                        self.openXlsxSheets(url, sheets: sheets)
+                    } else {
+                        self.presentXlsxSheetPicker(url: url, sheets: sheets)
+                    }
+                case .failure(let error):
+                    self.presentError(error)
+                    self.statusLabel.stringValue = L.t("Excel import failed.", "Excel 가져오기에 실패했습니다.")
+                }
             }
-            if sheets.count == 1 {
-                openXlsxSheets(url, sheets: sheets)
-                return
-            }
-            presentXlsxSheetPicker(url: url, sheets: sheets)
-        } catch {
-            presentError(error)
         }
     }
 
@@ -1736,63 +1796,51 @@ extension MainWindowController {
         let cancellation = CancellationFlag()
         operationCancellation = cancellation
         setBusy(true, message: L.t("Converting Excel sheet...", "Excel 시트 변환 중..."))
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-                var destinations: [URL] = []
-                for sheet in sheets {
-                    let safeName = sheet
-                        .replacingOccurrences(of: "/", with: "_")
-                        .replacingOccurrences(of: ":", with: "_")
-                    let destination = tempDir.appendingPathComponent("\(base).\(safeName).csv")
-                    try XlsxWorkbook.exportSheetToCsv(path: url.path, sheet: sheet, destination: destination, cancellation: cancellation)
-                    destinations.append(destination)
-                }
-                DispatchQueue.main.async {
-                    guard let self, self.operationCancellation === cancellation else { return }
-                    self.operationCancellation = nil
-                    self.setBusy(false)
-                    guard let first = destinations.first else { return }
-                    self.openFile(first)
-                    let rest = Array(destinations.dropFirst())
-                    if !rest.isEmpty {
-                        self.openAdditionalFilesHandler?(rest, self.window)
-                    }
-                }
-            } catch CsvError.cancelled {
-                DispatchQueue.main.async {
-                    guard let self, self.operationCancellation === cancellation else { return }
-                    self.operationCancellation = nil
-                    self.setBusy(false)
-                    self.statusLabel.stringValue = L.t("Excel conversion cancelled.", "Excel 변환이 취소되었습니다.")
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    if self.operationCancellation === cancellation {
-                        self.operationCancellation = nil
-                    }
-                    self.setBusy(false)
-                    self.presentError(error)
-                }
-            }
+        importWorkbookParts(
+            parts: sheets,
+            base: base,
+            tempDir: tempDir,
+            cancellation: cancellation,
+            failureStatus: L.t("Excel import failed.", "Excel 가져오기에 실패했습니다.")
+        ) { part, destinationDir, outputFileName, completion in
+            ImportClient().importXlsx(
+                sourceURL: url,
+                destinationDir: destinationDir,
+                sheetName: part,
+                outputFileName: outputFileName,
+                limits: .phase1Default,
+                completion: completion
+            )
         }
     }
 
     private func openSqliteDatabase(_ url: URL) {
-        do {
-            let tables = try SqliteWorkbook.tableNames(path: url.path)
-            guard !tables.isEmpty else {
-                statusLabel.stringValue = L.t("No tables found in the database.", "데이터베이스에 테이블이 없습니다.")
-                return
+        operationCancellation?.cancel()
+        let cancellation = CancellationFlag()
+        operationCancellation = cancellation
+        setBusy(true, message: L.t("Reading SQLite database...", "SQLite 데이터베이스 읽는 중..."))
+        ImportClient().inspectSqlite(sourceURL: url, limits: .phase2Default) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.operationCancellation === cancellation else { return }
+                self.operationCancellation = nil
+                self.setBusy(false)
+                switch result {
+                case .success(let inspection):
+                    let tables = inspection.sheetNames
+                    guard !tables.isEmpty else {
+                        self.statusLabel.stringValue = L.t("No tables found in the database.", "데이터베이스에 테이블이 없습니다.")
+                        return
+                    }
+                    if tables.count == 1 {
+                        self.openSqliteTables(url, tables: tables)
+                    } else {
+                        self.presentSqliteTablePicker(url: url, tables: tables)
+                    }
+                case .failure(let error):
+                    self.presentError(error)
+                    self.statusLabel.stringValue = L.t("SQLite import failed.", "SQLite 가져오기에 실패했습니다.")
+                }
             }
-            if tables.count == 1 {
-                openSqliteTables(url, tables: tables)
-                return
-            }
-            presentSqliteTablePicker(url: url, tables: tables)
-        } catch {
-            presentError(error)
         }
     }
 
@@ -1829,45 +1877,65 @@ extension MainWindowController {
         let cancellation = CancellationFlag()
         operationCancellation = cancellation
         setBusy(true, message: L.t("Converting SQLite table...", "SQLite 테이블 변환 중..."))
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-                var destinations: [URL] = []
-                for table in tables {
-                    let safeName = table
-                        .replacingOccurrences(of: "/", with: "_")
-                        .replacingOccurrences(of: ":", with: "_")
-                    let destination = tempDir.appendingPathComponent("\(base).\(safeName).csv")
-                    try SqliteWorkbook.exportTableToCsv(path: url.path, table: table, destination: destination, cancellation: cancellation)
-                    destinations.append(destination)
+        importWorkbookParts(
+            parts: tables,
+            base: base,
+            tempDir: tempDir,
+            cancellation: cancellation,
+            failureStatus: L.t("SQLite import failed.", "SQLite 가져오기에 실패했습니다.")
+        ) { part, destinationDir, outputFileName, completion in
+            ImportClient().importSqlite(
+                sourceURL: url,
+                destinationDir: destinationDir,
+                tableName: part,
+                outputFileName: outputFileName,
+                limits: .phase2Default,
+                completion: completion
+            )
+        }
+    }
+
+    /// Converts the named workbook parts (Excel sheets / SQLite tables) to CSV
+    /// through the sandboxed import service — one XPC import per part, run
+    /// concurrently — then opens the first in this window and the rest in tabs.
+    /// Ordering follows `parts`; the whole batch fails on the first error.
+    private func importWorkbookParts(
+        parts: [String],
+        base: String,
+        tempDir: URL,
+        cancellation: CancellationFlag,
+        failureStatus: String,
+        importPart: @escaping (_ part: String, _ destinationDir: URL, _ outputFileName: String, _ completion: @escaping (Result<ImportResult, ImportClientError>) -> Void) -> Void
+    ) {
+        let collector = WorkbookPartCollector()
+        let group = DispatchGroup()
+        for (index, part) in parts.enumerated() {
+            let safeName = part
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: ":", with: "_")
+            let destinationDir = tempDir.appendingPathComponent("\(index)", isDirectory: true)
+            let outputFileName = "\(base).\(safeName).csv"
+            group.enter()
+            importPart(part, destinationDir, outputFileName) { result in
+                collector.record(index: index, result: result.map(\.csvURL))
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self, self.operationCancellation === cancellation, !cancellation.isCancelled else { return }
+            self.operationCancellation = nil
+            self.setBusy(false)
+            switch collector.outcome(count: parts.count) {
+            case .success(let urls):
+                guard let first = urls.first else { return }
+                self.openFile(first)
+                let rest = Array(urls.dropFirst())
+                if !rest.isEmpty {
+                    self.openAdditionalFilesHandler?(rest, self.window)
                 }
-                DispatchQueue.main.async {
-                    guard let self, self.operationCancellation === cancellation else { return }
-                    self.operationCancellation = nil
-                    self.setBusy(false)
-                    guard let first = destinations.first else { return }
-                    self.openFile(first)
-                    let rest = Array(destinations.dropFirst())
-                    if !rest.isEmpty {
-                        self.openAdditionalFilesHandler?(rest, self.window)
-                    }
-                }
-            } catch CsvError.cancelled {
-                DispatchQueue.main.async {
-                    guard let self, self.operationCancellation === cancellation else { return }
-                    self.operationCancellation = nil
-                    self.setBusy(false)
-                    self.statusLabel.stringValue = L.t("SQLite conversion cancelled.", "SQLite 변환이 취소되었습니다.")
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    if self.operationCancellation === cancellation {
-                        self.operationCancellation = nil
-                    }
-                    self.setBusy(false)
-                    self.presentError(error)
-                }
+            case .failure(let error):
+                self.presentError(error)
+                self.statusLabel.stringValue = failureStatus
             }
         }
     }
@@ -3884,6 +3952,11 @@ extension MainWindowController {
                     self.setProgressVisible(false)
                     self.setBusy(false)
                     if mutatesView {
+                        // The selection is in view-row space; a filter/sort
+                        // remaps or drops rows, so stale indices would highlight
+                        // the wrong record or feed an out-of-range row to
+                        // reloadData(forRowIndexes:). Clear before reloading.
+                        self.clearGridSelection()
                         self.refreshRowCount()
                         self.tableView.reloadData()
                         self.scheduleVisibleRowPrefetch()
@@ -3934,6 +4007,9 @@ extension MainWindowController {
                     self.operationCancellation = nil
                     self.setProgressVisible(false)
                     self.setBusy(false)
+                    // See the typed runViewOperation above: drop the stale
+                    // view-space selection before the reload.
+                    self.clearGridSelection()
                     self.refreshRowCount()
                     self.tableView.reloadData()
                     self.scheduleVisibleRowPrefetch()
@@ -4317,14 +4393,14 @@ extension MainWindowController {
                 rows.append((try? doc.getDisplayRow(rowIndex)) ?? [])
             }
         }
-        return GridCopyFormatter.tsv(rows: rows, selection: selection)
+        return GridCopyFormatter.tsv(rows: rows, selection: selection, sanitizeFormulas: sanitizeFormulasEnabled)
     }
 
     func rowCopyString(row: Int) -> String? {
         guard let doc = csvDocument, row >= 0, row < doc.displayRowCount else { return nil }
         let visibleColumns = columnNames.indices.filter { !hiddenColumnIndexes.contains($0) }
         guard let fields = try? doc.getDisplayRow(row) else { return nil }
-        return GridCopyFormatter.tsv(row: fields, columns: visibleColumns)
+        return GridCopyFormatter.tsv(row: fields, columns: visibleColumns, sanitizeFormulas: sanitizeFormulasEnabled)
     }
 
     func columnCopyString(column: Int, includeHeader: Bool) -> String? {
@@ -4334,9 +4410,10 @@ extension MainWindowController {
             return fields[column]
         }
         if includeHeader {
-            return GridCopyFormatter.tsv(columnName: columnNames[column], values: values)
+            return GridCopyFormatter.tsv(columnName: columnNames[column], values: values, sanitizeFormulas: sanitizeFormulasEnabled)
         }
-        return values.joined(separator: "\n") + "\n"
+        let prepared = sanitizeFormulasEnabled ? values.map(CsvFormulaSanitizer.sanitize) : values
+        return prepared.joined(separator: "\n") + "\n"
     }
 
     func inspectorTextCopyString() -> String {
@@ -5133,6 +5210,55 @@ extension MainWindowController {
         statusLabel.stringValue = enabled
             ? L.t("Saved views will restore on open.", "파일을 열 때 저장된 보기를 복원합니다.")
             : L.t("Saved views will not restore on open.", "파일을 열 때 저장된 보기를 복원하지 않습니다.")
+    }
+
+    /// Whether export/clipboard cells starting with = + - @ are prefixed with an
+    /// apostrophe so a spreadsheet can't execute them (CSV injection). Off by
+    /// default because it also alters legitimate values (leading-minus numbers).
+    var sanitizeFormulasEnabled: Bool {
+        UserDefaults.standard.bool(forKey: Self.sanitizeFormulasDefaultsKey)
+    }
+
+    @objc func toggleSanitizeFormulas(_ sender: Any?) {
+        let enabled = !sanitizeFormulasEnabled
+        UserDefaults.standard.set(enabled, forKey: Self.sanitizeFormulasDefaultsKey)
+        statusLabel.stringValue = enabled
+            ? L.t("Formula cells will be neutralized on export and copy.", "내보내기·복사 시 수식 셀을 무력화합니다.")
+            : L.t("Formula cells will be exported and copied as-is.", "내보내기·복사 시 수식 셀을 그대로 둡니다.")
+    }
+
+    /// The user's chosen number format (may be `.auto`); the concrete format
+    /// stored in `CsvNumber.format` is this resolved against the locale.
+    static var numberFormatChoice: CsvNumberFormat {
+        CsvNumberFormat(rawValue: UserDefaults.standard.string(forKey: numberFormatDefaultsKey) ?? "") ?? .auto
+    }
+
+    @objc func changeNumberFormat(_ sender: Any?) {
+        guard let raw = (sender as? NSMenuItem)?.representedObject as? String,
+              let format = CsvNumberFormat(rawValue: raw) else { return }
+        CsvNumber.format = format
+        UserDefaults.standard.set(raw, forKey: Self.numberFormatDefaultsKey)
+        statusLabel.stringValue = L.t(
+            "Number format changed. Re-run analysis to apply it.",
+            "숫자 형식을 변경했습니다. 분석을 다시 실행하면 적용됩니다."
+        )
+    }
+
+    /// The user's chosen date order (may be `.auto`); resolved against the
+    /// locale into the concrete order stored in `CsvDateSettings.order`.
+    static var dateOrderChoice: CsvDateOrder {
+        CsvDateOrder(rawValue: UserDefaults.standard.string(forKey: dateOrderDefaultsKey) ?? "") ?? .auto
+    }
+
+    @objc func changeDateOrder(_ sender: Any?) {
+        guard let raw = (sender as? NSMenuItem)?.representedObject as? String,
+              let order = CsvDateOrder(rawValue: raw) else { return }
+        CsvDateSettings.order = order
+        UserDefaults.standard.set(raw, forKey: Self.dateOrderDefaultsKey)
+        statusLabel.stringValue = L.t(
+            "Date format changed. Re-run analysis to apply it.",
+            "날짜 형식을 변경했습니다. 분석을 다시 실행하면 적용됩니다."
+        )
     }
 
     private func autoRestoreSavedViewIfEnabled() {

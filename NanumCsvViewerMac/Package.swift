@@ -72,7 +72,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "ImportService",
-            dependencies: ["ImportServiceProtocol", "CLibXLS", "CReadStat"]
+            dependencies: ["ImportServiceProtocol", "CsvCore", "CLibXLS", "CReadStat"]
         ),
         .executableTarget(
             name: "CsvBench",

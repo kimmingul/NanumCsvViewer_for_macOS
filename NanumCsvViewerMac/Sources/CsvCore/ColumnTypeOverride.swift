@@ -48,11 +48,11 @@ public enum ColumnTypeConversion {
     private static func isConvertible(_ value: String, to target: ColumnValueType) -> Bool {
         switch target {
         case .integer:
-            guard let number = Double(value) else { return false }
+            guard let number = CsvNumber.parse(value) else { return false }
             return number.rounded(.towardZero) == number && !value.contains(".")
                 && !value.lowercased().contains("e")
         case .float:
-            return Double(value) != nil
+            return CsvNumber.parse(value) != nil
         case .date:
             return CsvDateParser.parse(value, allowCompactNumeric: true) != nil
         case .boolean:

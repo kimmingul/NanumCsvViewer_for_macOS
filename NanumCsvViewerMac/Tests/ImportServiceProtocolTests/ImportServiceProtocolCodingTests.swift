@@ -23,6 +23,30 @@ final class ImportServiceProtocolCodingTests: XCTestCase {
         XCTAssertEqual(try roundTrip(error), error)
     }
 
+    func testImportKindRoundTripsForAllFormats() throws {
+        let kinds: [ImportKind] = [
+            .echo, .xls, .xlsx, .sqlite, .sav, .sas7bdat,
+            .xlsSheet("Sheet 1"),
+            .xlsxSheet("두번째"),
+            .sqliteTable("people")
+        ]
+        for kind in kinds {
+            XCTAssertEqual(try roundTrip(kind), kind, "\(kind.rawValue) must survive secure coding")
+        }
+    }
+
+    func testImportKindPartNameAccessors() {
+        XCTAssertEqual(ImportKind.xlsxSheet("Sales").xlsxSheetName, "Sales")
+        XCTAssertNil(ImportKind.xlsxSheet("Sales").xlsSheetName)
+        XCTAssertNil(ImportKind.xlsxSheet("Sales").sqliteTableName)
+
+        XCTAssertEqual(ImportKind.sqliteTable("orders").sqliteTableName, "orders")
+        XCTAssertNil(ImportKind.sqliteTable("orders").xlsxSheetName)
+
+        XCTAssertNil(ImportKind.xlsx.xlsxSheetName)
+        XCTAssertNil(ImportKind.sqlite.sqliteTableName)
+    }
+
     private func roundTrip<T: NSObject & NSSecureCoding>(_ value: T) throws -> T {
         let data = try NSKeyedArchiver.archivedData(withRootObject: value, requiringSecureCoding: true)
         let decoded = try XCTUnwrap(NSKeyedUnarchiver.unarchivedObject(ofClass: T.self, from: data))

@@ -142,6 +142,80 @@ final class ImportClientTests: XCTestCase {
         wait(for: [expectation], timeout: 1)
     }
 
+    func testImportIgnoresServiceSuppliedPathsAndUsesClientOutput() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("import-client-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceURL = directory.appendingPathComponent("source.xls")
+        try Data([0xD0, 0xCF, 0x11, 0xE0, 0x00]).write(to: sourceURL)
+        let expectedURL = directory.appendingPathComponent("import.csv")
+
+        // A compromised service tries to redirect the app to arbitrary files.
+        let service = FakeImportService { _, _, _, _, _, _, reply in
+            reply(
+                ImportResult(
+                    csvURL: URL(fileURLWithPath: "/etc/passwd"),
+                    metadataURL: URL(fileURLWithPath: "/etc/hosts"),
+                    warnings: [],
+                    rowCount: 1,
+                    columnCount: 1
+                ),
+                nil
+            )
+        }
+
+        let client = ImportClient(service: service)
+        let expectation = expectation(description: "reply")
+        client.importXls(sourceURL: sourceURL, destinationDir: directory, limits: .phase1Default) { result in
+            let value = try? result.get()
+            XCTAssertEqual(value?.csvURL, expectedURL, "must open the client-known output, not the reply's path")
+            XCTAssertNil(value?.metadataURL, "xls has no sidecar; the reply's metadataURL is ignored")
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1)
+    }
+
+    func testImportWatchdogFailsWhenServiceNeverReplies() {
+        let expectation = expectation(description: "watchdog fires")
+        var received: Result<ImportResult, ImportClientError>?
+        let box = ImportCompletionBox { result in
+            received = result
+            expectation.fulfill()
+        }
+        box.arm(timeout: 0.05)
+        wait(for: [expectation], timeout: 2)
+        XCTAssertEqual(received?.failure, .connectionInterrupted)
+    }
+
+    func testImportWatchdogDoesNotOverrideEarlyReply() {
+        let done = expectation(description: "reply")
+        var completions = 0
+        var received: Result<ImportResult, ImportClientError>?
+        let box = ImportCompletionBox { result in
+            completions += 1
+            received = result
+            done.fulfill()
+        }
+        box.arm(timeout: 0.05)
+        let url = URL(fileURLWithPath: "/tmp/x.csv")
+        box.complete(.success(ImportResult(csvURL: url, metadataURL: nil, warnings: [], rowCount: 0, columnCount: 0)))
+        wait(for: [done], timeout: 2)
+
+        // Give the cancelled watchdog a chance to (wrongly) fire a second time.
+        let settle = expectation(description: "settle")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { settle.fulfill() }
+        wait(for: [settle], timeout: 2)
+
+        XCTAssertEqual(completions, 1, "a delivered reply cancels the watchdog")
+        if case .success(let result)? = received {
+            XCTAssertEqual(result.csvURL, url)
+        } else {
+            XCTFail("expected the early success to win")
+        }
+    }
+
     func testXlsInspectionReturnsSheetNamesFromService() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("import-client-\(UUID().uuidString)", isDirectory: true)

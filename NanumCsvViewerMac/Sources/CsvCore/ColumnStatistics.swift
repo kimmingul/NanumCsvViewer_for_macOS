@@ -70,7 +70,7 @@ struct ColumnStatisticsBuilder {
             values.append(value)
             frequencies[value, default: 0] += 1
 
-            if let number = Double(value) {
+            if let number = NumericInference.number(from: value) {
                 numericValues.append(number)
                 if number.rounded(.towardZero) != number || value.contains(".") || value.lowercased().contains("e") {
                     integerCompatible = false

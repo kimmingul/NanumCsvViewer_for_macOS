@@ -57,10 +57,49 @@ public enum SqliteWorkbook {
         path: String,
         table: String,
         destination: URL,
+        limits: WorkbookImportLimits = .unlimited,
+        cancellation: CancellationFlag = CancellationFlag()
+    ) throws -> Int {
+        try? FileManager.default.removeItem(at: destination)
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        guard let output = FileHandle(forWritingAtPath: destination.path) else {
+            throw SqliteWorkbookError.queryFailed("cannot write \(destination.path)")
+        }
+        do {
+            let count = try exportTableToCsv(path: path, table: table, output: output, limits: limits, cancellation: cancellation)
+            try output.close()
+            return count
+        } catch {
+            try? output.close()
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    /// Exports one table/view into an already-open handle (e.g. an XPC-provided
+    /// descriptor) and returns the row count. The caller owns the handle and any
+    /// cleanup on failure.
+    @discardableResult
+    public static func exportTableToCsv(
+        path: String,
+        table: String,
+        output: FileHandle,
+        limits: WorkbookImportLimits = .unlimited,
         cancellation: CancellationFlag = CancellationFlag()
     ) throws -> Int {
         let db = try openReadOnly(path: path)
         defer { sqlite3_close_v2(db) }
+
+        // A crafted view (e.g. a full cross join with ORDER BY) can spin inside a
+        // single sqlite3_step past the deadline, which the per-row checks below
+        // can't interrupt. A progress handler can.
+        let guardBox = QueryProgressGuard(deadline: limits.deadline, cancellation: cancellation)
+        let guardPtr = Unmanaged.passRetained(guardBox).toOpaque()
+        defer { Unmanaged<QueryProgressGuard>.fromOpaque(guardPtr).release() }
+        sqlite3_progress_handler(db, 10_000, { raw in
+            guard let raw else { return 0 }
+            return Unmanaged<QueryProgressGuard>.fromOpaque(raw).takeUnretainedValue().shouldAbort() ? 1 : 0
+        }, guardPtr)
 
         guard try tableNames(path: path).contains(table) else {
             throw SqliteWorkbookError.tableNotFound(table)
@@ -74,46 +113,43 @@ public enum SqliteWorkbook {
         defer { sqlite3_finalize(statement) }
 
         let columnCount = Int(sqlite3_column_count(statement))
+        guard columnCount <= limits.maxColumns else {
+            throw WorkbookImportError.maxColumnsExceeded
+        }
         let headers = (0..<columnCount).map { index -> String in
             sqlite3_column_name(statement, Int32(index)).map { String(cString: $0) } ?? "column\(index + 1)"
         }
 
-        try? FileManager.default.removeItem(at: destination)
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        guard let output = FileHandle(forWritingAtPath: destination.path) else {
-            throw SqliteWorkbookError.queryFailed("cannot write \(destination.path)")
-        }
-
-        do {
-            var buffer = csvLine(headers)
-            var rowCount = 0
-            var stepResult = sqlite3_step(statement)
-            while stepResult == SQLITE_ROW {
-                if rowCount & 0xFFF == 0 { try cancellation.check() }
-                let fields = (0..<columnCount).map { index -> String in
-                    columnText(statement, Int32(index))
-                }
-                buffer += csvLine(fields)
-                rowCount += 1
-                if buffer.utf8.count >= 1_048_576 {
-                    try output.write(contentsOf: Data(buffer.utf8))
-                    buffer = ""
-                }
-                stepResult = sqlite3_step(statement)
+        var buffer = csvLine(headers)
+        var rowCount = 0
+        var stepResult = sqlite3_step(statement)
+        while stepResult == SQLITE_ROW {
+            if rowCount & 0xFFF == 0 {
+                try cancellation.check()
+                try limits.checkDeadline()
             }
-            guard stepResult == SQLITE_DONE else {
-                throw SqliteWorkbookError.queryFailed(lastErrorMessage(db))
+            try limits.checkRowBudget(alreadyWritten: rowCount, columnCount: columnCount)
+            let fields = (0..<columnCount).map { index -> String in
+                columnText(statement, Int32(index))
             }
-            if !buffer.isEmpty {
+            buffer += csvLine(fields)
+            rowCount += 1
+            if buffer.utf8.count >= 1_048_576 {
                 try output.write(contentsOf: Data(buffer.utf8))
+                buffer = ""
             }
-            try output.close()
-            return rowCount
-        } catch {
-            try? output.close()
-            try? FileManager.default.removeItem(at: destination)
-            throw error
+            stepResult = sqlite3_step(statement)
         }
+        guard stepResult == SQLITE_DONE else {
+            if stepResult == SQLITE_INTERRUPT {
+                throw cancellation.isCancelled ? CsvError.cancelled : WorkbookImportError.timedOut
+            }
+            throw SqliteWorkbookError.queryFailed(lastErrorMessage(db))
+        }
+        if !buffer.isEmpty {
+            try output.write(contentsOf: Data(buffer.utf8))
+        }
+        return rowCount
     }
 
     private static func openReadOnly(path: String) throws -> OpaquePointer {
@@ -150,5 +186,24 @@ public enum SqliteWorkbook {
 
     private static func lastErrorMessage(_ db: OpaquePointer?) -> String {
         db.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown error"
+    }
+}
+
+/// Backing context for the SQLite progress handler: aborts a query once the
+/// import deadline passes or the operation is cancelled. Held via `Unmanaged`
+/// for the lifetime of the export so the C callback can read it.
+private final class QueryProgressGuard {
+    private let deadline: Date?
+    private let cancellation: CancellationFlag
+
+    init(deadline: Date?, cancellation: CancellationFlag) {
+        self.deadline = deadline
+        self.cancellation = cancellation
+    }
+
+    func shouldAbort() -> Bool {
+        if cancellation.isCancelled { return true }
+        if let deadline, Date() > deadline { return true }
+        return false
     }
 }

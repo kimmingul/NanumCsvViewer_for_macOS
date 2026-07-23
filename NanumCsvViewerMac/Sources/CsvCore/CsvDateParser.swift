@@ -1,7 +1,39 @@
 import Foundation
 
+/// How ambiguous day/month numeric dates ("03/04/2020") are read.
+public enum CsvDateOrder: String, Sendable, CaseIterable {
+    case auto
+    case monthFirst
+    case dayFirst
+
+    /// Resolves `.auto` against the current locale's date-field order. Callers
+    /// resolve once (app launch) so hot parsing paths never touch the locale.
+    public var resolved: CsvDateOrder {
+        guard self == .auto else { return self }
+        guard let template = DateFormatter.dateFormat(fromTemplate: "yMd", options: 0, locale: .current),
+              let day = template.firstIndex(of: "d"),
+              let month = template.firstIndex(of: "M") else {
+            return .monthFirst
+        }
+        return day < month ? .dayFirst : .monthFirst
+    }
+}
+
+public enum CsvDateSettings {
+    private static let lock = NSLock()
+    // Defaults to `.monthFirst` (no `Locale.current` access); the app resolves
+    // the user's locale choice to a concrete order once at launch.
+    nonisolated(unsafe) private static var orderStorage: CsvDateOrder = .monthFirst
+
+    public static var order: CsvDateOrder {
+        get { lock.withLock { orderStorage } }
+        set { lock.withLock { orderStorage = newValue.resolved } }
+    }
+}
+
 enum CsvDateParser {
-    private static let separatedDateFormats = [
+    // Unambiguous formats (year-first, ISO-like, time-of-day, Korean).
+    private static let baseFormats = [
         "yyyy-MM-dd",
         "yyyy-M-d",
         "yyyy/MM/dd",
@@ -15,14 +47,6 @@ enum CsvDateParser {
         "yyyy/M",
         "yyyy.MM",
         "yyyy.M",
-        "MM/dd/yyyy",
-        "M/d/yyyy",
-        "dd/MM/yyyy",
-        "d/M/yyyy",
-        "MM-dd-yyyy",
-        "M-d-yyyy",
-        "dd-MM-yyyy",
-        "d-M-yyyy",
         "yyyy-MM-dd HH:mm:ss",
         "yyyy-M-d H:mm:ss",
         "yyyy-MM-dd HH:mm",
@@ -40,6 +64,17 @@ enum CsvDateParser {
         "yyyy년 M월 d일 H:mm"
     ]
 
+    // Ambiguous day/month formats, tried in the order the setting selects; a
+    // value whose leading field exceeds 12 falls through to the other ordering.
+    private static let monthFirstFormats = ["MM/dd/yyyy", "M/d/yyyy", "MM-dd-yyyy", "M-d-yyyy"]
+    private static let dayFirstFormats = ["dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy"]
+
+    private static func separatedFormats(order: CsvDateOrder) -> [String] {
+        order == .dayFirst
+            ? baseFormats + dayFirstFormats + monthFirstFormats
+            : baseFormats + monthFirstFormats + dayFirstFormats
+    }
+
     private static let compactDateFormats = [
         "yyyyMMdd",
         "yyyyMMddHHmmss"
@@ -54,7 +89,8 @@ enum CsvDateParser {
             return date
         }
 
-        if let date = parse(trimmed, formats: separatedDateFormats, cacheKey: "CsvDateParser.separated") {
+        let order = CsvDateSettings.order
+        if let date = parse(trimmed, formats: separatedFormats(order: order), cacheKey: "CsvDateParser.separated.\(order.rawValue)") {
             return date
         }
 

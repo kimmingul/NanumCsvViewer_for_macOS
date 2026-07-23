@@ -66,9 +66,13 @@ public final class ImportKind: NSObject, NSSecureCoding, @unchecked Sendable {
 
     public static let echo = ImportKind("echo")
     public static let xls = ImportKind("xls")
+    public static let xlsx = ImportKind("xlsx")
+    public static let sqlite = ImportKind("sqlite")
     public static let sav = ImportKind("sav")
     public static let sas7bdat = ImportKind("sas7bdat")
     private static let xlsSheetPrefix = "xls-sheet:"
+    private static let xlsxSheetPrefix = "xlsx-sheet:"
+    private static let sqliteTablePrefix = "sqlite-table:"
 
     public let rawValue: String
 
@@ -83,6 +87,24 @@ public final class ImportKind: NSObject, NSSecureCoding, @unchecked Sendable {
     public var xlsSheetName: String? {
         guard rawValue.hasPrefix(Self.xlsSheetPrefix) else { return nil }
         return String(rawValue.dropFirst(Self.xlsSheetPrefix.count))
+    }
+
+    public static func xlsxSheet(_ sheetName: String) -> ImportKind {
+        ImportKind(xlsxSheetPrefix + sheetName)
+    }
+
+    public var xlsxSheetName: String? {
+        guard rawValue.hasPrefix(Self.xlsxSheetPrefix) else { return nil }
+        return String(rawValue.dropFirst(Self.xlsxSheetPrefix.count))
+    }
+
+    public static func sqliteTable(_ tableName: String) -> ImportKind {
+        ImportKind(sqliteTablePrefix + tableName)
+    }
+
+    public var sqliteTableName: String? {
+        guard rawValue.hasPrefix(Self.sqliteTablePrefix) else { return nil }
+        return String(rawValue.dropFirst(Self.sqliteTablePrefix.count))
     }
 
     public init?(coder: NSCoder) {

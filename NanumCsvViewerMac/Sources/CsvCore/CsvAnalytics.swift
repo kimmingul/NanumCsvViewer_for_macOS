@@ -153,7 +153,7 @@ enum CsvAnalytics {
         }
 
         let resultRows: [GroupByRow] = groups.map { key, values in
-            let numbers = values.compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            let numbers = values.compactMap { CsvNumber.parse($0) }
             var output: [AggregationFunction: Double] = [:]
             for function in functions {
                 output[function] = aggregate(function, rawValues: values, numbers: numbers)
@@ -167,7 +167,10 @@ enum CsvAnalytics {
     }
 
     static func numericDistribution(values: [Double], column: Int, binCount: Int) -> NumericDistribution {
-        let sorted = values.sorted()
+        // Non-finite values (inf/NaN, e.g. from "inf" or an overflowing literal
+        // like "1e400") would make bin width inf/NaN and trap in `Int(...)`
+        // inside `histogram`. They carry no distribution meaning — drop them.
+        let sorted = values.filter { $0.isFinite }.sorted()
         let count = sorted.count
         let minValue = sorted.first ?? 0
         let maxValue = sorted.last ?? 0
@@ -197,7 +200,7 @@ enum CsvAnalytics {
             let label = dateLabel(date, period: period)
             let value = valueColumn.flatMap { column -> Double? in
                 guard column < row.count else { return nil }
-                return Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines))
+                return CsvNumber.parse(row[column])
             } ?? 0
             let current = buckets[label] ?? (0, 0)
             buckets[label] = (current.count + 1, current.sum + value)
@@ -249,7 +252,7 @@ enum CsvAnalytics {
         for (index, element) in raw.enumerated() {
             if index & 0x3FFF == 0 { try cancellation?.check() }
             let (key, cellValues) = element
-            let numbers = cellValues.compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            let numbers = cellValues.compactMap { CsvNumber.parse($0) }
             values[key] = aggregate(function, rawValues: cellValues, numbers: numbers)
         }
 

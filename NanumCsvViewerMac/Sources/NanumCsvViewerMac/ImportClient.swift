@@ -11,6 +11,9 @@ enum ImportClientError: Error, Equatable {
 
 final class ImportClient {
     static let serviceName = "com.nanum.csvviewer.ImportService"
+    /// Grace period beyond the service's own deadline before the client gives up
+    /// on a hung import and tears the connection down.
+    private static let watchdogMargin: TimeInterval = 30
 
     private let injectedService: ImportServiceProtocol?
 
@@ -20,6 +23,31 @@ final class ImportClient {
 
     func inspectXls(
         sourceURL: URL,
+        limits: ImportLimits,
+        completion: @escaping (Result<ImportInspection, ImportClientError>) -> Void
+    ) {
+        inspect(sourceURL: sourceURL, kind: .xls, limits: limits, completion: completion)
+    }
+
+    func inspectXlsx(
+        sourceURL: URL,
+        limits: ImportLimits,
+        completion: @escaping (Result<ImportInspection, ImportClientError>) -> Void
+    ) {
+        inspect(sourceURL: sourceURL, kind: .xlsx, limits: limits, completion: completion)
+    }
+
+    func inspectSqlite(
+        sourceURL: URL,
+        limits: ImportLimits,
+        completion: @escaping (Result<ImportInspection, ImportClientError>) -> Void
+    ) {
+        inspect(sourceURL: sourceURL, kind: .sqlite, limits: limits, completion: completion)
+    }
+
+    private func inspect(
+        sourceURL: URL,
+        kind: ImportKind,
         limits: ImportLimits,
         completion: @escaping (Result<ImportInspection, ImportClientError>) -> Void
     ) {
@@ -33,7 +61,7 @@ final class ImportClient {
         let sourceFile = ImportFileReference(fileHandle: sourceHandle)
 
         if let injectedService {
-            sendInspection(to: injectedService, sourceFile: sourceFile, kind: .xls, limits: limits) { result in
+            sendInspection(to: injectedService, sourceFile: sourceFile, kind: kind, limits: limits) { result in
                 try? sourceHandle.close()
                 completion(result)
             }
@@ -68,10 +96,11 @@ final class ImportClient {
         sendInspection(
             to: service,
             sourceFile: sourceFile,
-            kind: .xls,
+            kind: kind,
             limits: limits,
             completion: completionBox.complete
         )
+        completionBox.arm(timeout: limits.timeoutSeconds + Self.watchdogMargin)
     }
 
     func importEcho(
@@ -102,6 +131,42 @@ final class ImportClient {
             destinationDir: destinationDir,
             outputFileName: "import.csv",
             kind: sheetName.map(ImportKind.xlsSheet) ?? .xls,
+            limits: limits,
+            completion: completion
+        )
+    }
+
+    func importXlsx(
+        sourceURL: URL,
+        destinationDir: URL,
+        sheetName: String? = nil,
+        outputFileName: String = "import.csv",
+        limits: ImportLimits,
+        completion: @escaping (Result<ImportResult, ImportClientError>) -> Void
+    ) {
+        importFile(
+            sourceURL: sourceURL,
+            destinationDir: destinationDir,
+            outputFileName: outputFileName,
+            kind: sheetName.map(ImportKind.xlsxSheet) ?? .xlsx,
+            limits: limits,
+            completion: completion
+        )
+    }
+
+    func importSqlite(
+        sourceURL: URL,
+        destinationDir: URL,
+        tableName: String? = nil,
+        outputFileName: String = "import.csv",
+        limits: ImportLimits,
+        completion: @escaping (Result<ImportResult, ImportClientError>) -> Void
+    ) {
+        importFile(
+            sourceURL: sourceURL,
+            destinationDir: destinationDir,
+            outputFileName: outputFileName,
+            kind: tableName.map(ImportKind.sqliteTable) ?? .sqlite,
             limits: limits,
             completion: completion
         )
@@ -179,6 +244,7 @@ final class ImportClient {
                 outputFile: outputFile,
                 metadataFile: metadataFile,
                 outputURL: outputURL,
+                metadataURL: metadataFile != nil ? metadataURL : nil,
                 limits: limits,
                 completion: { result in
                     try? sourceHandle.close()
@@ -230,9 +296,11 @@ final class ImportClient {
             outputFile: outputFile,
             metadataFile: metadataFile,
             outputURL: outputURL,
+            metadataURL: metadataFile != nil ? metadataURL : nil,
             limits: limits,
             completion: completionBox.complete
         )
+        completionBox.arm(timeout: limits.timeoutSeconds + Self.watchdogMargin)
     }
 
     private func sendImport(
@@ -242,12 +310,23 @@ final class ImportClient {
         outputFile: ImportFileReference,
         metadataFile: ImportFileReference?,
         outputURL: URL,
+        metadataURL: URL?,
         limits: ImportLimits,
         completion: @escaping (Result<ImportResult, ImportClientError>) -> Void
     ) {
         service.importFile(sourceFile: sourceFile, kind: kind, limits: limits, outputFile: outputFile, metadataFile: metadataFile, outputURL: outputURL) { result, error in
             if let result {
-                completion(.success(result))
+                // Trust only the client-known output paths, never the URLs echoed
+                // back in the reply — a compromised service could otherwise point
+                // the app at any user-readable file.
+                let trusted = ImportResult(
+                    csvURL: outputURL,
+                    metadataURL: metadataURL,
+                    warnings: result.warnings,
+                    rowCount: result.rowCount,
+                    columnCount: result.columnCount
+                )
+                completion(.success(trusted))
             } else if let error {
                 completion(.failure(.serviceError(code: error.code, message: error.message)))
             } else {
@@ -281,13 +360,31 @@ private extension ImportKind {
     }
 }
 
-private final class ImportCompletionBox: @unchecked Sendable {
+final class ImportCompletionBox: @unchecked Sendable {
     private let lock = NSLock()
     private var completed = false
+    private var watchdog: DispatchWorkItem?
     private let completion: (Result<ImportResult, ImportClientError>) -> Void
 
     init(completion: @escaping (Result<ImportResult, ImportClientError>) -> Void) {
         self.completion = completion
+    }
+
+    /// Fails the request if neither a reply nor a crash arrives within `timeout`
+    /// — NSXPC imposes no reply deadline, so a parser that hangs inside a single
+    /// C call (rather than crashing) would otherwise wedge the app forever.
+    func arm(timeout: TimeInterval) {
+        let work = DispatchWorkItem { [weak self] in
+            self?.complete(.failure(.connectionInterrupted))
+        }
+        lock.lock()
+        if completed {
+            lock.unlock()
+            return
+        }
+        watchdog = work
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: work)
     }
 
     func complete(_ result: Result<ImportResult, ImportClientError>) {
@@ -297,18 +394,66 @@ private final class ImportCompletionBox: @unchecked Sendable {
             return
         }
         completed = true
+        let pending = watchdog
+        watchdog = nil
         lock.unlock()
+        pending?.cancel()
         completion(result)
+    }
+}
+
+/// Thread-safe accumulator for a fan-out of concurrent workbook-part imports.
+/// Collects each part's output URL by index and remembers the first failure so
+/// the batch can report an ordered result once every import completes.
+final class WorkbookPartCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var results: [Int: URL] = [:]
+    private var firstError: ImportClientError?
+
+    func record(index: Int, result: Result<URL, ImportClientError>) {
+        lock.lock()
+        defer { lock.unlock() }
+        switch result {
+        case .success(let url):
+            results[index] = url
+        case .failure(let error):
+            if firstError == nil { firstError = error }
+        }
+    }
+
+    func outcome(count: Int) -> Result<[URL], ImportClientError> {
+        lock.lock()
+        defer { lock.unlock() }
+        if let firstError {
+            return .failure(firstError)
+        }
+        return .success((0..<count).compactMap { results[$0] })
     }
 }
 
 private final class ImportInspectionCompletionBox: @unchecked Sendable {
     private let lock = NSLock()
     private var completed = false
+    private var watchdog: DispatchWorkItem?
     private let completion: (Result<ImportInspection, ImportClientError>) -> Void
 
     init(completion: @escaping (Result<ImportInspection, ImportClientError>) -> Void) {
         self.completion = completion
+    }
+
+    /// See ImportCompletionBox.arm — bounds a hung inspection call.
+    func arm(timeout: TimeInterval) {
+        let work = DispatchWorkItem { [weak self] in
+            self?.complete(.failure(.connectionInterrupted))
+        }
+        lock.lock()
+        if completed {
+            lock.unlock()
+            return
+        }
+        watchdog = work
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: work)
     }
 
     func complete(_ result: Result<ImportInspection, ImportClientError>) {
@@ -318,7 +463,10 @@ private final class ImportInspectionCompletionBox: @unchecked Sendable {
             return
         }
         completed = true
+        let pending = watchdog
+        watchdog = nil
         lock.unlock()
+        pending?.cancel()
         completion(result)
     }
 }

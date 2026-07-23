@@ -1,3 +1,4 @@
+import CsvCore
 import Foundation
 import ImportServiceProtocol
 
@@ -8,6 +9,24 @@ final class ImportService: NSObject, ImportServiceProtocol {
         limits: ImportLimits,
         reply: @escaping (ImportInspection?, ImportError?) -> Void
     ) {
+        if kind == .xlsx {
+            do {
+                reply(ImportInspection(sheetNames: try WorkbookImporter.inspectXlsx(source: sourceFile.fileHandle, limits: limits)), nil)
+            } catch {
+                reply(nil, Self.mapWorkbookError(error))
+            }
+            return
+        }
+
+        if kind == .sqlite {
+            do {
+                reply(ImportInspection(sheetNames: try WorkbookImporter.inspectSqlite(source: sourceFile.fileHandle, limits: limits)), nil)
+            } catch {
+                reply(nil, Self.mapWorkbookError(error))
+            }
+            return
+        }
+
         guard kind == .xls else {
             reply(nil, ImportError(code: "unsupportedKind", message: "Unsupported import kind."))
             return
@@ -45,6 +64,38 @@ final class ImportService: NSObject, ImportServiceProtocol {
 
         if kind == .xls || kind.xlsSheetName != nil {
             importXls(sourceFile: sourceFile, sheetName: kind.xlsSheetName, limits: limits, outputFile: outputFile, outputURL: outputURL, reply: reply)
+            return
+        }
+
+        if kind == .xlsx || kind.xlsxSheetName != nil {
+            do {
+                let result = try WorkbookImporter.importXlsx(
+                    source: sourceFile.fileHandle,
+                    sheetName: kind.xlsxSheetName,
+                    output: outputFile.fileHandle,
+                    outputURL: outputURL,
+                    limits: limits
+                )
+                reply(result, nil)
+            } catch {
+                reply(nil, Self.mapWorkbookError(error))
+            }
+            return
+        }
+
+        if kind == .sqlite || kind.sqliteTableName != nil {
+            do {
+                let result = try WorkbookImporter.importSqlite(
+                    source: sourceFile.fileHandle,
+                    tableName: kind.sqliteTableName,
+                    output: outputFile.fileHandle,
+                    outputURL: outputURL,
+                    limits: limits
+                )
+                reply(result, nil)
+            } catch {
+                reply(nil, Self.mapWorkbookError(error))
+            }
             return
         }
 
@@ -118,6 +169,37 @@ final class ImportService: NSObject, ImportServiceProtocol {
             reply(nil, ImportError(code: "parseFailed", message: message))
         } catch {
             reply(nil, ImportError(code: "readFailed", message: "The workbook could not be read."))
+        }
+    }
+
+    static func mapWorkbookError(_ error: Error) -> ImportError {
+        switch error {
+        case WorkbookImporter.Failure.maxBytesExceeded:
+            return ImportError(code: "maxBytesExceeded", message: "The source file exceeds the import byte limit.")
+        case WorkbookImporter.Failure.timedOut, WorkbookImportError.timedOut:
+            return ImportError(code: "timeoutExceeded", message: "The import timed out.")
+        case WorkbookImporter.Failure.noParts:
+            return ImportError(code: "noSheets", message: "The file has no readable sheets or tables.")
+        case WorkbookImportError.maxRowsExceeded:
+            return ImportError(code: "maxRowsExceeded", message: "The file exceeds the import row limit.")
+        case WorkbookImportError.maxColumnsExceeded:
+            return ImportError(code: "maxColumnsExceeded", message: "The file exceeds the import column limit.")
+        case WorkbookImportError.maxCellsExceeded:
+            return ImportError(code: "maxCellsExceeded", message: "The file exceeds the import cell limit.")
+        case let XlsxWorkbookError.sheetNotFound(name):
+            return ImportError(code: "parseFailed", message: "Sheet \"\(name)\" was not found.")
+        case let XlsxWorkbookError.invalidWorkbook(message):
+            return ImportError(code: "parseFailed", message: message)
+        case let XlsxWorkbookError.cannotOpen(message):
+            return ImportError(code: "parseFailed", message: message)
+        case let SqliteWorkbookError.tableNotFound(name):
+            return ImportError(code: "parseFailed", message: "Table \"\(name)\" was not found.")
+        case let SqliteWorkbookError.queryFailed(message):
+            return ImportError(code: "parseFailed", message: message)
+        case let SqliteWorkbookError.cannotOpen(message):
+            return ImportError(code: "parseFailed", message: message)
+        default:
+            return ImportError(code: "readFailed", message: "The file could not be read.")
         }
     }
 

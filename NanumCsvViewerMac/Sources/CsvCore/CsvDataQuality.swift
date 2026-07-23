@@ -85,7 +85,10 @@ enum DataQualityRules {
         let lowered = name.lowercased()
         if lowered == "id" || lowered == "key" || lowered == "code" || lowered == "uuid" { return true }
         if lowered.hasSuffix("_id") || lowered.hasSuffix("-id") || lowered.hasSuffix(" id") { return true }
-        if lowered.hasSuffix("id") && lowered.count <= 6 { return true }
+        // A camelCase / capitalized boundary ("userId", "customerID") signals an
+        // identifier; a plain "…id" suffix does not, so we no longer flag English
+        // words like "grid", "valid", or "void" as key columns.
+        if name.hasSuffix("Id") || name.hasSuffix("ID") { return true }
         return name.contains("번호")
     }
 }
@@ -168,9 +171,9 @@ extension VirtualCsvDocument {
                     accumulators[column].sentinelCount += 1
                     continue
                 }
-                if let number = Double(trimmed), number.isFinite {
+                if let number = NumericInference.number(from: trimmed), number.isFinite {
                     accumulators[column].numericCount += 1
-                } else if CsvDateParser.parse(trimmed, allowCompactNumeric: false) != nil {
+                } else if CsvDateParser.parse(trimmed, allowCompactNumeric: true) != nil {
                     accumulators[column].dateCount += 1
                 } else {
                     accumulators[column].textCount += 1

@@ -264,6 +264,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsMenu.addItem(persistentIndex)
         let deleteIndexCacheOnClose = NSMenuItem(title: L.t("Delete Index Cache on Close", "CSV 닫을 때 인덱스 캐시 삭제"), action: #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)), keyEquivalent: "")
         settingsMenu.addItem(deleteIndexCacheOnClose)
+        let sanitizeFormulas = NSMenuItem(title: L.t("Sanitize Formulas on Export/Copy", "내보내기/복사 시 수식 살균"), action: #selector(MainWindowController.toggleSanitizeFormulas(_:)), keyEquivalent: "")
+        settingsMenu.addItem(sanitizeFormulas)
+
+        let numberFormatItem = NSMenuItem(title: L.t("Number Format", "숫자 형식"), action: nil, keyEquivalent: "")
+        let numberFormatMenu = NSMenu(title: numberFormatItem.title)
+        let numberFormatTitles: [(CsvNumberFormat, String)] = [
+            (.auto, L.t("Automatic (Locale)", "자동 (로케일)")),
+            (.us, L.t("1,234.56 (US)", "1,234.56 (US)")),
+            (.european, L.t("1.234,56 (European)", "1.234,56 (유럽)")),
+            (.plain, L.t("Plain (1234.56)", "일반 (1234.56)"))
+        ]
+        for (format, title) in numberFormatTitles {
+            let item = NSMenuItem(title: title, action: #selector(MainWindowController.changeNumberFormat(_:)), keyEquivalent: "")
+            item.representedObject = format.rawValue
+            numberFormatMenu.addItem(item)
+        }
+        numberFormatItem.submenu = numberFormatMenu
+        settingsMenu.addItem(numberFormatItem)
+
+        let dateOrderItem = NSMenuItem(title: L.t("Date Format", "날짜 형식"), action: nil, keyEquivalent: "")
+        let dateOrderMenu = NSMenu(title: dateOrderItem.title)
+        let dateOrderTitles: [(CsvDateOrder, String)] = [
+            (.auto, L.t("Automatic (Locale)", "자동 (로케일)")),
+            (.monthFirst, L.t("Month first (MM/DD)", "월 먼저 (MM/DD)")),
+            (.dayFirst, L.t("Day first (DD/MM)", "일 먼저 (DD/MM)"))
+        ]
+        for (order, title) in dateOrderTitles {
+            let item = NSMenuItem(title: title, action: #selector(MainWindowController.changeDateOrder(_:)), keyEquivalent: "")
+            item.representedObject = order.rawValue
+            dateOrderMenu.addItem(item)
+        }
+        dateOrderItem.submenu = dateOrderMenu
+        settingsMenu.addItem(dateOrderItem)
         settingsMenu.addItem(.separator())
         let showIndexFolder = NSMenuItem(title: L.t("Show Index Folder", "인덱스 폴더 보기"), action: #selector(MainWindowController.showIndexFolder(_:)), keyEquivalent: "")
         settingsMenu.addItem(showIndexFolder)
@@ -447,6 +480,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "internaldrive"
         case #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)):
             return "trash"
+        case #selector(MainWindowController.toggleSanitizeFormulas(_:)):
+            return "shield.lefthalf.filled"
+        case #selector(MainWindowController.changeNumberFormat(_:)):
+            return "number"
+        case #selector(MainWindowController.changeDateOrder(_:)):
+            return "calendar"
         case #selector(MainWindowController.showIndexFolder(_:)):
             return "folder"
         case #selector(MainWindowController.clearIndexFolder(_:)):

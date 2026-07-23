@@ -399,7 +399,7 @@ extension VirtualCsvDocument {
         try forEachDisplayRow(cancellation: cancellation) { row in
             for column in targets {
                 guard column < row.count,
-                      let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)),
+                      let value = CsvNumber.parse(row[column]),
                       value.isFinite else {
                     missing[column, default: 0] += 1
                     continue
@@ -432,7 +432,7 @@ extension VirtualCsvDocument {
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard groupColumn >= 0, groupColumn < row.count,
                   valueColumn >= 0, valueColumn < row.count,
-                  let value = Double(row[valueColumn].trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                  let value = CsvNumber.parse(row[valueColumn]) else {
                 return
             }
             let key = row[groupColumn]
@@ -446,7 +446,7 @@ extension VirtualCsvDocument {
         var values: [Double] = []
         try forEachDisplayRow(cancellation: cancellation) { row in
             guard column >= 0, column < row.count else { return }
-            if let value = Double(row[column].trimmingCharacters(in: .whitespacesAndNewlines)) {
+            if let value = CsvNumber.parse(row[column]) {
                 values.append(value)
             }
         }

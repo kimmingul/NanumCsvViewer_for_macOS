@@ -69,4 +69,76 @@ final class SqliteWorkbookTests: XCTestCase {
 
         XCTAssertThrowsError(try SqliteWorkbook.exportTableToCsv(path: path, table: "missing; DROP TABLE people", destination: csvURL))
     }
+
+    func testExportEnforcesRowLimit() throws {
+        let path = try makeSampleDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let csvURL = URL(fileURLWithPath: NSTemporaryDirectory() + "/sqlite-rowcap-\(UUID().uuidString).csv")
+        defer { try? FileManager.default.removeItem(at: csvURL) }
+
+        // people has 3 rows; cap at 2.
+        let limits = WorkbookImportLimits(maxRows: 2, maxColumns: .max, maxCells: .max)
+        XCTAssertThrowsError(try SqliteWorkbook.exportTableToCsv(path: path, table: "people", destination: csvURL, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxRowsExceeded)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: csvURL.path), "partial output removed on failure")
+    }
+
+    func testExportEnforcesColumnLimit() throws {
+        let path = try makeSampleDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let csvURL = URL(fileURLWithPath: NSTemporaryDirectory() + "/sqlite-colcap-\(UUID().uuidString).csv")
+        defer { try? FileManager.default.removeItem(at: csvURL) }
+
+        // people has 3 columns; cap at 2.
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: 2, maxCells: .max)
+        XCTAssertThrowsError(try SqliteWorkbook.exportTableToCsv(path: path, table: "people", destination: csvURL, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxColumnsExceeded)
+        }
+    }
+
+    func testExportEnforcesCellLimit() throws {
+        let path = try makeSampleDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let csvURL = URL(fileURLWithPath: NSTemporaryDirectory() + "/sqlite-cellcap-\(UUID().uuidString).csv")
+        defer { try? FileManager.default.removeItem(at: csvURL) }
+
+        // people is 3 columns wide; 5-cell cap admits one row, then trips.
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: 5)
+        XCTAssertThrowsError(try SqliteWorkbook.exportTableToCsv(path: path, table: "people", destination: csvURL, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxCellsExceeded)
+        }
+    }
+
+    func testExportEnforcesDeadline() throws {
+        let path = try makeSampleDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let csvURL = URL(fileURLWithPath: NSTemporaryDirectory() + "/sqlite-deadline-\(UUID().uuidString).csv")
+        defer { try? FileManager.default.removeItem(at: csvURL) }
+
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: .max, deadline: Date(timeIntervalSince1970: 0))
+        XCTAssertThrowsError(try SqliteWorkbook.exportTableToCsv(path: path, table: "people", destination: csvURL, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .timedOut)
+        }
+    }
+
+    func testExportToFileHandleMatchesUrlVariant() throws {
+        let path = try makeSampleDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let urlOut = URL(fileURLWithPath: NSTemporaryDirectory() + "/sqlite-url-\(UUID().uuidString).csv")
+        let fhOut = URL(fileURLWithPath: NSTemporaryDirectory() + "/sqlite-fh-\(UUID().uuidString).csv")
+        defer {
+            try? FileManager.default.removeItem(at: urlOut)
+            try? FileManager.default.removeItem(at: fhOut)
+        }
+
+        _ = try SqliteWorkbook.exportTableToCsv(path: path, table: "people", destination: urlOut)
+
+        FileManager.default.createFile(atPath: fhOut.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: fhOut)
+        _ = try SqliteWorkbook.exportTableToCsv(path: path, table: "people", output: handle)
+        try handle.close()
+
+        XCTAssertEqual(try String(contentsOf: urlOut, encoding: .utf8), try String(contentsOf: fhOut, encoding: .utf8))
+    }
 }

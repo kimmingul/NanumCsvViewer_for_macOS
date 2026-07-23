@@ -187,6 +187,177 @@ final class XlsxWorkbookTests: XCTestCase {
         XCTAssertThrowsError(try XlsxWorkbook.sheetNames(path: corruptedPath))
     }
 
+    func testZipIgnoresFakeEocdSignatureInsideComment() throws {
+        // Append a comment whose bytes contain a second EOCD signature. A
+        // backward scan that ignores the declared comment length would lock onto
+        // the fake one; the real end-of-central-directory record must win.
+        let path = try writeFixtureXlsx(sheets: [("S", sheetXml(rows: [["hi"]]))])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var bytes = try Data(contentsOf: URL(fileURLWithPath: path))
+
+        // makeZip writes no comment, so the real EOCD is the final 22 bytes.
+        let eocd = bytes.count - 22
+        // 40-byte comment starting with a fake EOCD signature; its own (fake)
+        // comment-length field at comment offset 20 is 0, so it fails the
+        // trailing-bytes check while the real record passes.
+        var comment = [UInt8](repeating: 0, count: 40)
+        comment[0] = 0x50; comment[1] = 0x4B; comment[2] = 0x05; comment[3] = 0x06
+        withUnsafeBytes(of: UInt16(comment.count).littleEndian) { buffer in
+            bytes.replaceSubrange((eocd + 20)..<(eocd + 22), with: buffer)
+        }
+        bytes.append(contentsOf: comment)
+
+        let corruptedPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("fake-eocd-\(UUID().uuidString).xlsx")
+        try bytes.write(to: URL(fileURLWithPath: corruptedPath))
+        defer { try? FileManager.default.removeItem(atPath: corruptedPath) }
+
+        XCTAssertEqual(try XlsxWorkbook.sheetNames(path: corruptedPath), ["S"])
+    }
+
+    func testColumnIndexRejectsReferencesBeyondExcelLimit() {
+        XCTAssertEqual(XlsxWorkbook.columnIndex(fromReference: "A"), 0)
+        XCTAssertEqual(XlsxWorkbook.columnIndex(fromReference: "XFD"), 16_383, "XFD is Excel's last valid column")
+        XCTAssertNil(XlsxWorkbook.columnIndex(fromReference: "XFE"), "one column past XFD is rejected, not expanded")
+        XCTAssertNil(XlsxWorkbook.columnIndex(fromReference: "ZZZZZZ"), "an absurd column width is rejected")
+        // A long run of letters must return nil rather than trapping on Int overflow.
+        XCTAssertNil(XlsxWorkbook.columnIndex(fromReference: "AAAAAAAAAAAAAA"))
+    }
+
+    func testExportRejectsAbsurdColumnReferenceWithoutExploding() throws {
+        // A crafted cell claims column ~321 million; padding a row to that width
+        // would OOM. The reference must be rejected and fall back to sequential.
+        let sheet = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+        <row r="1"><c r="A1" t="inlineStr"><is><t>ok</t></is></c><c r="ZZZZZZ1" t="inlineStr"><is><t>evil</t></is></c></row>
+        </sheetData>
+        </worksheet>
+        """
+        let path = try writeFixtureXlsx(sheets: [("S", sheet)])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        _ = try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination)
+        let csv = try String(contentsOf: destination, encoding: .utf8)
+        let width = csv.split(separator: "\n").first
+            .map { $0.split(separator: ",", omittingEmptySubsequences: false).count } ?? 0
+        XCTAssertEqual(width, 2, "the absurd reference collapses to the next sequential column")
+        XCTAssertTrue(csv.contains("evil"))
+    }
+
+    func testExportRejectsAbsurdRowNumber() throws {
+        // A billion-row jump would drive the vertical gap fill to write ~1e9
+        // empty rows (disk exhaustion / hang). It must throw instead.
+        let sheet = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+        <row r="1"><c r="A1" t="inlineStr"><is><t>head</t></is></c></row>
+        <row r="1000000000"><c r="A1000000000" t="inlineStr"><is><t>evil</t></is></c></row>
+        </sheetData>
+        </worksheet>
+        """
+        let path = try writeFixtureXlsx(sheets: [("S", sheet)])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination)) { error in
+            guard case XlsxWorkbookError.invalidWorkbook = error else {
+                return XCTFail("expected invalidWorkbook, got \(error)")
+            }
+        }
+    }
+
+    func testExportEnforcesColumnLimit() throws {
+        let sheet = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+        <row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="XFD1" t="inlineStr"><is><t>z</t></is></c></row>
+        </sheetData>
+        </worksheet>
+        """
+        let path = try writeFixtureXlsx(sheets: [("S", sheet)])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: 100, maxCells: .max)
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxColumnsExceeded)
+        }
+    }
+
+    func testExportEnforcesCellLimitOnWideRow() throws {
+        // A single XFD cell makes the sheet 16384 wide; a tight cell cap must
+        // stop the export instead of writing a ~17GB padded CSV.
+        let sheet = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        <sheetData>
+        <row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="XFD1" t="inlineStr"><is><t>z</t></is></c></row>
+        </sheetData>
+        </worksheet>
+        """
+        let path = try writeFixtureXlsx(sheets: [("S", sheet)])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: 1000)
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxCellsExceeded)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "partial output removed on failure")
+    }
+
+    func testExportEnforcesRowLimit() throws {
+        let path = try writeFixtureXlsx(sheets: [("S", sheetXml(rows: [["1"], ["2"], ["3"], ["4"], ["5"]]))])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let limits = WorkbookImportLimits(maxRows: 2, maxColumns: .max, maxCells: .max)
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .maxRowsExceeded)
+        }
+    }
+
+    func testExportEnforcesDeadline() throws {
+        let path = try writeFixtureXlsx(sheets: [("S", sheetXml(rows: [["a"], ["1"], ["2"]]))])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let destination = temporaryUrl(ext: "csv")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let limits = WorkbookImportLimits(maxRows: .max, maxColumns: .max, maxCells: .max, deadline: Date(timeIntervalSince1970: 0))
+        XCTAssertThrowsError(try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: destination, limits: limits)) { error in
+            XCTAssertEqual(error as? WorkbookImportError, .timedOut)
+        }
+    }
+
+    func testExportToFileHandleMatchesUrlVariant() throws {
+        let path = try writeFixtureXlsx(sheets: [("S", sheetXml(rows: [["a", "b"], ["1", "2"], ["3", "4"]]))])
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let urlOut = temporaryUrl(ext: "csv")
+        let fhOut = temporaryUrl(ext: "csv")
+        defer {
+            try? FileManager.default.removeItem(at: urlOut)
+            try? FileManager.default.removeItem(at: fhOut)
+        }
+
+        _ = try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", destination: urlOut)
+
+        FileManager.default.createFile(atPath: fhOut.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: fhOut)
+        _ = try XlsxWorkbook.exportSheetToCsv(path: path, sheet: "S", output: handle)
+        try handle.close()
+
+        XCTAssertEqual(try String(contentsOf: urlOut, encoding: .utf8), try String(contentsOf: fhOut, encoding: .utf8))
+    }
+
     // MARK: - Fixture construction
 
     private func sheetXml(rows: [[String]]) -> String {
