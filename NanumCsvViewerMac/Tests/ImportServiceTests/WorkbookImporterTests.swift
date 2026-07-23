@@ -166,6 +166,14 @@ final class WorkbookImporterTests: XCTestCase {
         wait(for: [reply], timeout: 5)
     }
 
+    func testInspectedNamesAreCappedAgainstFlood() {
+        let many = (0..<(WorkbookImporter.maxInspectedParts + 500)).map { "sheet\($0)" }
+        XCTAssertEqual(WorkbookImporter.cappedNames(many).count, WorkbookImporter.maxInspectedParts)
+
+        let few = ["a", "b", "c"]
+        XCTAssertEqual(WorkbookImporter.cappedNames(few), few)
+    }
+
     // MARK: - Fixtures
 
     private func makeOutput() throws -> (FileHandle, URL, URL) {

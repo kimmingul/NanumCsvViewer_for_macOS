@@ -402,6 +402,61 @@ final class ImportCompletionBox: @unchecked Sendable {
     }
 }
 
+/// Bounded, non-blocking scheduler for a workbook-part import fan-out. All
+/// bookkeeping is lock-guarded so completions may fire on any queue; the caller
+/// does UI work on the main queue. It never blocks a thread (unlike a
+/// DispatchSemaphore, which would deadlock the main thread it schedules on).
+final class WorkbookPartPump: @unchecked Sendable {
+    private let lock = NSLock()
+    private let total: Int
+    private let concurrency: Int
+    private var next = 0
+    private var inFlight = 0
+    private var stopped = false
+
+    init(total: Int, concurrency: Int) {
+        self.total = total
+        self.concurrency = max(1, concurrency)
+    }
+
+    /// The initial set of indices to launch (up to `concurrency`).
+    func initialBatch() -> [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        var batch: [Int] = []
+        while inFlight < concurrency, next < total {
+            batch.append(next)
+            next += 1
+            inFlight += 1
+        }
+        return batch
+    }
+
+    /// One import finished. Returns the next index to launch (to keep the
+    /// pipeline full) and whether the whole fan-out is now drained.
+    func partFinished() -> (next: Int?, drained: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        inFlight -= 1
+        if !stopped, next < total {
+            let index = next
+            next += 1
+            inFlight += 1
+            return (index, false)
+        }
+        return (nil, inFlight == 0)
+    }
+
+    /// Stops scheduling new imports (e.g. on cancellation). Returns whether the
+    /// fan-out is already drained.
+    func stop() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        stopped = true
+        return inFlight == 0
+    }
+}
+
 /// Thread-safe accumulator for a fan-out of concurrent workbook-part imports.
 /// Collects each part's output URL by index and remembers the first failure so
 /// the batch can report an ordered result once every import completes.

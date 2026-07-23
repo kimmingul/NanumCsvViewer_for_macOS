@@ -19,7 +19,7 @@ enum WorkbookImporter {
         defer { try? FileManager.default.removeItem(at: sourceURL) }
         let names = try XlsxWorkbook.sheetNames(path: sourceURL.path)
         guard !names.isEmpty else { throw Failure.noParts }
-        return names
+        return cappedNames(names)
     }
 
     static func inspectSqlite(source: FileHandle, limits: ImportLimits) throws -> [String] {
@@ -28,7 +28,14 @@ enum WorkbookImporter {
         defer { try? FileManager.default.removeItem(at: sourceURL) }
         let names = try SqliteWorkbook.tableNames(path: sourceURL.path)
         guard !names.isEmpty else { throw Failure.noParts }
-        return names
+        return cappedNames(names)
+    }
+
+    /// A crafted workbook.xml can declare an unbounded number of sheets; cap the
+    /// name list returned across the XPC boundary so the picker can't be flooded.
+    static let maxInspectedParts = 1024
+    static func cappedNames(_ names: [String]) -> [String] {
+        names.count > maxInspectedParts ? Array(names.prefix(maxInspectedParts)) : names
     }
 
     static func importXlsx(
