@@ -193,4 +193,16 @@ final class CsvDataQualityTests: XCTestCase {
             }
         }
     }
+
+    func testKeyColumnHeuristicIgnoresPlainWordsEndingInId() {
+        XCTAssertTrue(DataQualityRules.looksLikeKeyColumn(name: "id"))
+        XCTAssertTrue(DataQualityRules.looksLikeKeyColumn(name: "user_id"))
+        XCTAssertTrue(DataQualityRules.looksLikeKeyColumn(name: "userId"))
+        XCTAssertTrue(DataQualityRules.looksLikeKeyColumn(name: "customerID"))
+        XCTAssertTrue(DataQualityRules.looksLikeKeyColumn(name: "고객번호"))
+
+        for word in ["grid", "valid", "void", "rapid", "squid", "aphid"] {
+            XCTAssertFalse(DataQualityRules.looksLikeKeyColumn(name: word), word)
+        }
+    }
 }
