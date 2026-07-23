@@ -10,7 +10,23 @@ enum ImportClientError: Error, Equatable {
 }
 
 final class ImportClient {
-    static let serviceName = "com.nanum.csvviewer.ImportService"
+    /// Bundle ID used when the host bundle identifier is unavailable (e.g. tests
+    /// or command-line tools). Matches the App Store build's service bundle ID.
+    private static let fallbackServiceName = "com.nanumspace.mgkim.nanumcsvviewer.ImportService"
+
+    /// The embedded XPC service is looked up by its `CFBundleIdentifier`. It is
+    /// derived as `<host app bundle ID>.ImportService` so that (a) the name
+    /// always matches whatever the packaging script embeds and (b) the App Store
+    /// requirement — a nested bundle ID prefixed by the host app's — holds for
+    /// every distribution channel without a hardcoded, channel-specific string.
+    static func resolveServiceName(hostBundleID: String?) -> String {
+        if let hostBundleID, !hostBundleID.isEmpty {
+            return "\(hostBundleID).ImportService"
+        }
+        return fallbackServiceName
+    }
+
+    static let serviceName = resolveServiceName(hostBundleID: Bundle.main.bundleIdentifier)
     /// Grace period beyond the service's own deadline before the client gives up
     /// on a hung import and tears the connection down.
     private static let watchdogMargin: TimeInterval = 30
