@@ -6,7 +6,7 @@ APP_NAME="Nanum CSV Viewer"
 BUNDLE="$ROOT/dist/$APP_NAME.app"
 EXECUTABLE="$ROOT/.build/release/NanumCsvViewerMac"
 IMPORT_SERVICE_EXECUTABLE="$ROOT/.build/release/ImportService"
-IMPORT_SERVICE_ID="com.nanum.csvviewer.ImportService"
+IMPORT_SERVICE_ID="com.nanum.csvviewer.mac.ImportService"
 IMPORT_SERVICE_BUNDLE="$BUNDLE/Contents/XPCServices/$IMPORT_SERVICE_ID.xpc"
 ICON="$ROOT/Resources/AppIcon.icns"
 
@@ -66,7 +66,7 @@ cat > "$IMPORT_SERVICE_BUNDLE/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key>
   <string>ImportService</string>
   <key>CFBundleIdentifier</key>
-  <string>com.nanum.csvviewer.ImportService</string>
+  <string>com.nanum.csvviewer.mac.ImportService</string>
   <key>CFBundleName</key>
   <string>ImportService</string>
   <key>CFBundlePackageType</key>

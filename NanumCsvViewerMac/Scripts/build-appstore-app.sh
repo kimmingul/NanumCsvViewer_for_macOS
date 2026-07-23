@@ -9,12 +9,18 @@ BUILD_NUMBER="${BUILD_NUMBER:-200}"
 APP_PATH="${APP_PATH:-$ROOT/dist/appstore/$APP_NAME.app}"
 EXECUTABLE="$ROOT/.build/release/NanumCsvViewerMac"
 IMPORT_SERVICE_EXECUTABLE="$ROOT/.build/release/ImportService"
-IMPORT_SERVICE_ID="com.nanum.csvviewer.ImportService"
+# Derive the XPC service bundle ID from the app bundle ID so the App Store
+# requirement (nested bundle ID prefixed by the host app's) always holds.
+IMPORT_SERVICE_ID="$BUNDLE_ID.ImportService"
 IMPORT_SERVICE_BUNDLE="$APP_PATH/Contents/XPCServices/$IMPORT_SERVICE_ID.xpc"
 ICON="$ROOT/Resources/AppIcon.icns"
 ENTITLEMENTS="${ENTITLEMENTS:-$ROOT/Config/AppStore.entitlements}"
 SERVICE_ENTITLEMENTS="${SERVICE_ENTITLEMENTS:-$ROOT/Config/ImportService.entitlements}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-${APPLE_DISTRIBUTION:-Apple Distribution: MINGUL KIM (XB673TQF3A)}}"
+# Mac App Store distribution requires an embedded provisioning profile. Keep it
+# out of git (it is developer-specific); provide it via PROVISION_PROFILE or the
+# default path below.
+PROVISION_PROFILE="${PROVISION_PROFILE:-$ROOT/Config/AppStore.provisionprofile}"
 
 cd "$ROOT"
 swift build -c release --product NanumCsvViewerMac
@@ -101,6 +107,26 @@ cat > "$IMPORT_SERVICE_BUNDLE/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+if [[ ! -f "$PROVISION_PROFILE" ]]; then
+  cat >&2 <<MESSAGE
+ERROR: Mac App Store provisioning profile not found at:
+  $PROVISION_PROFILE
+
+Download a "Mac App Store" distribution profile for App ID
+  $BUNDLE_ID
+from the Apple Developer portal, then either place it at that path or set:
+  PROVISION_PROFILE=/path/to/profile.provisionprofile Scripts/build-appstore-app.sh
+
+The embedded profile is required for App Store upload; refusing to build an
+unsubmittable bundle.
+MESSAGE
+  exit 1
+fi
+
+# Embed the profile before signing so codesign seals it into the app bundle.
+cp "$PROVISION_PROFILE" "$APP_PATH/Contents/embedded.provisionprofile"
+echo "Embedded provisioning profile: $PROVISION_PROFILE"
 
 echo "Signing App Store app: $APP_PATH"
 echo "Bundle ID: $BUNDLE_ID"
