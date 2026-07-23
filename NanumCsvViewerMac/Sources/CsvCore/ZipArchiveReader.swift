@@ -27,8 +27,12 @@ struct ZipArchiveReader {
 
     private let data: Data
     let entries: [Entry]
+    /// Per-entry inflate ceiling. Defaults to the absolute backstop; callers
+    /// that know their memory budget pass a tighter value.
+    private let maxUncompressedEntrySize: Int
 
-    init(path: String) throws {
+    init(path: String, maxUncompressedEntrySize: Int = maxEntryUncompressedSize) throws {
+        self.maxUncompressedEntrySize = Swift.min(maxUncompressedEntrySize, Self.maxEntryUncompressedSize)
         self.data = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
         guard data.count >= 22 else { throw ZipArchiveError.notAZipFile }
 
@@ -96,11 +100,16 @@ struct ZipArchiveReader {
         entries.contains { $0.name == name }
     }
 
+    /// The declared uncompressed size of an entry, for budgeting before a read.
+    func uncompressedSize(of name: String) -> Int? {
+        entries.first(where: { $0.name == name })?.uncompressedSize
+    }
+
     func read(_ name: String) throws -> Data {
         guard let entry = entries.first(where: { $0.name == name }) else {
             throw ZipArchiveError.entryNotFound(name)
         }
-        guard entry.uncompressedSize <= Self.maxEntryUncompressedSize else {
+        guard entry.uncompressedSize <= maxUncompressedEntrySize else {
             throw ZipArchiveError.corruptArchive("entry \(name) claims \(entry.uncompressedSize) bytes")
         }
         let headerOffset = entry.localHeaderOffset

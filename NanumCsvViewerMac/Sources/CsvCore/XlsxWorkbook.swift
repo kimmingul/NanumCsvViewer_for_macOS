@@ -67,7 +67,7 @@ public enum XlsxWorkbook {
     ) throws -> Int {
         let archive: ZipArchiveReader
         do {
-            archive = try ZipArchiveReader(path: path)
+            archive = try ZipArchiveReader(path: path, maxUncompressedEntrySize: limits.maxUncompressedEntryBytes)
         } catch {
             throw XlsxWorkbookError.cannotOpen("\(error)")
         }
@@ -79,7 +79,18 @@ public enum XlsxWorkbook {
             throw XlsxWorkbookError.invalidWorkbook("missing worksheet part \(target.entryPath)")
         }
 
-        let sharedStrings = try readSharedStrings(archive: archive)
+        // Budget the total inflated size across the parts we read before reading
+        // any of them, so a highly compressible crafted archive can't blow the
+        // service's memory even when each part is individually under the cap.
+        if limits.maxTotalUncompressedBytes != .max {
+            let parts = ["xl/sharedStrings.xml", "xl/styles.xml", target.entryPath]
+            let total = parts.compactMap { archive.uncompressedSize(of: $0) }.reduce(0, +)
+            guard total <= limits.maxTotalUncompressedBytes else {
+                throw WorkbookImportError.maxUncompressedBytesExceeded
+            }
+        }
+
+        let sharedStrings = try readSharedStrings(archive: archive, limits: limits)
         let dateStyles = try readDateStyleFlags(archive: archive)
         let sheetData = try archive.read(target.entryPath)
 
@@ -183,15 +194,17 @@ public enum XlsxWorkbook {
         return WorkbookInfo(sheets: sheets, date1904: workbookParserDelegate.date1904)
     }
 
-    private static func readSharedStrings(archive: ZipArchiveReader) throws -> [String] {
+    private static func readSharedStrings(archive: ZipArchiveReader, limits: WorkbookImportLimits) throws -> [String] {
         guard archive.contains("xl/sharedStrings.xml") else { return [] }
         let data = try archive.read("xl/sharedStrings.xml")
-        let delegate = SharedStringsXmlDelegate()
+        let delegate = SharedStringsXmlDelegate(limits: limits)
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         guard parser.parse() else {
+            if let error = delegate.thrownError { throw error }
             throw XlsxWorkbookError.invalidWorkbook("sharedStrings.xml parse failed")
         }
+        if let error = delegate.thrownError { throw error }
         return delegate.strings
     }
 
@@ -333,9 +346,15 @@ private final class RelationshipsXmlDelegate: NSObject, XMLParserDelegate {
 
 private final class SharedStringsXmlDelegate: NSObject, XMLParserDelegate {
     var strings: [String] = []
+    private(set) var thrownError: Error?
+    private let limits: WorkbookImportLimits
     private var current = ""
     private var insideItem = false
     private var insideText = false
+
+    init(limits: WorkbookImportLimits) {
+        self.limits = limits
+    }
 
     func parser(
         _ parser: XMLParser,
@@ -358,6 +377,11 @@ private final class SharedStringsXmlDelegate: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, foundCharacters string: String) {
         if insideText {
             current += string
+            // Bound a single crafted shared string before it grows to ~100MB.
+            if limits.maxCellChars != .max, current.count > limits.maxCellChars {
+                thrownError = WorkbookImportError.maxCellCharsExceeded
+                parser.abortParsing()
+            }
         }
     }
 
@@ -372,6 +396,13 @@ private final class SharedStringsXmlDelegate: NSObject, XMLParserDelegate {
             insideText = false
         case "si":
             insideItem = false
+            // Bound the string-table object count (a small XML of tiny strings
+            // can otherwise expand into millions of Swift Strings).
+            if limits.maxCells != .max, strings.count >= limits.maxCells {
+                thrownError = WorkbookImportError.maxCellsExceeded
+                parser.abortParsing()
+                return
+            }
             strings.append(current)
         default:
             break
@@ -525,6 +556,11 @@ private final class SheetCsvWriter: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, foundCharacters string: String) {
         if capturingValue {
             textBuffer += string
+            // Bound a single crafted inline cell value.
+            if limits.maxCellChars != .max, textBuffer.count > limits.maxCellChars {
+                thrownError = WorkbookImportError.maxCellCharsExceeded
+                parser.abortParsing()
+            }
         }
     }
 

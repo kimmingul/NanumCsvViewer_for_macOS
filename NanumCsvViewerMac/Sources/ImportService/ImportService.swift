@@ -186,6 +186,10 @@ final class ImportService: NSObject, ImportServiceProtocol {
             return ImportError(code: "maxColumnsExceeded", message: "The file exceeds the import column limit.")
         case WorkbookImportError.maxCellsExceeded:
             return ImportError(code: "maxCellsExceeded", message: "The file exceeds the import cell limit.")
+        case WorkbookImportError.maxCellCharsExceeded:
+            return ImportError(code: "maxCellCharsExceeded", message: "A cell in the file is too large to import.")
+        case WorkbookImportError.maxUncompressedBytesExceeded:
+            return ImportError(code: "maxUncompressedBytesExceeded", message: "The file expands too much to import.")
         case let XlsxWorkbookError.sheetNotFound(name):
             return ImportError(code: "parseFailed", message: "Sheet \"\(name)\" was not found.")
         case let XlsxWorkbookError.invalidWorkbook(message):
