@@ -6,8 +6,18 @@ public enum CsvSearchMode: String, Codable, Sendable {
     case fuzzy
 }
 
-public enum CsvSearchError: Error, Equatable {
+public enum CsvSearchError: Error, Equatable, LocalizedError {
     case invalidRegularExpression(String)
+    case unsafeRegularExpression(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidRegularExpression(let pattern):
+            return "'\(pattern)' is not a valid regular expression."
+        case .unsafeRegularExpression(let pattern):
+            return "'\(pattern)' uses nested quantifiers that can hang the search and was rejected."
+        }
+    }
 }
 
 public struct CsvSearchQuery: Equatable, Codable, Sendable {
@@ -20,12 +30,77 @@ public struct CsvSearchQuery: Equatable, Codable, Sendable {
         self.mode = mode
         self.column = column
         if mode == .regex {
+            // Reject the classic exponential-backtracking shapes up front.
+            // NSRegularExpression has no match deadline, so a hostile pattern
+            // could otherwise hang a search uninterruptibly. This is a heuristic
+            // gate (defense-in-depth), not a proof of safety — a killable,
+            // process-isolated search is the complete fix (tracked separately).
+            if Self.hasNestedQuantifier(text) {
+                throw CsvSearchError.unsafeRegularExpression(text)
+            }
             do {
                 _ = try NSRegularExpression(pattern: text, options: [.caseInsensitive])
             } catch {
                 throw CsvSearchError.invalidRegularExpression(text)
             }
         }
+    }
+
+    /// Detects a quantifier applied to a group whose body also contains a
+    /// quantifier — e.g. `(a+)+`, `(a*)*`, `(.*)+` — the catastrophic-
+    /// backtracking shapes. Escapes and character classes are skipped.
+    static func hasNestedQuantifier(_ pattern: String) -> Bool {
+        func isQuantifierStart(_ character: Character) -> Bool {
+            character == "*" || character == "+" || character == "{"
+        }
+        let chars = Array(pattern)
+        var groupBodyHasQuantifier: [Bool] = []
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\\" {
+                i += 2
+                continue
+            }
+            if c == "[" {
+                i += 1
+                if i < chars.count, chars[i] == "^" { i += 1 }
+                if i < chars.count, chars[i] == "]" { i += 1 }
+                while i < chars.count, chars[i] != "]" {
+                    if chars[i] == "\\" { i += 1 }
+                    i += 1
+                }
+                i += 1
+                if i < chars.count, isQuantifierStart(chars[i]), !groupBodyHasQuantifier.isEmpty {
+                    groupBodyHasQuantifier[groupBodyHasQuantifier.count - 1] = true
+                }
+                continue
+            }
+            if c == "(" {
+                groupBodyHasQuantifier.append(false)
+                i += 1
+                continue
+            }
+            if c == ")" {
+                let bodyHadQuantifier = groupBodyHasQuantifier.popLast() ?? false
+                let quantified = i + 1 < chars.count && isQuantifierStart(chars[i + 1])
+                if bodyHadQuantifier, quantified {
+                    return true
+                }
+                // The parent's body now contains a quantifier if this group held
+                // one internally or is itself quantified (catches ((a+))+).
+                if bodyHadQuantifier || quantified, !groupBodyHasQuantifier.isEmpty {
+                    groupBodyHasQuantifier[groupBodyHasQuantifier.count - 1] = true
+                }
+                i += 1
+                continue
+            }
+            if isQuantifierStart(c), !groupBodyHasQuantifier.isEmpty {
+                groupBodyHasQuantifier[groupBodyHasQuantifier.count - 1] = true
+            }
+            i += 1
+        }
+        return false
     }
 
     public init(from decoder: Decoder) throws {

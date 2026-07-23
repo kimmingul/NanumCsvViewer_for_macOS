@@ -3,6 +3,28 @@ import XCTest
 @testable import CsvCore
 
 final class CsvSearchTests: XCTestCase {
+    func testRejectsNestedQuantifierPatterns() {
+        for pattern in ["(a+)+", "(a*)*", "(.*)+", "((a+))+", "(a+)*$", "(\\d+)+"] {
+            XCTAssertTrue(CsvSearchQuery.hasNestedQuantifier(pattern), pattern)
+        }
+    }
+
+    func testAllowsSafePatterns() {
+        for pattern in ["a+", "(ab)+", "abc", "\\(a+\\)+", "[a+]+", "a+b+", "(ab)+(cd)+", "\\d{3}"] {
+            XCTAssertFalse(CsvSearchQuery.hasNestedQuantifier(pattern), pattern)
+        }
+    }
+
+    func testQueryInitRejectsCatastrophicRegex() {
+        XCTAssertThrowsError(try CsvSearchQuery(text: "(a+)+", mode: .regex, column: nil)) { error in
+            XCTAssertEqual(error as? CsvSearchError, .unsafeRegularExpression("(a+)+"))
+        }
+    }
+
+    func testQueryInitAllowsSafeRegex() throws {
+        _ = try CsvSearchQuery(text: "(ab)+\\d{3}", mode: .regex, column: nil)
+    }
+
     func testRegexSearchFindsMatchingCellAndSourceRow() throws {
         let (doc, path) = try openIndexed("""
         id,note
