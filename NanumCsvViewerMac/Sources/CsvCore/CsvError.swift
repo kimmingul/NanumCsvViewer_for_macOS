@@ -5,6 +5,8 @@ public enum CsvError: Error, LocalizedError {
     case fileOpenFailed(String)
     case shortRead
     case cancelled
+    case indexingInProgress
+    case indexingFailed
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +18,10 @@ public enum CsvError: Error, LocalizedError {
             return "The file became shorter while reading. It may have been changed by another process."
         case .cancelled:
             return "The operation was cancelled."
+        case .indexingInProgress:
+            return "Indexing is already running for this document."
+        case .indexingFailed:
+            return "Indexing failed for this document; reopen the file to try again."
         }
     }
 }
