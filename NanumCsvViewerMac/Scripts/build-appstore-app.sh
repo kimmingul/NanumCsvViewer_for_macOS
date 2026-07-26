@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Nanum CSV Viewer"
 BUNDLE_ID="${BUNDLE_ID:-com.nanumspace.mgkim.nanumcsvviewer}"
 VERSION="${VERSION:-1.10.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-200}"
+BUILD_NUMBER="${BUILD_NUMBER:-201}"
 APP_PATH="${APP_PATH:-$ROOT/dist/appstore/$APP_NAME.app}"
 EXECUTABLE="$ROOT/.build/release/NanumCsvViewerMac"
 IMPORT_SERVICE_EXECUTABLE="$ROOT/.build/release/ImportService"
@@ -154,6 +154,13 @@ fi
 cp "$PROVISION_PROFILE" "$APP_PATH/Contents/embedded.provisionprofile"
 echo "Embedded provisioning profile: $PROVISION_PROFILE"
 
+# A profile downloaded through a browser carries com.apple.quarantine, and cp
+# preserves extended attributes, so the attribute rides into the bundle and the
+# upload is rejected with ITMS-91109. Strip every xattr from the whole bundle
+# before signing rather than just the profile, since any copied-in resource can
+# carry one.
+xattr -cr "$APP_PATH"
+
 # Build the signed entitlements from the checked-in template so the template
 # stays free of developer-specific identifiers.
 cp "$ENTITLEMENTS" "$DERIVED_ENTITLEMENTS"
@@ -186,5 +193,20 @@ codesign \
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 codesign --display --verbose=2 "$APP_PATH"
 codesign -d --entitlements :- "$APP_PATH"
+
+# Signing rewrites files and can reintroduce attributes, so check the finished
+# bundle rather than trusting the strip above. Only com.apple.quarantine blocks
+# ingestion (ITMS-91109); com.apple.provenance is added by the OS and allowed.
+QUARANTINED="$(find "$APP_PATH" -exec sh -c 'xattr "$1" 2>/dev/null | grep -q com.apple.quarantine && echo "$1"' _ {} \;)"
+if [[ -n "$QUARANTINED" ]]; then
+  cat >&2 <<MESSAGE
+ERROR: com.apple.quarantine survives on files inside the bundle:
+$QUARANTINED
+
+App Store ingestion rejects these with ITMS-91109. Run: xattr -cr "$APP_PATH"
+MESSAGE
+  exit 1
+fi
+echo "No quarantined files in bundle."
 
 echo "Built App Store app: $APP_PATH"
