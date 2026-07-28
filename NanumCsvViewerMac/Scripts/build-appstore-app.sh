@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Nanum CSV Viewer"
 BUNDLE_ID="${BUNDLE_ID:-com.nanumspace.mgkim.nanumcsvviewer}"
 VERSION="${VERSION:-1.10.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-200}"
+BUILD_NUMBER="${BUILD_NUMBER:-201}"
 APP_PATH="${APP_PATH:-$ROOT/dist/appstore/$APP_NAME.app}"
 EXECUTABLE="$ROOT/.build/release/NanumCsvViewerMac"
 IMPORT_SERVICE_EXECUTABLE="$ROOT/.build/release/ImportService"
@@ -17,6 +17,12 @@ ICON="$ROOT/Resources/AppIcon.icns"
 ENTITLEMENTS="${ENTITLEMENTS:-$ROOT/Config/AppStore.entitlements}"
 SERVICE_ENTITLEMENTS="${SERVICE_ENTITLEMENTS:-$ROOT/Config/ImportService.entitlements}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-${APPLE_DISTRIBUTION:-Apple Distribution: MINGUL KIM (XB673TQF3A)}}"
+TEAM_ID="${TEAM_ID:-XB673TQF3A}"
+# The signed entitlements must carry the app identifier, or the upload is barred
+# from TestFlight (altool warning 90886) even though App Store review accepts it.
+# Derive it from BUNDLE_ID the way IMPORT_SERVICE_ID is, so it cannot drift.
+APP_IDENTIFIER="$TEAM_ID.$BUNDLE_ID"
+DERIVED_ENTITLEMENTS="$ROOT/dist/appstore/entitlements-appstore.plist"
 # Mac App Store distribution requires an embedded provisioning profile. Keep it
 # out of git (it is developer-specific); provide it via PROVISION_PROFILE or the
 # default path below.
@@ -124,11 +130,49 @@ MESSAGE
   exit 1
 fi
 
+# codesign never reads the provisioning profile, so a profile issued for another
+# app ID passes every local check and only fails server-side at upload. Compare
+# the two here and fail closed rather than build an unsubmittable bundle.
+PROFILE_PLIST="$(mktemp -t appstore-profile)"
+trap 'rm -f "$PROFILE_PLIST"' EXIT
+security cms -D -i "$PROVISION_PROFILE" -o "$PROFILE_PLIST"
+PROFILE_APP_IDENTIFIER="$(/usr/libexec/PlistBuddy \
+  -c 'Print :Entitlements:com.apple.application-identifier' "$PROFILE_PLIST")"
+if [[ "$PROFILE_APP_IDENTIFIER" != "$APP_IDENTIFIER" ]]; then
+  cat >&2 <<MESSAGE
+ERROR: the provisioning profile is issued for a different app identifier.
+  profile: $PROFILE_APP_IDENTIFIER
+  build:   $APP_IDENTIFIER
+
+Regenerate the Mac App Store profile for $BUNDLE_ID, or set TEAM_ID/BUNDLE_ID
+to match the profile.
+MESSAGE
+  exit 1
+fi
+
 # Embed the profile before signing so codesign seals it into the app bundle.
 cp "$PROVISION_PROFILE" "$APP_PATH/Contents/embedded.provisionprofile"
 echo "Embedded provisioning profile: $PROVISION_PROFILE"
 
+# A profile downloaded through a browser carries com.apple.quarantine, and cp
+# preserves extended attributes, so the attribute rides into the bundle and the
+# upload is rejected with ITMS-91109. Strip every xattr from the whole bundle
+# before signing rather than just the profile, since any copied-in resource can
+# carry one.
+xattr -cr "$APP_PATH"
+
+# Build the signed entitlements from the checked-in template so the template
+# stays free of developer-specific identifiers.
+cp "$ENTITLEMENTS" "$DERIVED_ENTITLEMENTS"
+/usr/libexec/PlistBuddy \
+  -c "Set :com.apple.application-identifier $APP_IDENTIFIER" \
+  "$DERIVED_ENTITLEMENTS" 2>/dev/null \
+  || /usr/libexec/PlistBuddy \
+    -c "Add :com.apple.application-identifier string $APP_IDENTIFIER" \
+    "$DERIVED_ENTITLEMENTS"
+
 echo "Signing App Store app: $APP_PATH"
+echo "App identifier: $APP_IDENTIFIER"
 echo "Bundle ID: $BUNDLE_ID"
 echo "Identity: $SIGN_IDENTITY"
 
@@ -142,12 +186,27 @@ codesign \
 codesign \
   --force \
   --options runtime \
-  --entitlements "$ENTITLEMENTS" \
+  --entitlements "$DERIVED_ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" \
   "$APP_PATH"
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 codesign --display --verbose=2 "$APP_PATH"
 codesign -d --entitlements :- "$APP_PATH"
+
+# Signing rewrites files and can reintroduce attributes, so check the finished
+# bundle rather than trusting the strip above. Only com.apple.quarantine blocks
+# ingestion (ITMS-91109); com.apple.provenance is added by the OS and allowed.
+QUARANTINED="$(find "$APP_PATH" -exec sh -c 'xattr "$1" 2>/dev/null | grep -q com.apple.quarantine && echo "$1"' _ {} \;)"
+if [[ -n "$QUARANTINED" ]]; then
+  cat >&2 <<MESSAGE
+ERROR: com.apple.quarantine survives on files inside the bundle:
+$QUARANTINED
+
+App Store ingestion rejects these with ITMS-91109. Run: xattr -cr "$APP_PATH"
+MESSAGE
+  exit 1
+fi
+echo "No quarantined files in bundle."
 
 echo "Built App Store app: $APP_PATH"
