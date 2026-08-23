@@ -84,7 +84,7 @@ swift run NanumCsvViewerMac
 ## v1.10.1 User Workflows
 
 - **Filtering a CSV with repeated headers targets the column you picked.** The filter bar's column list is keyed to real column indexes, so duplicate and blank headers no longer shift the selection onto a neighbouring column.
-- App bundle metadata now uses version `1.10.1(202)`.
+- App bundle metadata now uses version `1.10.1(203)`.
 
 ## v1.10.0 User Workflows
 
