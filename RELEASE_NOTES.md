@@ -10,6 +10,11 @@ A bug-fix release. First update since 1.10.0 reached the Mac App Store.
 
 ### Fixes
 
+- **SPSS and SAS files now import reliably.** Roughly one launch in four, opening
+  a `.sav`, `.zsav`, or `.sas7bdat` file failed with "File has an unsupported
+  character set". The importer handed ReadStat a text encoding name whose memory
+  it did not own, so by the time the parser needed it the value could be gone.
+  The name is now held for the whole parse.
 - **Filtering a CSV whose headers repeat now targets the column you picked.**
   The filter bar built its column list from the header titles, and
   `NSPopUpButton.addItem(withTitle:)` removes any existing item carrying the
@@ -30,7 +35,7 @@ A bug-fix release. First update since 1.10.0 reached the Mac App Store.
   bundle ID, which TestFlight requires, and the build compares the provisioning
   profile against the app identifier and fails before signing on a mismatch.
 
-- Bundle version: `1.10.1(202)`
+- Bundle version: `1.10.1(203)`
 
 ## v1.10.0 - 2026-07-08
 
