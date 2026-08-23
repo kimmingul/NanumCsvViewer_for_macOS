@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-1.10.0}"
+VERSION="${VERSION:-1.10.1}"
 PKG_PATH="${PKG_PATH:-$ROOT/dist/appstore/Nanum-CSV-Viewer-AppStore-v$VERSION.pkg}"
 
 if [[ ! -f "$PKG_PATH" ]]; then

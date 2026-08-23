@@ -4,6 +4,34 @@
 
 No unreleased changes.
 
+## v1.10.1 - 2026-08-23
+
+A bug-fix release. First update since 1.10.0 reached the Mac App Store.
+
+### Fixes
+
+- **Filtering a CSV whose headers repeat now targets the column you picked.**
+  The filter bar built its column list from the header titles, and
+  `NSPopUpButton.addItem(withTitle:)` removes any existing item carrying the
+  same title, so duplicate headers collapsed the list and every selection
+  landed on a different column. Headers `id, name, id, value, name` offered
+  four choices instead of six, and picking the fourth filtered the second. The
+  list is now keyed to real column indexes, so duplicate and blank headers no
+  longer skew it, and a saved view naming a column that no longer exists falls
+  back to All Columns instead of selecting a stale one.
+
+### Build
+
+- The App Store build strips extended attributes from the bundle before signing
+  and refuses to finish if `com.apple.quarantine` survives. A provisioning
+  profile downloaded through a browser carries that attribute, `cp` preserves
+  it, and App Store ingestion rejects the upload with ITMS-91109 by email only.
+- The signed entitlements now derive `com.apple.application-identifier` from the
+  bundle ID, which TestFlight requires, and the build compares the provisioning
+  profile against the app identifier and fails before signing on a mismatch.
+
+- Bundle version: `1.10.1(202)`
+
 ## v1.10.0 - 2026-07-08
 
 A feature release adding read-only binary format importers through a sandboxed
