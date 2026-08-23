@@ -1290,9 +1290,7 @@ extension MainWindowController {
             tableView.removeTableColumn(tableView.tableColumns[0])
         }
         columnNames.removeAll()
-        filterColumnPopup.removeAllItems()
-        filterColumnPopup.addItem(withTitle: L.t("All Columns", "전체 열"))
-        filterColumnPopup.selectItem(at: 0)
+        rebuildFilterColumnItems()
         tableView.deselectAll(nil)
 
         resetViewState()
@@ -2200,10 +2198,7 @@ extension MainWindowController {
             gridColumnBaseWidths[column.identifier] = column.width
         }
 
-        filterColumnPopup.removeAllItems()
-        filterColumnPopup.addItem(withTitle: L.t("All Columns", "전체 열"))
-        filterColumnPopup.addItems(withTitles: columnNames)
-        filterColumnPopup.selectItem(at: 0)
+        rebuildFilterColumnItems()
         updateSortHeaders()
         applyStoredColumnOrder()
         applyPinnedColumns()
@@ -2282,8 +2277,7 @@ extension MainWindowController {
             return
         }
 
-        let selected = filterColumnPopup.indexOfSelectedItem
-        let column = selected <= 0 ? -1 : selected - 1
+        let column = selectedFilterColumn
         let configured: (predicate: @Sendable ([String]) -> Bool, usesExpression: Bool)
         do {
             configured = try configureTextCondition(term: term, column: column, document: doc)
@@ -4732,11 +4726,53 @@ extension MainWindowController {
         filterTokensStack.addArrangedSubview(token)
     }
 
+    /// Rebuilds the filter column list, one item per column plus "All Columns".
+    ///
+    /// `NSPopUpButton.addItem(withTitle:)` removes any existing item carrying the
+    /// same title, so `addItems(withTitles: columnNames)` silently drops repeated
+    /// CSV headers and every position-derived column index shifts onto the wrong
+    /// column. Build the items directly and carry the real column index in
+    /// `representedObject` so duplicate and empty headers cannot skew the mapping.
+    private func rebuildFilterColumnItems() {
+        let menu = NSMenu()
+        let allColumns = NSMenuItem()
+        allColumns.title = L.t("All Columns", "전체 열")
+        allColumns.representedObject = nil
+        menu.addItem(allColumns)
+
+        for (index, name) in columnNames.enumerated() {
+            let item = NSMenuItem()
+            item.title = name
+            item.representedObject = index
+            menu.addItem(item)
+        }
+
+        filterColumnPopup.menu = menu
+        filterColumnPopup.selectItem(at: 0)
+    }
+
+    /// Column currently targeted by the text filter, or -1 for "All Columns".
+    private var selectedFilterColumn: Int {
+        filterColumnPopup.selectedItem?.representedObject as? Int ?? -1
+    }
+
+    private func selectFilterColumn(_ column: Int) {
+        guard column >= 0,
+              let index = filterColumnPopup.itemArray.firstIndex(where: {
+                  ($0.representedObject as? Int) == column
+              })
+        else {
+            filterColumnPopup.selectItem(at: 0)
+            return
+        }
+        filterColumnPopup.selectItem(at: index)
+    }
+
     private func editTextFilterToken() {
         guard textCondition != nil else { return }
         setFilterBarVisible(true)
         filterField.stringValue = textFilterTerm
-        filterColumnPopup.selectItem(at: textFilterColumn < 0 ? 0 : textFilterColumn + 1)
+        selectFilterColumn(textFilterColumn)
         window?.makeFirstResponder(filterField)
         filterField.currentEditor()?.selectAll(nil)
     }
@@ -5052,7 +5088,7 @@ extension MainWindowController {
         textFilterTerm = saved.filterText ?? ""
         textFilterColumn = saved.filterColumn ?? -1
         filterField.stringValue = textFilterTerm
-        filterColumnPopup.selectItem(at: textFilterColumn < 0 ? 0 : textFilterColumn + 1)
+        selectFilterColumn(textFilterColumn)
         sortKeys = saved.sortKeys
         currentDataColumn = min(saved.currentColumn, max(0, columnNames.count - 1))
         hiddenColumnIndexes = sanitizedHiddenColumns(Set(saved.hiddenColumnIndexes))
@@ -5986,6 +6022,23 @@ extension MainWindowController {
             let view = tableView.view(atColumn: columnIndex, row: row, makeIfNecessary: true) as? NSTableCellView
             return view?.textField?.stringValue ?? ""
         }
+    }
+
+    var filterColumnTitlesForTesting: [String] {
+        filterColumnPopup.itemArray.map(\.title)
+    }
+
+    func filterColumnForTesting(itemIndex: Int) -> Int {
+        guard itemIndex >= 0, itemIndex < filterColumnPopup.numberOfItems else { return -1 }
+        return filterColumnPopup.item(at: itemIndex)?.representedObject as? Int ?? -1
+    }
+
+    var selectedFilterColumnForTesting: Int {
+        selectedFilterColumn
+    }
+
+    func selectFilterColumnForTesting(_ column: Int) {
+        selectFilterColumn(column)
     }
 
     func selectCellForTesting(row: Int, column: Int) {
