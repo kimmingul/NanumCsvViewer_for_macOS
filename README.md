@@ -81,12 +81,17 @@ cd NanumCsvViewerMac
 swift run NanumCsvViewerMac
 ```
 
+## v1.10.1 User Workflows
+
+- **Filtering a CSV with repeated headers targets the column you picked.** The filter bar's column list is keyed to real column indexes, so duplicate and blank headers no longer shift the selection onto a neighbouring column.
+- App bundle metadata now uses version `1.10.1(202)`.
+
 ## v1.10.0 User Workflows
 
 - **Open legacy `.xls` files.** BIFF workbooks now open read-only through a sandboxed XPC importer while the existing pure-Swift `.xlsx`/`.xlsm` reader remains unchanged.
 - **Open SPSS files.** `.sav` and `.zsav` files import read-only through the same temp-CSV bridge, preserving value labels for display and declared type metadata for grid type badges.
 - **Open SAS files.** `.sas7bdat` files import read-only as best-effort and show a persistent warning to verify critical data against SAS.
-- App bundle metadata now uses version `1.10.0(200)`.
+- App bundle metadata used version `1.10.0(201)` as shipped to the Mac App Store.
 
 ## v1.9.0 User Workflows
 

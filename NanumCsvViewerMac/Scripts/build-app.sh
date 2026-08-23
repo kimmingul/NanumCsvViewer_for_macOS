@@ -43,9 +43,9 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.10.0</string>
+  <string>1.10.1</string>
   <key>CFBundleVersion</key>
-  <string>200</string>
+  <string>202</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
@@ -72,9 +72,9 @@ cat > "$IMPORT_SERVICE_BUNDLE/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>XPC!</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.10.0</string>
+  <string>1.10.1</string>
   <key>CFBundleVersion</key>
-  <string>200</string>
+  <string>202</string>
   <key>XPCService</key>
   <dict>
     <key>ServiceType</key>
