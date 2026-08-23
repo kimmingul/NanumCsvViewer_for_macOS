@@ -35,7 +35,26 @@ A bug-fix release. First update since 1.10.0 reached the Mac App Store.
   bundle ID, which TestFlight requires, and the build compares the provisioning
   profile against the app identifier and fails before signing on a mismatch.
 
-- Bundle version: `1.10.1(203)`
+### Validation
+
+- `swift test`: 497 tests passing.
+- Mac App Store: build 203 validated (`VERIFY SUCCEEDED with no errors`) and
+  submitted for review 2026-08-23.
+- Apple notarization:
+  - App ZIP submission `a0cd545c-9c57-4e52-b717-86adbd5c00a6`: Accepted.
+  - DMG submission `07a133cc-86d0-4fb7-9d92-7ea5a20edf9b`: Accepted.
+- Gatekeeper accepts the app and DMG as `Notarized Developer ID`.
+
+### Distribution
+
+- Bundle version: `1.10.1`
+- Bundle build: `203`
+- Minimum macOS: `14.0`
+- Signing: Developer ID Application signed with hardened runtime and timestamp,
+  notarized by Apple, and stapled.
+- SHA-256:
+  - `Nanum-CSV-Viewer-v1.10.1.dmg`: `67efa74c84fac8c3b371ab8a434ec65a4d75083ef331bfad48244273c710d477`
+  - `Nanum-CSV-Viewer-v1.10.1.zip`: `87edecd866b2d24ec1895c3291cfe2a7ff68133488a153ca54bf403ecbea39ee`
 
 ## v1.10.0 - 2026-07-08
 
