@@ -154,14 +154,31 @@ private enum ReadStatTabularReader {
             readstat_set_value_handler(parser, valueHandler)
             readstat_set_error_handler(parser, errorHandler)
             readstat_set_progress_handler(parser, progressHandler)
-            readstat_set_handler_character_encoding(parser, "UTF-8")
             let ioContext = ReadStatFileDescriptorIOContext(fileDescriptor: source.fileDescriptor, fileSize: byteCount)
             let opaqueIOContext = Unmanaged.passUnretained(ioContext).toOpaque()
             try configureFileDescriptorIO(parser: parser, ioContext: opaqueIOContext)
 
+            // readstat_set_handler_character_encoding stores the pointer without
+            // copying, and Swift's automatic String-to-C-string bridging only
+            // guarantees the buffer for the duration of the call. Passing a literal
+            // directly leaves parser->output_encoding dangling, and the later
+            // iconv_open(output_encoding, ...) reads whatever now occupies that
+            // memory — which fails with READSTAT_ERROR_UNSUPPORTED_CHARSET whenever
+            // the bytes no longer spell a charset name. Hold the buffer across the
+            // whole parse instead.
+            //
+            // ReadStat likewise keeps both callback contexts as unretained opaque
+            // pointers. `context` is read again below so ARC keeps it alive, but
+            // `ioContext` has no later use; extend both rather than depending on
+            // where the optimizer decides the last use lands.
             let path = "xpc-import"
-            let parseError = path.withCString { cPath in
-                parse(parser, cPath, opaqueContext)
+            let parseError = withExtendedLifetime((context, ioContext)) {
+                "UTF-8".withCString { encoding in
+                    readstat_set_handler_character_encoding(parser, encoding)
+                    return path.withCString { cPath in
+                        parse(parser, cPath, opaqueContext)
+                    }
+                }
             }
             if let error = context.error {
                 throw error
