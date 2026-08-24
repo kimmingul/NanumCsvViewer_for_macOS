@@ -2,6 +2,21 @@
 
 Nanum CSV Viewer is a Swift/AppKit macOS application for opening and inspecting very large CSV files. It is designed to load CSV files larger than 1 GB quickly, keep indexing work in the background, and render rows through a virtual table instead of materializing the whole file in memory.
 
+## Download
+
+- **[Latest release](https://github.com/kimmingul/NanumCsvViewer_for_macOS/releases/latest)** — download the `.dmg`, drag the app to Applications, and open it.
+- **[Mac App Store](https://apps.apple.com/app/id6785022554)**
+
+Requires macOS 14 or later. Both the DMG and the ZIP are Developer ID signed with hardened runtime, notarized by Apple, and stapled, so they open without a Gatekeeper warning.
+
+Each release lists the SHA-256 of its artifacts; verify a download with:
+
+```bash
+shasum -a 256 Nanum-CSV-Viewer-v1.10.1.dmg
+```
+
+Every version is listed on the [releases page](https://github.com/kimmingul/NanumCsvViewer_for_macOS/releases), and [RELEASE_NOTES.md](RELEASE_NOTES.md) carries the full changelog.
+
 ## Features
 
 - Automatic encoding detection for UTF-8, UTF-8 BOM, and CP949/EUC-KR
