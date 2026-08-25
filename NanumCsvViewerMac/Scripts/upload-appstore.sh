@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-1.10.1}"
+# shellcheck source=version.sh
+. "$ROOT/Scripts/version.sh"
 PKG_PATH="${PKG_PATH:-$ROOT/dist/appstore/Nanum-CSV-Viewer-AppStore-v$VERSION.pkg}"
 
 if [[ ! -f "$PKG_PATH" ]]; then
