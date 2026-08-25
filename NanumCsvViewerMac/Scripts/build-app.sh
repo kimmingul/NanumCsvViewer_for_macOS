@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=version.sh
+. "$ROOT/Scripts/version.sh"
 APP_NAME="Nanum CSV Viewer"
 BUNDLE="$ROOT/dist/$APP_NAME.app"
 EXECUTABLE="$ROOT/.build/release/NanumCsvViewerMac"
@@ -23,7 +25,7 @@ if [[ -f "$ICON" ]]; then
   cp "$ICON" "$BUNDLE/Contents/Resources/AppIcon.icns"
 fi
 
-cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
+cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -43,9 +45,9 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.10.1</string>
+  <string>$VERSION</string>
   <key>CFBundleVersion</key>
-  <string>203</string>
+  <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
@@ -56,7 +58,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-cat > "$IMPORT_SERVICE_BUNDLE/Contents/Info.plist" <<'PLIST'
+cat > "$IMPORT_SERVICE_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -66,15 +68,15 @@ cat > "$IMPORT_SERVICE_BUNDLE/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key>
   <string>ImportService</string>
   <key>CFBundleIdentifier</key>
-  <string>com.nanum.csvviewer.mac.ImportService</string>
+  <string>$IMPORT_SERVICE_ID</string>
   <key>CFBundleName</key>
   <string>ImportService</string>
   <key>CFBundlePackageType</key>
   <string>XPC!</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.10.1</string>
+  <string>$VERSION</string>
   <key>CFBundleVersion</key>
-  <string>203</string>
+  <string>$BUILD_NUMBER</string>
   <key>XPCService</key>
   <dict>
     <key>ServiceType</key>

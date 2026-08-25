@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Nanum CSV Viewer"
 BUNDLE_ID="${BUNDLE_ID:-com.nanumspace.mgkim.nanumcsvviewer}"
-VERSION="${VERSION:-1.10.1}"
-BUILD_NUMBER="${BUILD_NUMBER:-203}"
+# shellcheck source=version.sh
+. "$ROOT/Scripts/version.sh"
 APP_PATH="${APP_PATH:-$ROOT/dist/appstore/$APP_NAME.app}"
 EXECUTABLE="$ROOT/.build/release/NanumCsvViewerMac"
 IMPORT_SERVICE_EXECUTABLE="$ROOT/.build/release/ImportService"

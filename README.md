@@ -67,6 +67,21 @@ NanumCsvViewerMac/
   Tests/NanumCsvViewerMacTests/
                          # AppKit grid, import, routing, search parser, and UI state tests
   Scripts/build-app.sh    # .app bundle creation script
+  Scripts/version.sh      # release version and build number, sourced by every build script
+```
+
+### Cutting a release
+
+`Scripts/version.sh` holds `VERSION` and `BUILD_NUMBER`, and `build-app.sh`,
+`build-appstore-app.sh`, `package-appstore.sh`, and `upload-appstore.sh` all
+source it, so a release edits that one file. Build numbers cannot be reused once
+uploaded to App Store Connect, so bump `BUILD_NUMBER` for every upload, including
+a re-upload of the same marketing version.
+
+Either value can be overridden from the environment for a one-off build:
+
+```bash
+BUILD_NUMBER=999 Scripts/build-app.sh
 ```
 
 ## Requirements
