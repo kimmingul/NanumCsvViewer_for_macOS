@@ -4,7 +4,7 @@
 
 No unreleased changes.
 
-## v1.10.2-build205 - 2026-09-08
+## v1.10.2-build206 - 2026-09-08
 
 ### Multilingual release
 
@@ -22,13 +22,15 @@ No unreleased changes.
 - Embedded localization resources and declared all supported languages in
   both Developer ID and Mac App Store app bundles.
 - Prepared localized App Store metadata and genuine 2560×1600 screenshots for
-  all 16 languages. App Store version remains 1.10.2; build increments to 205.
+  all 16 languages. App Store version remains 1.10.2; final build is 206.
 - Catalog validation: 16 languages, 586 keys, 832 source calls; no missing
   translations or placeholder/printf mismatches.
 - Final regression suite: 512 tests passed. All 16 localized app screenshots
   were rendered from the real AppKit UI and checked for readable text and glyphs.
+- Long localized startup descriptions wrap instead of being clipped. Build 205
+  was uploaded for validation but replaced by build 206 before review submission.
 - Existing GitHub v1.10.2/build204 artifacts remain unchanged; this multilingual
-  build uses the separate v1.10.2-build205 release tag.
+  build uses the separate v1.10.2-build206 release tag.
 
 ## v1.10.2 - 2026-09-08
 
