@@ -37,12 +37,27 @@ No unreleased changes.
 - Native app verification covered the last-category checkbox search/selection,
   oversized pivot rejection, exact-value filter recovery, a 100,000-row pivot
   table, and the large-chart safety message.
+- Release app and embedded XPC service signatures verified with
+  `codesign --verify --deep --strict`. The ZIP app and mounted DMG app passed
+  ticket validation and Gatekeeper assessment as `Notarized Developer ID`.
+- Apple notarization (both Accepted, with no issues):
+  - App ZIP: `901daf1d-85e8-4b12-a8b5-c0f4377e9495`
+  - DMG: `3b3f6a35-f114-4f30-acf0-472c32ed5107`
+- App and DMG tickets stapled and validated; `hdiutil verify` passed.
 
-### Version
+### Distribution
 
 - Bundle version: `1.10.2`
 - Bundle build: `204`
 - Minimum macOS: `14.0`
+- Architecture: Apple Silicon (`arm64`).
+- Signing: Developer ID Application `MINGUL KIM (XB673TQF3A)`, hardened runtime
+  and timestamp. ZIP contains the stapled app; the signed DMG is also notarized
+  and stapled.
+- Source: PR #44, merge commit `b5c23d3e09fa53a8fe3140b693bffd93cf1df3df`.
+- Final SHA-256:
+  - `Nanum-CSV-Viewer-v1.10.2.dmg`: `43fbf9792a92866219efcda46847f11a24957ce1a110f29eef0485563d7e0e73`
+  - `Nanum-CSV-Viewer-v1.10.2.zip`: `5c58211c47e94ffea9fb9c255b65664654a2faf81deb0afe60e45e9b494c89b2`
 
 ## v1.10.1 - 2026-08-23
 
