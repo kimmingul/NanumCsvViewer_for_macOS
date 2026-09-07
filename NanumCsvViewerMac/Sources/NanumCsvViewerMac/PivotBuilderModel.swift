@@ -119,12 +119,20 @@ struct PivotResultTableState: Equatable {
 struct PivotResultTableModel: Equatable {
     let headers: [String]
     let rows: [[String]]
-    var state = PivotResultTableState()
+    private(set) var state: PivotResultTableState {
+        didSet {
+            guard oldValue != state else { return }
+            let filtered = filteredRows()
+            visibleRows = state.sort.map { sortedRows(filtered, by: $0) } ?? filtered
+        }
+    }
+    private(set) var visibleRows: [[String]]
 
-    var visibleRows: [[String]] {
-        let filtered = filteredRows()
-        guard let sort = state.sort else { return filtered }
-        return sortedRows(filtered, by: sort)
+    init(headers: [String], rows: [[String]]) {
+        self.headers = headers
+        self.rows = rows
+        state = PivotResultTableState()
+        visibleRows = rows
     }
 
     mutating func sort(column: Int, ascending: Bool) {
@@ -143,8 +151,10 @@ struct PivotResultTableModel: Equatable {
 
     mutating func setFilter(column: Int?, query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        state.filterColumn = column
-        state.filterQuery = trimmed
+        var updated = state
+        updated.filterColumn = column
+        updated.filterQuery = trimmed
+        state = updated
     }
 
     func exportString(format: PivotResultExportFormat) -> String {
@@ -293,6 +303,10 @@ struct PivotChartPoint: Equatable, Identifiable {
 }
 
 struct PivotChartModel: Equatable {
+    static let maximumCategories = 200
+    static let maximumSeries = 20
+    static let maximumPoints = 2_000
+
     let categories: [String]
     let series: [PivotChartSeries]
     let unsupportedReason: String?
@@ -312,10 +326,15 @@ struct PivotChartModel: Equatable {
         seriesTitle: String = "",
         valueTitle: String = ""
     ) {
-        self.categories = categories
-        self.series = series
-        self.unsupportedReason = unsupportedReason
-        self.points = points ?? Self.makePoints(categories: categories, series: series)
+        let reason = unsupportedReason ?? Self.resourceLimitReason(
+            categoryCount: categories.count,
+            seriesCount: series.count,
+            pointCount: points?.count
+        )
+        self.categories = reason == nil ? categories : []
+        self.series = reason == nil ? series : []
+        self.unsupportedReason = reason
+        self.points = reason == nil ? (points ?? Self.makePoints(categories: categories, series: series)) : []
         self.recommendedKind = recommendedKind
         self.xAxisTitle = xAxisTitle
         self.seriesTitle = seriesTitle
@@ -323,6 +342,14 @@ struct PivotChartModel: Equatable {
     }
 
     static func make(from pivot: PivotTableResult) -> PivotChartModel {
+        let categoryCount = pivot.rowColumns.isEmpty
+            ? (pivot.columnColumns.isEmpty ? 1 : pivot.columnKeys.count)
+            : pivot.rowKeys.count
+        let seriesCount = pivot.rowColumns.isEmpty || pivot.columnColumns.isEmpty ? 1 : pivot.columnKeys.count
+        if let reason = resourceLimitReason(categoryCount: categoryCount, seriesCount: seriesCount) {
+            return PivotChartModel(categories: [], series: [], unsupportedReason: reason)
+        }
+
         if pivot.rowColumns.isEmpty {
             let categories = pivot.columnColumns.isEmpty
                 ? [L.t("Total", "합계")]
@@ -360,6 +387,21 @@ struct PivotChartModel: Equatable {
             xAxisTitle: rowAxisTitle(for: pivot),
             seriesTitle: pivot.columnColumns.isEmpty ? L.t("Measure", "측정값") : L.t("Columns", "열"),
             valueTitle: pivot.function.rawValue
+        )
+    }
+
+    private static func resourceLimitReason(
+        categoryCount: Int,
+        seriesCount: Int,
+        pointCount: Int? = nil
+    ) -> String? {
+        guard categoryCount > maximumCategories
+                || seriesCount > maximumSeries
+                || (seriesCount > 0 && categoryCount > maximumPoints / seriesCount)
+                || (pointCount ?? 0) > maximumPoints else { return nil }
+        return L.t(
+            "This chart exceeds the limit of 200 categories, 20 series, or 2,000 points. Add filters, group dates more broadly, or remove a row/column field. The complete pivot table and export remain available.",
+            "차트는 범주 200개, 계열 20개, 점 2,000개까지 표시할 수 있습니다. 필터를 추가하거나 날짜 그룹을 넓히거나 행/열 필드를 제거하세요. 전체 피벗 테이블과 내보내기는 계속 사용할 수 있습니다."
         )
     }
 

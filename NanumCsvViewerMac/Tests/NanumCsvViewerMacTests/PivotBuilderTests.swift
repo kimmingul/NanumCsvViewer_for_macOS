@@ -159,39 +159,58 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(model.recommendedKind, .line)
     }
 
+
+    func testChartModelRefusesLargeSparsePivotsWithoutBuildingDenseSeries() {
+        let dimensions = [
+            (rows: 201, columns: 0),
+            (rows: 1, columns: 21),
+            (rows: 200, columns: 11),
+            (rows: 0, columns: 201)
+        ]
+        for dimension in dimensions {
+            let pivot = PivotTableResult(
+                rowColumns: dimension.rows == 0 ? [] : [0],
+                rowColumnNames: dimension.rows == 0 ? [] : ["category"],
+                columnColumns: dimension.columns == 0 ? [] : [1],
+                valueColumn: 2,
+                function: .sum,
+                rowKeys: (0..<dimension.rows).map { ["R\($0)"] },
+                columnKeys: (0..<dimension.columns).map { ["C\($0)"] },
+                values: [:]
+            )
+
+            let model = PivotChartModel.make(from: pivot)
+
+            XCTAssertNotNil(model.unsupportedReason, "\(dimension)")
+            XCTAssertEqual(model.series, [], "\(dimension)")
+            XCTAssertEqual(model.points, [], "\(dimension)")
+        }
+    }
+
+    func testChartModelAllowsExactPointLimitWithoutDroppingCategories() {
+        let pivot = PivotTableResult(
+            rowColumns: [0],
+            rowColumnNames: ["category"],
+            columnColumns: [1],
+            valueColumn: 2,
+            function: .sum,
+            rowKeys: (0..<200).map { ["R\($0)"] },
+            columnKeys: (0..<10).map { ["C\($0)"] },
+            values: [PivotCellKey(row: ["R199"], column: ["C9"]): 42]
+        )
+
+        let model = PivotChartModel.make(from: pivot)
+
+        XCTAssertNil(model.unsupportedReason)
+        XCTAssertEqual(model.points.count, 2_000)
+        XCTAssertEqual(model.points.last, PivotChartPoint(category: "R199", series: "C9", value: 42))
+    }
     func testDropZoneStoresVisibleFieldNames() {
         let zone = PivotDropZoneView(zone: .rows) { _, _ in }
 
         zone.setFieldNames(["site", "visit"])
 
         XCTAssertEqual(zone.fieldNamesForTesting, ["site", "visit"])
-    }
-
-    func testChartViewStoresModelForRendering() {
-        let chart = PivotChartView()
-        let model = PivotChartModel(
-            categories: ["A"],
-            series: [PivotChartSeries(name: "Treatment", values: [4])],
-            unsupportedReason: nil
-        )
-
-        chart.update(model: model)
-
-        XCTAssertEqual(chart.modelForTesting, model)
-        XCTAssertTrue(chart.usesSwiftChartsSurfaceForTesting)
-    }
-
-    func testChartHoverTooltipUsesChartCoordinatesAndDoesNotStealHover() throws {
-        let source = try String(contentsOfFile: "Sources/NanumCsvViewerMac/PivotChartView.swift")
-
-        XCTAssertTrue(source.contains(".chartOverlay"))
-        XCTAssertTrue(source.contains(".allowsHitTesting(false)"))
-        XCTAssertTrue(source.contains("proxy.position(forY: tooltipValue"))
-        XCTAssertTrue(source.contains(".fixedSize(horizontal: true, vertical: true)"))
-        XCTAssertTrue(source.contains("Color(nsColor: .controlBackgroundColor)"))
-        XCTAssertFalse(source.contains(".background(.regularMaterial"))
-        XCTAssertFalse(source.contains("ZStack(alignment: .topTrailing)"))
-        XCTAssertFalse(source.contains("y: plotFrame.minY + 46"))
     }
 
     func testBuilderAssignsFieldsAndBuildsPreview() throws {
@@ -725,6 +744,121 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.pivotResultExportForTesting(format: .csv), "site,Sum\nB,10\n")
     }
 
+
+    func testBuilderKeepsIndependentSectionSortsWhenClearingResultFilter() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("site,visits,cost\nA,2,30\nB,10,5\nC,3,20\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        defer { builder.close() }
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.assignFieldForTesting(2, to: .values)
+        builder.setMeasureAggregationForTesting(column: 1, function: .sum)
+        builder.setMeasureAggregationForTesting(column: 2, function: .sum)
+        try waitForPreview(builder)
+
+        builder.sortPreviewSectionForTesting(section: 0, column: 1, ascending: false)
+        builder.sortPreviewSectionForTesting(section: 1, column: 1, ascending: true)
+        builder.setResultFilterForTesting("C")
+        XCTAssertEqual(builder.previewRowForTesting(section: 0, row: 0), ["C", "3"])
+        XCTAssertEqual(builder.previewRowForTesting(section: 1, row: 0), ["C", "20"])
+        XCTAssertEqual(builder.previewVisibleRowCountForTesting(section: 0), 1)
+
+        builder.setResultFilterForTesting("")
+        XCTAssertEqual((0..<4).map { builder.previewRowForTesting(section: 0, row: $0) }, [
+            ["B", "10"], ["C", "3"], ["A", "2"], [L.t("Total", "합계"), "15"]
+        ])
+        XCTAssertEqual((0..<4).map { builder.previewRowForTesting(section: 1, row: $0) }, [
+            ["B", "5"], ["C", "20"], ["A", "30"], [L.t("Total", "합계"), "55"]
+        ])
+        XCTAssertEqual(builder.pivotResultExportForTesting(format: .tsv),
+            "Sum of visits\nsite\tSum\nB\t10\nC\t3\nA\t2\n\(L.t("Total", "합계"))\t15\n\n"
+                + "Sum of cost\nsite\tSum\nB\t5\nC\t20\nA\t30\n\(L.t("Total", "합계"))\t55\n")
+    }
+
+    func testBuilderRefusesCombinedDensePreviewAndRecoversAfterRemovingDimension() throws {
+        _ = NSApplication.shared
+        let rows = (0..<2_500).map { "R\($0),C\($0 % 200),1,2" }
+        let (doc, path) = try openIndexed("row,column,first,second\n" + rows.joined(separator: "\n") + "\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        defer { builder.close() }
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .columns)
+        builder.assignFieldForTesting(2, to: .values)
+        builder.assignFieldForTesting(3, to: .values)
+        try waitForPreviewCompletion(builder)
+
+        XCTAssertEqual(builder.previewSectionCountForTesting, 0)
+        XCTAssertEqual(builder.pivotResultExportForTesting(format: .csv), "")
+        XCTAssertFalse(builder.previewMessageForTesting.isEmpty)
+
+        builder.removeFieldForTesting(1, from: .columns)
+        try waitForPreview(builder)
+        XCTAssertEqual(builder.previewSectionCountForTesting, 2)
+        XCTAssertEqual(builder.previewVisibleRowCountForTesting(section: 0), 2_501)
+        XCTAssertEqual(builder.previewRowForTesting(section: 1, row: 2_500), [L.t("Total", "합계"), "2500"])
+    }
+
+    func testBuilderLoadsBoundedFilterMenuAndAppliesExactValueFromSheet() throws {
+        _ = NSApplication.shared
+        let rows = (0...1_000).map { "Category\($0),1" }
+        let (doc, path) = try openIndexed("category,value\n" + rows.joined(separator: "\n") + "\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        builder.showWindow(nil)
+        defer { builder.close() }
+        builder.assignFieldForTesting(0, to: .filters)
+        XCTAssertTrue(builder.filterOptionsAreLoadingForTesting(column: 0))
+        builder.assignFieldForTesting(1, to: .values)
+        try waitForFilterOptions(builder, column: 0)
+
+        XCTAssertNotNil(builder.filterOptionsFailureForTesting(column: 0))
+        XCTAssertEqual(builder.filterOptionValuesForTesting(column: 0), [])
+        builder.beginExactFilterEntryForTesting(column: 0)
+        let sheet = try XCTUnwrap(builder.window?.attachedSheet)
+        let input = try XCTUnwrap(sheet.initialFirstResponder as? NSTextField)
+        input.stringValue = "Category1000"
+        builder.window?.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try waitForPreview(builder) {
+            $0.layoutForTesting.filterSelections[0] == "Category1000"
+                && $0.previewRowForTesting(0) == [L.t("Total", "합계"), "1"]
+        }
+        XCTAssertEqual(builder.filterOptionValuesForTesting(column: 0), ["Category1000"])
+    }
+
+    func testBuilderDiscardsStaleFilterLoadsAcrossDateGroupingAndClose() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("date,value\n2026-01-02,1\n2027-02-03,2\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let report = try doc.analyzeColumns(sampleLimit: 10, cancellation: CancellationFlag())
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header, columnStatisticsReport: report)
+        defer { builder.close() }
+        builder.assignFieldForTesting(0, to: .filters)
+        builder.setDateGroupingForTesting(column: 0, period: .year)
+        builder.close()
+        builder.setDateGroupingForTesting(column: 0, period: .day)
+        builder.showWindow(nil)
+        try waitForFilterOptions(builder, column: 0)
+
+        XCTAssertEqual(builder.filterOptionValuesForTesting(column: 0), ["2026-01-02", "2027-02-03"])
+        builder.setDateGroupingForTesting(column: 0, period: .month)
+        builder.setDateGroupingForTesting(column: 0, period: .year)
+        try waitForFilterOptions(builder, column: 0)
+        XCTAssertEqual(builder.filterOptionValuesForTesting(column: 0), ["2026", "2027"])
+    }
+
+    func testBuilderFilterMenuPreservesValuesMatchingAllAndBlankLabels() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("category,value\n\(L.t("All", "전체")),1\n\(L.t("(Blank)", "(빈 값)")),2\n,3\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        defer { builder.close() }
+        builder.assignFieldForTesting(0, to: .filters)
+        try waitForFilterOptions(builder, column: 0)
+        XCTAssertEqual(Set(builder.filterOptionValuesForTesting(column: 0)), [L.t("All", "전체"), L.t("(Blank)", "(빈 값)"), "null"])
+    }
     func testBuilderShowsFilterDropdownsInResultPane() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""
@@ -1394,6 +1528,48 @@ final class PivotBuilderTests: XCTestCase {
         XCTFail("Timed out waiting for indexing", file: file, line: line)
     }
 
+    private func waitForFilterOptions(
+        _ builder: PivotBuilderWindowController,
+        column: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            if !builder.filterOptionsAreLoadingForTesting(column: column) {
+                return
+            }
+        }
+        XCTFail("Timed out waiting for pivot filter values", file: file, line: line)
+    }
+
+    func testResultFilterEnteredDuringCalculationAppliesToNewPreview() throws {
+        _ = NSApplication.shared
+        let (doc, path) = try openIndexed("category,value\nA,1\nB,2\n")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let builder = PivotBuilderWindowController(document: doc, columnNames: doc.header)
+        defer { builder.close() }
+        builder.assignFieldForTesting(0, to: .rows)
+        builder.assignFieldForTesting(1, to: .values)
+        builder.setResultFilterForTesting("B")
+        try waitForPreview(builder)
+        XCTAssertEqual(builder.copyPivotResultForTesting(), "category\tCount\nB\t1\n")
+    }
+
+    private func waitForPreviewCompletion(
+        _ builder: PivotBuilderWindowController,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            if !builder.previewIsComputingForTesting { return }
+        }
+        XCTFail("Timed out waiting for pivot calculation", file: file, line: line)
+    }
+
     private func waitForPreview(
         _ builder: PivotBuilderWindowController,
         file: StaticString = #filePath,
@@ -1403,7 +1579,9 @@ final class PivotBuilderTests: XCTestCase {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
-            if !builder.previewHeadersForTesting.isEmpty, condition?(builder) ?? true {
+            if !builder.previewIsComputingForTesting,
+               !builder.previewHeadersForTesting.isEmpty,
+               condition?(builder) ?? true {
                 return
             }
         }

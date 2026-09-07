@@ -108,11 +108,16 @@ public struct ColumnFilterState: Equatable, Codable, Sendable {
         }
     }
 
-    public func descriptions(columnNames: [String], blankLabel: String) -> [String] {
+    public func descriptions(columnNames: [String], blankLabel: String, selectedValuesLabel: String = "selected values") -> [String] {
         filters.map { filter in
             let name = columnNames[safe: filter.column] ?? "Column \(filter.column + 1)"
             switch filter {
             case .selectedValues(_, let values, let includeBlanks):
+                // Token titles/tooltips must not sort and lay out every selected category.
+                if values.count > 6 {
+                    let blank = includeBlanks ? ", \(blankLabel)" : ""
+                    return "\(name) in \(values.count.formatted()) \(selectedValuesLabel)\(blank)"
+                }
                 var labels = values.sorted {
                     $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
                 }.map { #""\#($0)""# }

@@ -13,5 +13,5 @@
 #
 # Override either value from the environment for a one-off build:
 #   BUILD_NUMBER=999 Scripts/build-app.sh
-VERSION="${VERSION:-1.10.1}"
-BUILD_NUMBER="${BUILD_NUMBER:-203}"
+VERSION="${VERSION:-1.10.2}"
+BUILD_NUMBER="${BUILD_NUMBER:-204}"

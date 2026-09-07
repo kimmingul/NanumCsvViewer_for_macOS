@@ -12,8 +12,11 @@ final class ColumnFilterPopoverController: NSViewController {
     private let initialFilter: ColumnFilter?
 
     private let searchField = NSSearchField()
-    private let valuesStack = NSStackView()
-    private let valueListContainer = NSView()
+    private let valuesTable = NSTableView()
+    private var filteredValueIndexes: [Int]?
+    #if DEBUG
+    private(set) var constructedValueCheckboxCountForTesting = 0
+    #endif
     private let valueScrollView = NSScrollView()
     private let startEnabledButton = NSButton(checkboxWithTitle: L.t("Start", "시작"), target: nil, action: nil)
     private let endEnabledButton = NSButton(checkboxWithTitle: L.t("End", "종료"), target: nil, action: nil)
@@ -119,16 +122,25 @@ final class ColumnFilterPopoverController: NSViewController {
         quickActions.addArrangedSubview(spacer)
         root.addArrangedSubview(quickActions)
 
-        valuesStack.orientation = .vertical
-        valuesStack.spacing = 4
-        valuesStack.alignment = .leading
-        valuesStack.autoresizingMask = [.width, .height]
-        valueListContainer.addSubview(valuesStack)
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("value"))
+        column.resizingMask = .autoresizingMask
+        valuesTable.addTableColumn(column)
+        valuesTable.headerView = nil
+        valuesTable.rowHeight = 24
+        valuesTable.intercellSpacing = .zero
+        valuesTable.selectionHighlightStyle = .none
+        valuesTable.backgroundColor = .clear
+        valuesTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        valuesTable.autoresizingMask = [.width]
+        valuesTable.dataSource = self
+        valuesTable.delegate = self
         valueScrollView.hasVerticalScroller = true
         valueScrollView.drawsBackground = false
-        valueScrollView.documentView = valueListContainer
+        valueScrollView.translatesAutoresizingMaskIntoConstraints = false
+        valueScrollView.documentView = valuesTable
         valueScrollView.heightAnchor.constraint(equalToConstant: 250).isActive = true
         root.addArrangedSubview(valueScrollView)
+        valueScrollView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -28).isActive = true
         rebuildValueList()
     }
 
@@ -183,34 +195,25 @@ final class ColumnFilterPopoverController: NSViewController {
     }
 
     private func rebuildValueList() {
-        for arranged in valuesStack.arrangedSubviews {
-            valuesStack.removeArrangedSubview(arranged)
-            arranged.removeFromSuperview()
-        }
-
         let term = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        for item in values where term.isEmpty || item.value.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
-            let title = item.value.isEmpty
-                ? L.t("(Blank) \(item.count.formatted())", "(빈 값) \(item.count.formatted())")
-                : "\(item.value) (\(item.count.formatted()))"
-            let button = ValueCheckbox(checkboxWithTitle: title, target: self, action: #selector(valueCheckboxChanged(_:)))
-            button.value = item.value
-            button.state = item.value.isEmpty
-                ? (includeBlanks ? .on : .off)
-                : (selectedValues.contains(item.value) ? .on : .off)
-            valuesStack.addArrangedSubview(button)
+        filteredValueIndexes = term.isEmpty ? nil : values.indices.filter {
+            values[$0].value.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
-        updateValueListDocumentFrame()
+        valuesTable.reloadData()
     }
 
-    private func updateValueListDocumentFrame() {
-        let rowHeight: CGFloat = 24
-        let height = max(250, CGFloat(max(valuesStack.arrangedSubviews.count, 1)) * rowHeight + 8)
-        let width = max(292, view.bounds.width - 28)
-        valueListContainer.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        valuesStack.frame = valueListContainer.bounds.insetBy(dx: 0, dy: 4)
-        valuesStack.needsLayout = true
-        valuesStack.layoutSubtreeIfNeeded()
+    private func updateCheckboxState(_ button: ValueCheckbox) {
+        button.state = button.value.isEmpty
+            ? (includeBlanks ? .on : .off)
+            : (selectedValues.contains(button.value) ? .on : .off)
+    }
+
+    private func refreshAvailableCheckboxes() {
+        valuesTable.enumerateAvailableRowViews { rowView, _ in
+            if let button = rowView.view(atColumn: 0) as? ValueCheckbox {
+                self.updateCheckboxState(button)
+            }
+        }
     }
 
     @objc private func valueCheckboxChanged(_ sender: NSButton) {
@@ -226,15 +229,15 @@ final class ColumnFilterPopoverController: NSViewController {
     }
 
     @objc private func selectAllValues(_ sender: Any?) {
-        selectedValues = Set(values.map(\.value).filter { !$0.isEmpty })
+        selectedValues = Set(values.lazy.map(\.value).filter { !$0.isEmpty })
         includeBlanks = values.contains { $0.value.isEmpty }
-        rebuildValueList()
+        refreshAvailableCheckboxes()
     }
 
     @objc private func clearValues(_ sender: Any?) {
         selectedValues.removeAll()
         includeBlanks = false
-        rebuildValueList()
+        refreshAvailableCheckboxes()
     }
 
     @objc private func apply(_ sender: Any?) {
@@ -270,18 +273,64 @@ final class ColumnFilterPopoverController: NSViewController {
     }
 }
 
+extension ColumnFilterPopoverController: NSTableViewDataSource, NSTableViewDelegate {
+    nonisolated func numberOfRows(in tableView: NSTableView) -> Int {
+        MainActor.assumeIsolated {
+            filteredValueIndexes?.count ?? values.count
+        }
+    }
+
+    nonisolated func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        false
+    }
+
+    nonisolated func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        MainActor.assumeIsolated {
+            let item = values[filteredValueIndexes?[row] ?? row]
+            let identifier = NSUserInterfaceItemIdentifier("valueCheckbox")
+            let button: ValueCheckbox
+            if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? ValueCheckbox {
+                button = reused
+            } else {
+                button = ValueCheckbox(checkboxWithTitle: "", target: self, action: #selector(valueCheckboxChanged(_:)))
+                button.identifier = identifier
+                button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                button.cell?.lineBreakMode = .byTruncatingTail
+                #if DEBUG
+                constructedValueCheckboxCountForTesting += 1
+                #endif
+            }
+            button.value = item.value
+            button.title = item.value.isEmpty
+                ? L.t("(Blank) \(item.count.formatted())", "(빈 값) \(item.count.formatted())")
+                : "\(item.value) (\(item.count.formatted()))"
+            updateCheckboxState(button)
+            return button
+        }
+    }
+}
+
 private final class ValueCheckbox: NSButton {
     var value = ""
 }
 
 #if DEBUG
 extension ColumnFilterPopoverController {
-    var valueCheckboxTitlesForTesting: [String] {
-        valuesStack.arrangedSubviews.compactMap { ($0 as? ValueCheckbox)?.title }
+    var valueTableForTesting: NSTableView {
+        valuesTable
     }
 
-    var valueListContentHeightForTesting: CGFloat {
-        valueListContainer.frame.height
+    func searchValuesForTesting(_ query: String) {
+        searchField.stringValue = query
+        searchChanged(nil)
+    }
+
+    func selectAllValuesForTesting() {
+        selectAllValues(nil)
+    }
+
+    func clearValuesForTesting() {
+        clearValues(nil)
     }
 
     var startDateEnabledForTesting: Bool {

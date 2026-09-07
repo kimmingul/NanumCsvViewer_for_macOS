@@ -4,6 +4,46 @@
 
 No unreleased changes.
 
+## v1.10.2 - 2026-09-08
+
+### Fixes
+
+- High-cardinality header filters now use reusable table rows, preserving search,
+  selection, and blank handling without allocating a checkbox per category.
+  Large selection tokens show a count rather than sorting and laying out every
+  selected value. Lists above 100,000 distinct values report an actionable
+  text/expression-filter alternative.
+- Pivot aggregation now streams into per-cell accumulators instead of retaining
+  projected source rows and another copy of every cell's raw values. Dense
+  result dimensions are checked during the scan: 100,000 rows, 256 columns,
+  and 1,000,000 cells maximum. Multi-measure previews include headers/totals in
+  their combined million-cell budget and support at most 20 measures.
+- Pivot filter options load off the main thread, with cancellation and stale
+  completion checks. Menus above 1,000 distinct values offer exact-value entry;
+  options are no longer silently sampled from the first 50,000 rows.
+- Preview formatting runs in the background; table sorting/filtering is cached
+  rather than repeated for every rendered cell. Charts exceeding 200 categories,
+  20 series, or 2,000 points explain the limit without expanding a huge chart.
+- Added regressions for sparse-to-dense expansion, resource boundaries, all
+  aggregation functions, null filters, late categories, selection preservation,
+  stale asynchronous work, and refusal/recovery through the native pivot UI.
+
+### Validation
+
+- `swift test`: 511 tests passing.
+- A 300,000-row / 100,000-category core smoke run completed exact distinct
+  counting, a 100,000-row pivot, oversized-result refusal, and filtered recovery
+  in 3.13 seconds with approximately 107 MiB maximum resident memory.
+- Native app verification covered the last-category checkbox search/selection,
+  oversized pivot rejection, exact-value filter recovery, a 100,000-row pivot
+  table, and the large-chart safety message.
+
+### Version
+
+- Bundle version: `1.10.2`
+- Bundle build: `204`
+- Minimum macOS: `14.0`
+
 ## v1.10.1 - 2026-08-23
 
 A bug-fix release. First update since 1.10.0 reached the Mac App Store.

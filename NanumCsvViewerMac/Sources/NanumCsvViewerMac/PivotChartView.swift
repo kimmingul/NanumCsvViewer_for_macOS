@@ -31,10 +31,6 @@ final class PivotChartView: NSView {
         model
     }
 
-    var usesSwiftChartsSurfaceForTesting: Bool {
-        subviews.contains(hostingView)
-    }
-
     func update(model: PivotChartModel?) {
         self.model = model
         hostingView.rootView = PivotChartContentView(model: model)

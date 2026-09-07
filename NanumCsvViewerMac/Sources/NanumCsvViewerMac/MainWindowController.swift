@@ -4667,7 +4667,8 @@ extension MainWindowController {
     func columnFilterDescriptions() -> [String] {
         columnFilterState.descriptions(
             columnNames: columnNames,
-            blankLabel: L.t("(Blank)", "(빈 값)")
+            blankLabel: L.t("(Blank)", "(빈 값)"),
+            selectedValuesLabel: L.t("selected values", "선택한 값")
         )
     }
 
@@ -4834,7 +4835,7 @@ extension MainWindowController {
                         guard let self, self.columnFilterValuesCancellation === cancellation else { return }
                         self.updateProgress(pct)
                     }
-                }, cancellation: cancellation)
+                }, maximumDistinctValues: 100_000, cancellation: cancellation)
                 DispatchQueue.main.async {
                     self?.finishColumnFilterValuesLoad(
                         cancellation: cancellation,
@@ -4890,7 +4891,16 @@ extension MainWindowController {
 
     private func failColumnFilterValuesLoad(cancellation: CancellationFlag, error: Error) {
         guard clearCurrentColumnFilterValuesLoad(cancellation: cancellation) else { return }
-        presentError(error)
+        if let resourceError = error as? CsvResourceLimitError,
+           case .distinctValues(let maximum) = resourceError {
+            let message = L.t(
+                "This column has more than \(maximum.formatted()) distinct values, so a checkbox filter cannot be opened. Use text search or an expression in the filter bar instead; these filters do not require listing every value.",
+                "이 열에는 고유값이 \(maximum.formatted())개보다 많아 체크박스 필터를 열 수 없습니다. 대신 필터 바에서 텍스트 검색이나 표현식을 사용하세요. 이 필터는 모든 값을 나열할 필요가 없습니다."
+            )
+            presentError(NSError(domain: "NanumCsvViewerMac.ColumnFilter", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
+        } else {
+            presentError(error)
+        }
     }
 
     private func clearCurrentColumnFilterValuesLoad(cancellation: CancellationFlag) -> Bool {

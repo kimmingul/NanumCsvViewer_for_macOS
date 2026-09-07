@@ -12,7 +12,7 @@ Requires macOS 14 or later. Both the DMG and the ZIP are Developer ID signed wit
 Each release lists the SHA-256 of its artifacts; verify a download with:
 
 ```bash
-shasum -a 256 Nanum-CSV-Viewer-v1.10.1.dmg
+shasum -a 256 Nanum-CSV-Viewer-v1.10.2.dmg
 ```
 
 Every version is listed on the [releases page](https://github.com/kimmingul/NanumCsvViewer_for_macOS/releases), and [RELEASE_NOTES.md](RELEASE_NOTES.md) carries the full changelog.
@@ -53,6 +53,14 @@ Every version is listed on the [releases page](https://github.com/kimmingul/Nanu
 - SQLite .db/.sqlite/.sqlite3 read-only import with a table/view picker through the same temp-CSV bridge
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
+
+### High-cardinality filters and pivots
+
+- Header checkbox filters reuse visible table rows rather than creating a control for every category. Search covers all loaded values and preserves selections hidden by the search. Above **100,000 distinct values**, use the filter bar's text/expression filter or **Filter by Cell** instead; the app reports the limit rather than returning an incomplete category list.
+- Pivot filter menus load in the background from the full current view. Above **1,000 distinct values**, use **Exact value…** to select any category without opening a huge menu. Date filters accept the grouped label; empty input selects the pivot's existing `null` group, including blanks and missing-value tokens. **All** removes the filter.
+- Pivot aggregation streams rows within the configured analysis-row limit. Count, sum, mean, min, max, and standard deviation do not retain every source value; median retains numeric values and unique count retains distinct values as required for exact aggregation.
+- Pivots reject results exceeding **100,000 row keys**, **256 column keys**, or **1,000,000 row × column cells**, even when most intersections are empty. Combined previews also allow at most **20 measures** and **1,000,000 displayed cells including headers/totals**. Filter the source view, group dates more broadly, or move a high-cardinality column field to Rows. These guards report an error without silently truncating a result.
+- Pivot charts allow **200 categories**, **20 series**, and **2,000 points**. Larger charts show guidance while the successfully calculated table and its copy/export actions remain available.
 
 ## Project Structure
 
