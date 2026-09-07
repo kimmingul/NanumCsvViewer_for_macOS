@@ -61,6 +61,7 @@ private struct PivotChartContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.locale, L.locale)
     }
 
     private func chartContent(_ model: PivotChartModel) -> some View {
@@ -218,8 +219,8 @@ private struct PivotChartTooltip: View {
 
     private func format(_ value: Double) -> String {
         if value.rounded(.towardZero) == value {
-            return String(format: "%.0f", value)
+            return String(format: "%.0f", locale: L.locale, value)
         }
-        return String(format: "%.3f", value)
+        return String(format: "%.3f", locale: L.locale, value)
     }
 }

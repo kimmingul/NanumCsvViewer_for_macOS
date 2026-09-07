@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer는 macOS에서 빠르게 사용할 수 있는 로컬 CSV 뷰어입니다.\n\nCSV와 텍스트 파일을 열어 행을 바로 살펴보세요. 대용량 파일의 인덱스가 백그라운드에서 생성되는 동안에도 작업을 계속할 수 있습니다. 스프레드시트로 먼저 가져오지 않고 표 형식의 데이터를 확인해야 하는 분들을 위한 앱입니다.\n\n주요 기능:\n• 행 가상화 표시로 빠르게 CSV 열기\n• UTF-8, UTF-8 BOM 및 한국어 CP949/EUC-KR 인코딩 감지\n• 텍스트, 숫자, 날짜, 범주형 필드를 구분하는 열 유형 배지\n• 검색, 필터, 정렬 및 선택한 값 확인\n• 열 통계 및 데이터 품질 검사\n• 날짜 히스토그램, 수치 분포, 중복 검사, 그룹화, 상관관계, t 검정 및 카이제곱 검정\n• 행, 열, 필터, 여러 측정값 및 날짜 그룹화를 지원하는 Excel 스타일 피벗 작성 도구\n• 막대, 묶은 막대, 누적 막대 및 꺾은선 피벗 차트\n• 현재 보기나 분석 결과를 CSV, TSV, JSON, Markdown 또는 HTML로 내보내기\n• 대용량 파일을 더 빠르게 다시 열기 위한 로컬 인덱스 캐시 관리\n\nNanum CSV Viewer는 Mac에서 로컬로 작동합니다. 계정이 필요하지 않으며, CSV 파일을 업로드하거나 사용 분석 데이터를 수집하지 않습니다.",
+  "locale": "ko",
+  "keywords": "csv,뷰어,스프레드시트,피벗,차트,표,필터,정렬,분석,utf-8,cp949,내보내기,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "이제 16개 언어를 지원하며 앱 내 설정에서 언어를 선택할 수 있습니다. 고유값이 많은 열의 필터링 및 피벗 작업 안정성을 개선했습니다. 범주 목록 검색, 스트리밍 방식의 피벗 계산, 결과가 너무 클 때의 명확한 안내를 제공합니다.",
+  "subtitle": "CSV 뷰어와 피벗 테이블",
+  "name": "Nanum CSV Viewer"
+}

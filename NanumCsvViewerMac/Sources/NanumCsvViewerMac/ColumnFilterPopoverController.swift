@@ -302,8 +302,8 @@ extension ColumnFilterPopoverController: NSTableViewDataSource, NSTableViewDeleg
             }
             button.value = item.value
             button.title = item.value.isEmpty
-                ? L.t("(Blank) \(item.count.formatted())", "(빈 값) \(item.count.formatted())")
-                : "\(item.value) (\(item.count.formatted()))"
+                ? L.t("(Blank) \(item.count.formatted(.number.locale(L.locale)))", "(빈 값) \(item.count.formatted(.number.locale(L.locale)))")
+                : "\(item.value) (\(item.count.formatted(.number.locale(L.locale))))"
             updateCheckboxState(button)
             return button
         }

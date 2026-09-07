@@ -88,7 +88,7 @@ final class ChartWindowController: NSWindowController, NSWindowDelegate {
         window.minSize = NSSize(width: 480, height: 340)
         super.init(window: window)
         window.delegate = self
-        window.contentView = NSHostingView(rootView: StatChartContentView(model: model))
+        window.contentView = NSHostingView(rootView: StatChartContentView(model: model).environment(\.locale, L.locale))
         window.center()
     }
 
@@ -156,7 +156,7 @@ struct StatChartContentView: View {
             return "\(model.kind.title) — \(columnName)"
         case .timeseries(let histogram, let dateName, let valueName):
             let value = valueName.map { " × \($0)" } ?? ""
-            return "\(model.kind.title) — \(dateName)\(value) (\(histogram.period.rawValue))"
+            return "\(model.kind.title) — \(dateName)\(value) (\(histogram.period.localizedTitle))"
         case .pareto(_, let columnName):
             return "\(model.kind.title) — \(columnName)"
         }
@@ -179,7 +179,7 @@ struct StatChartContentView: View {
         case .qqPlot, .correlationHeatmap, .timeseries:
             return nil
         case .pareto(let data, _):
-            return L.t("n=\(data.totalCount.formatted())", "n=\(data.totalCount.formatted())")
+            return L.t("n=\(data.totalCount.formatted(.number.locale(L.locale)))", "n=\(data.totalCount.formatted(.number.locale(L.locale)))")
         }
     }
 
@@ -308,13 +308,13 @@ struct StatChartContentView: View {
                 LineMark(
                     x: .value(xName, domain.lowerBound),
                     y: .value(yName, fit.intercept + fit.slope * domain.lowerBound),
-                    series: .value("fit", "fit")
+                    series: .value(L.t("Regression fit", "회귀 적합선"), "fit")
                 )
                 .foregroundStyle(.orange)
                 LineMark(
                     x: .value(xName, domain.upperBound),
                     y: .value(yName, fit.intercept + fit.slope * domain.upperBound),
-                    series: .value("fit", "fit")
+                    series: .value(L.t("Regression fit", "회귀 적합선"), "fit")
                 )
                 .foregroundStyle(.orange)
             }
@@ -346,7 +346,7 @@ struct StatChartContentView: View {
                         .annotation(position: .overlay) {
                             // Cells fade to white near r=0, so the label must
                             // stay dark regardless of the app appearance.
-                            Text(String(format: "%.2f", value))
+                            Text(String(format: "%.2f", locale: L.locale, value))
                                 .font(.system(size: 9).monospacedDigit())
                                 .foregroundStyle(abs(value) > 0.6 ? Color.white : Color.black)
                         }
@@ -370,15 +370,15 @@ struct StatChartContentView: View {
             }
             if let line, let first = points.first, let last = points.last {
                 LineMark(
-                    x: .value("t", first.theoretical),
-                    y: .value("s", line.intercept + line.slope * first.theoretical),
-                    series: .value("ref", "ref")
+                    x: .value(L.t("Theoretical quantile", "이론 분위수"), first.theoretical),
+                    y: .value(L.t("Sample quantile", "표본 분위수"), line.intercept + line.slope * first.theoretical),
+                    series: .value(L.t("Reference line", "기준선"), "ref")
                 )
                 .foregroundStyle(.orange)
                 LineMark(
-                    x: .value("t", last.theoretical),
-                    y: .value("s", line.intercept + line.slope * last.theoretical),
-                    series: .value("ref", "ref")
+                    x: .value(L.t("Theoretical quantile", "이론 분위수"), last.theoretical),
+                    y: .value(L.t("Sample quantile", "표본 분위수"), line.intercept + line.slope * last.theoretical),
+                    series: .value(L.t("Reference line", "기준선"), "ref")
                 )
                 .foregroundStyle(.orange)
             }
@@ -428,16 +428,16 @@ struct StatChartContentView: View {
             ForEach(Array(data.entries.enumerated()), id: \.offset) { _, entry in
                 LineMark(
                     x: .value(L.t("Category", "범주"), entry.label),
-                    y: .value("cum", entry.cumulativePercent / 100 * maxCount)
+                    y: .value(L.t("Cumulative %", "누적 %"), entry.cumulativePercent / 100 * maxCount)
                 )
                 .foregroundStyle(.orange)
                 PointMark(
                     x: .value(L.t("Category", "범주"), entry.label),
-                    y: .value("cum", entry.cumulativePercent / 100 * maxCount)
+                    y: .value(L.t("Cumulative %", "누적 %"), entry.cumulativePercent / 100 * maxCount)
                 )
                 .foregroundStyle(.orange)
                 .annotation(position: .top) {
-                    Text(String(format: "%.0f%%", entry.cumulativePercent))
+                    Text(String(format: "%.0f%%", locale: L.locale, entry.cumulativePercent))
                         .font(.system(size: 9).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -470,9 +470,9 @@ struct StatChartContentView: View {
     static func compact(_ value: Double) -> String {
         if !value.isFinite { return "—" }
         if abs(value) >= 1000 || (abs(value) < 0.001 && value != 0) {
-            return String(format: "%.2e", value)
+            return String(format: "%.2e", locale: L.locale, value)
         }
-        return String(format: "%.3g", value)
+        return String(format: "%.3g", locale: L.locale, value)
     }
 }
 

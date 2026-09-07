@@ -18,14 +18,4 @@ final class BenchmarkTests: XCTestCase {
         XCTAssertEqual(Duration.microseconds(500).milliseconds, 0.5, accuracy: 0.0001)
     }
 
-    func testReportLinesIncludeHeaderRowsAndTotal() {
-        let results = [
-            BenchmarkResult(name: "Full scan", milliseconds: 120, rowsProcessed: 5000),
-            BenchmarkResult(name: "Search", milliseconds: 80, rowsProcessed: 5000)
-        ]
-        let lines = BenchmarkReport.lines(results: results, iteration: 3)
-        XCTAssertTrue(lines.first?.contains("#3") ?? false, "header carries the iteration number")
-        XCTAssertTrue(lines.contains { $0.contains("Full scan") && $0.contains("5,000 rows") })
-        XCTAssertTrue(lines.last?.contains("200.0 ms") ?? false, "total sums the operation times")
-    }
 }

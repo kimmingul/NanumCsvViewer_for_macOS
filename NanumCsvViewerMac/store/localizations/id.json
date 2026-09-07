@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer adalah penampil CSV yang cepat dan berjalan secara lokal di macOS.\n\nBuka file CSV dan teks, langsung periksa baris data, dan terus bekerja saat file besar diindeks di latar belakang. Aplikasi ini dirancang bagi Anda yang perlu meninjau data berbentuk tabel tanpa harus mengimpornya ke lembar kerja terlebih dahulu.\n\nFitur utama:\n• Pembukaan CSV yang cepat dengan tampilan baris tervirtualisasi\n• Deteksi UTF-8, UTF-8 BOM, dan pengodean bahasa Korea CP949/EUC-KR\n• Label tipe kolom untuk teks, angka, tanggal, dan data kategorikal\n• Cari, filter, urutkan, dan periksa nilai yang dipilih\n• Statistik kolom dan pemeriksaan kualitas data\n• Histogram tanggal, distribusi numerik, pemeriksaan duplikat, pengelompokan, korelasi, uji t, dan uji chi-kuadrat\n• Pembuat tabel pivot bergaya Excel dengan baris, kolom, filter, beberapa ukuran, dan pengelompokan tanggal\n• Grafik pivot berupa batang, batang berkelompok, batang bertumpuk, dan garis\n• Ekspor tampilan saat ini atau hasil analisis sebagai CSV, TSV, JSON, Markdown, atau HTML\n• Pengelolaan cache indeks lokal untuk membuka kembali file besar dengan lebih cepat\n\nNanum CSV Viewer berjalan secara lokal di Mac Anda. Aplikasi ini tidak memerlukan akun, tidak mengunggah file CSV Anda, dan tidak mengumpulkan data analitik penggunaan.",
+  "locale": "id",
+  "keywords": "csv,penampil,lembar kerja,pivot,grafik,tabel,filter,urutkan,analisis,utf-8,cp949,ekspor,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Kini tersedia dalam 16 bahasa, dengan pengaturan pilihan bahasa di dalam aplikasi. Stabilitas ditingkatkan saat memfilter dan membuat pivot dari kolom dengan banyak nilai berbeda. Daftar kategori kini dapat dicari, perhitungan pivot menggunakan pemrosesan aliran data, dan panduan yang jelas diberikan jika hasil terlalu besar.",
+  "subtitle": "Penampil CSV dan Tabel Pivot",
+  "name": "Nanum CSV Viewer"
+}

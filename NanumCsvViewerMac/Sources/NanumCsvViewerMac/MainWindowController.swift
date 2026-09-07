@@ -48,6 +48,10 @@ private extension NSView {
 
 @MainActor
 final class MainWindowController: NSWindowController {
+    override func willPresentError(_ error: Error) -> Error {
+        LocalizedPresentation.error(error)
+    }
+
     private static let persistentIndexDefaultsKey = "NanumCsvViewerMac.PersistentIndexEnabled"
     private static let deleteIndexCacheOnCloseDefaultsKey = "NanumCsvViewerMac.DeleteIndexCacheOnClose"
     private static let hiddenColumnsDefaultsKey = "NanumCsvViewerMac.HiddenColumnIndexes"
@@ -1644,7 +1648,7 @@ extension MainWindowController {
                 switch result {
                 case .success(let importResult):
                     let metadata = importResult.metadataURL.flatMap { try? self.loadImportMetadata(from: $0) }
-                    let warning = importResult.warnings.first?.message ?? L.t(
+                    let warning = importResult.warnings.first.map { LocalizedPresentation.importWarning(code: $0.code, message: $0.message) } ?? L.t(
                         "SAS import is best-effort; verify critical data against SAS.",
                         "SAS 가져오기는 best-effort입니다. 중요한 데이터는 SAS에서 확인하세요."
                     )
@@ -2122,8 +2126,8 @@ extension MainWindowController {
         updateStatusMetrics()
         let rows = csvDocument?.dataRowsAvailable ?? max(0, Int(progress.rowsSoFar - 2))
         statusLabel.stringValue = L.t(
-            "Loading \(rows.formatted()) rows  \(formatBytes(progress.bytesProcessed)) / \(formatBytes(progress.fileLength))",
-            "\(rows.formatted())행 로딩 중  \(formatBytes(progress.bytesProcessed)) / \(formatBytes(progress.fileLength))"
+            "Loading \(rows.formatted(.number.locale(L.locale))) rows  \(formatBytes(progress.bytesProcessed)) / \(formatBytes(progress.fileLength))",
+            "\(rows.formatted(.number.locale(L.locale)))행 로딩 중  \(formatBytes(progress.bytesProcessed)) / \(formatBytes(progress.fileLength))"
         )
     }
 
@@ -2136,7 +2140,7 @@ extension MainWindowController {
         refreshRowCount()
         updateFeatureState()
         if let warning = doc.unterminatedQuoteWarning {
-            statusLabel.stringValue = "⚠︎ " + warning
+            statusLabel.stringValue = "⚠︎ " + LocalizedPresentation.quoteWarning(warning)
         } else {
             statusLabel.stringValue = ""
         }
@@ -2249,8 +2253,8 @@ extension MainWindowController {
                     self?.currentDataColumn = match.column
                     self?.updateSelectedValue()
                     self?.statusLabel.stringValue = L.t(
-                        "Found \"\(term)\" at source row \(match.sourceRowNumber.formatted()).",
-                        "\"\(term)\" 검색 결과: 원본 \(match.sourceRowNumber.formatted())행"
+                        "Found \"\(term)\" at source row \(match.sourceRowNumber.formatted(.number.locale(L.locale))).",
+                        "\"\(term)\" 검색 결과: 원본 \(match.sourceRowNumber.formatted(.number.locale(L.locale)))행"
                     )
                 } else {
                     self?.statusLabel.stringValue = L.t("No match for \"\(term)\".", "\"\(term)\" 검색 결과가 없습니다.")
@@ -2530,7 +2534,7 @@ extension MainWindowController {
     }
 
     private func columnTypeText(_ index: Int) -> String? {
-        columnStatisticsReport?.columns[safe: index]?.inferredType.rawValue
+        columnStatisticsReport?.columns[safe: index]?.inferredType.localizedTitle
     }
 
     private func isColumnFilterAvailable(column: Int) -> Bool {
@@ -2549,10 +2553,9 @@ extension MainWindowController {
             lines.append(L.t("Type: \(typeText)", "타입: \(typeText)"))
         }
         if let sortKey {
-            lines.append(L.t(
-                "Sorted \(sortKey.ascending ? "ascending" : "descending")\(priority.map { ", priority \($0)" } ?? "")",
-                "\(sortKey.ascending ? "오름차순" : "내림차순") 정렬\(priority.map { ", \($0)순위" } ?? "")"
-            ))
+            let direction = sortKey.ascending ? L.t("ascending", "오름차순") : L.t("descending", "내림차순")
+            let priorityDescription = priority.map { L.t(", priority \($0)", ", \($0)순위") } ?? ""
+            lines.append(L.t("Sorted \(direction)\(priorityDescription)", "\(direction) 정렬\(priorityDescription)"))
         }
         return lines.count > 1 ? lines.joined(separator: "\n") : nil
     }
@@ -2657,8 +2660,8 @@ extension MainWindowController {
                     )
                     let note = report.isRowCapped
                         ? L.t(
-                            "Showing first \(report.scannedRowCount.formatted()) rows",
-                            "처음 \(report.scannedRowCount.formatted())행 기준"
+                            "Showing first \(report.scannedRowCount.formatted(.number.locale(L.locale))) rows",
+                            "처음 \(report.scannedRowCount.formatted(.number.locale(L.locale)))행 기준"
                         )
                         : nil
                     self.facetsPanel.render(sections: sections, note: note)
@@ -2718,7 +2721,7 @@ extension MainWindowController {
                 }
                 var footnotes: [String] = []
                 if otherCount > 0 {
-                    footnotes.append(L.t("+\(otherCount.formatted()) in other values", "기타 값 \(otherCount.formatted())개"))
+                    footnotes.append(L.t("+\(otherCount.formatted(.number.locale(L.locale))) in other values", "기타 값 \(otherCount.formatted(.number.locale(L.locale)))개"))
                 }
                 if distinctTruncated {
                     footnotes.append(L.t("approximate", "근사치"))
@@ -2755,7 +2758,7 @@ extension MainWindowController {
                     )
                 }
                 let footnote = nonNumericCount > 0
-                    ? L.t("\(nonNumericCount.formatted()) non-numeric", "숫자 아님 \(nonNumericCount.formatted())개")
+                    ? L.t("\(nonNumericCount.formatted(.number.locale(L.locale))) non-numeric", "숫자 아님 \(nonNumericCount.formatted(.number.locale(L.locale)))개")
                     : nil
                 return FacetPanelSection(
                     column: summary.column,
@@ -2830,12 +2833,12 @@ extension MainWindowController {
         }
         guard let displayRow = doc.displayIndexForSourceRowNumber(rowNumber) else {
             let suffix = doc.indexingComplete ? "" : L.t(" Indexing is still in progress.", " 아직 인덱싱 중입니다.")
-            statusLabel.stringValue = L.t("Row \(rowNumber.formatted()) is not currently visible.\(suffix)", "\(rowNumber.formatted())행은 현재 표시되지 않습니다.\(suffix)")
+            statusLabel.stringValue = L.t("Row \(rowNumber.formatted(.number.locale(L.locale))) is not currently visible.\(suffix)", "\(rowNumber.formatted(.number.locale(L.locale)))행은 현재 표시되지 않습니다.\(suffix)")
             return
         }
         tableView.selectRowIndexes(IndexSet(integer: displayRow), byExtendingSelection: false)
         tableView.scrollRowToVisible(displayRow)
-        statusLabel.stringValue = L.t("Moved to row \(rowNumber.formatted()).", "\(rowNumber.formatted())행으로 이동했습니다.")
+        statusLabel.stringValue = L.t("Moved to row \(rowNumber.formatted(.number.locale(L.locale))).", "\(rowNumber.formatted(.number.locale(L.locale)))행으로 이동했습니다.")
     }
 
     @objc func showColumnStatistics(_ sender: Any?) {
@@ -3086,15 +3089,15 @@ extension MainWindowController {
             let periodPopup = NSPopUpButton()
             periodPopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
             for item in DateBinPeriod.allCases {
-                periodPopup.addItem(withTitle: item.rawValue)
+                periodPopup.addItem(withTitle: item.localizedTitle)
                 periodPopup.lastItem?.representedObject = item.rawValue
             }
-            periodPopup.selectItem(withTitle: period.rawValue)
+            periodPopup.selectItem(at: DateBinPeriod.allCases.firstIndex(of: period) ?? 0)
             addAnalysisPromptRow(to: stack, label: L.t("Date column", "날짜 컬럼"), control: datePopup)
             addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
             addAnalysisPromptRow(to: stack, label: L.t("Period", "단위"), control: periodPopup)
             buildRequest = {
-                let period = DateBinPeriod(rawValue: periodPopup.titleOfSelectedItem ?? DateBinPeriod.month.rawValue) ?? .month
+                let period = DateBinPeriod(rawValue: periodPopup.selectedItem?.representedObject as? String ?? DateBinPeriod.month.rawValue) ?? .month
                 return .dateHistogram(dateColumn: self.selectedColumn(in: datePopup) ?? dateColumn, valueColumn: self.selectedColumn(in: valuePopup), period: period)
             }
         case .duplicateRows(let columns):
@@ -3399,14 +3402,15 @@ extension MainWindowController {
             let periodPopup = NSPopUpButton()
             periodPopup.widthAnchor.constraint(equalToConstant: Self.analysisPromptPopupWidth).isActive = true
             for item in DateBinPeriod.allCases {
-                periodPopup.addItem(withTitle: item.rawValue)
+                periodPopup.addItem(withTitle: item.localizedTitle)
+                periodPopup.lastItem?.representedObject = item.rawValue
             }
-            periodPopup.selectItem(withTitle: period.rawValue)
+            periodPopup.selectItem(at: DateBinPeriod.allCases.firstIndex(of: period) ?? 0)
             addAnalysisPromptRow(to: stack, label: L.t("Date column", "날짜 컬럼"), control: datePopup)
             addAnalysisPromptRow(to: stack, label: L.t("Value column", "값 컬럼"), control: valuePopup)
             addAnalysisPromptRow(to: stack, label: L.t("Period", "단위"), control: periodPopup)
             buildRequest = {
-                let period = DateBinPeriod(rawValue: periodPopup.titleOfSelectedItem ?? DateBinPeriod.month.rawValue) ?? .month
+                let period = DateBinPeriod(rawValue: periodPopup.selectedItem?.representedObject as? String ?? DateBinPeriod.month.rawValue) ?? .month
                 return .timeseries(
                     dateColumn: self.selectedColumn(in: datePopup) ?? dateColumn,
                     valueColumn: self.selectedColumn(in: valuePopup),
@@ -3443,8 +3447,8 @@ extension MainWindowController {
         let documentName = (currentFilePath as NSString?)?.lastPathComponent ?? "CSV"
         let scopeNote = doc.analysisRowsTruncated
             ? L.t(
-                "Showing first \(VirtualCsvDocument.analysisRowLimit.formatted()) rows",
-                "처음 \(VirtualCsvDocument.analysisRowLimit.formatted())행 기준"
+                "Showing first \(VirtualCsvDocument.analysisRowLimit.formatted(.number.locale(L.locale))) rows",
+                "처음 \(VirtualCsvDocument.analysisRowLimit.formatted(.number.locale(L.locale)))행 기준"
             )
             : nil
         setBusy(true, message: L.t("Preparing chart...", "차트 준비 중..."))
@@ -3702,7 +3706,7 @@ extension MainWindowController {
             indexes = preferred.isEmpty ? Array(columnNames.indices) : preferred
         }
         return indexes.map { index in
-            let type = columnStatisticsReport?.columns[safe: index]?.inferredType.rawValue
+            let type = columnStatisticsReport?.columns[safe: index]?.inferredType.localizedTitle
             let suffix = type.map { " [\($0)]" } ?? ""
             return (index, "\(columnNames[safe: index] ?? L.t("Column \(index + 1)", "\(index + 1)열"))\(suffix)")
         }
@@ -4100,7 +4104,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
             }
 
             if identifier.rawValue == "rowNumber" {
-                cell.textField?.stringValue = doc.getSourceRowNumber(row).formatted()
+                cell.textField?.stringValue = doc.getSourceRowNumber(row).formatted(.number.locale(L.locale))
                 cell.textField?.alignment = .right
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: currentGridFontSize.gutterPointSize, weight: .regular)
                 cell.textField?.textColor = .secondaryLabelColor
@@ -4210,7 +4214,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         let typeMenu = NSMenu()
         typeMenu.autoenablesItems = false
         for type in [ColumnValueType.integer, .float, .date, .boolean, .categorical, .string] {
-            let item = NSMenuItem(title: type.rawValue, action: #selector(changeColumnType(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: type.localizedTitle, action: #selector(changeColumnType(_:)), keyEquivalent: "")
             item.target = self
             item.tag = column
             item.representedObject = type.rawValue
@@ -4245,8 +4249,8 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
         switch ColumnTypeConversion.classify(from: current, to: target) {
         case .block:
             statusLabel.stringValue = L.t(
-                "Cannot convert \(current.rawValue) to \(target.rawValue) without data loss.",
-                "\(current.rawValue) 타입은 데이터 손실 없이 \(target.rawValue)(으)로 바꿀 수 없습니다."
+                "Cannot convert \(current.localizedTitle) to \(target.localizedTitle) without data loss.",
+                "\(current.localizedTitle) 타입은 데이터 손실 없이 \(target.localizedTitle)(으)로 바꿀 수 없습니다."
             )
         case .allow:
             setColumnTypeOverride(column: column, type: target)
@@ -4275,7 +4279,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
                     return
                 }
                 let alert = NSAlert()
-                alert.messageText = L.t("Some values do not match \(target.rawValue)", "일부 값이 \(target.rawValue) 타입과 맞지 않습니다")
+                alert.messageText = L.t("Some values do not match \(target.localizedTitle)", "일부 값이 \(target.localizedTitle) 타입과 맞지 않습니다")
                 alert.informativeText = L.t(
                     "Examples: \(validation.failures.joined(separator: ", ")). Apply anyway?",
                     "예시: \(validation.failures.joined(separator: ", ")). 그래도 적용할까요?"
@@ -4498,7 +4502,7 @@ extension MainWindowController {
             let value = column < fields.count ? fields[column] : ""
             selectedValueTextView.string = value
             let name = columnNames[safe: column] ?? ""
-            selectedAddressLabel.stringValue = "\(doc.getSourceRowNumber(primary.row).formatted()) · \(name)"
+            selectedAddressLabel.stringValue = "\(doc.getSourceRowNumber(primary.row).formatted(.number.locale(L.locale))) · \(name)"
         } catch {
             selectedValueTextView.string = ""
         }
@@ -4665,11 +4669,7 @@ extension MainWindowController {
     }
 
     func columnFilterDescriptions() -> [String] {
-        columnFilterState.descriptions(
-            columnNames: columnNames,
-            blankLabel: L.t("(Blank)", "(빈 값)"),
-            selectedValuesLabel: L.t("selected values", "선택한 값")
-        )
+        LocalizedPresentation.filterDescriptions(columnFilterState, columnNames: columnNames)
     }
 
     func refreshFilterTokens() {
@@ -4894,8 +4894,8 @@ extension MainWindowController {
         if let resourceError = error as? CsvResourceLimitError,
            case .distinctValues(let maximum) = resourceError {
             let message = L.t(
-                "This column has more than \(maximum.formatted()) distinct values, so a checkbox filter cannot be opened. Use text search or an expression in the filter bar instead; these filters do not require listing every value.",
-                "이 열에는 고유값이 \(maximum.formatted())개보다 많아 체크박스 필터를 열 수 없습니다. 대신 필터 바에서 텍스트 검색이나 표현식을 사용하세요. 이 필터는 모든 값을 나열할 필요가 없습니다."
+                "This column has more than \(maximum.formatted(.number.locale(L.locale))) distinct values, so a checkbox filter cannot be opened. Use text search or an expression in the filter bar instead; these filters do not require listing every value.",
+                "이 열에는 고유값이 \(maximum.formatted(.number.locale(L.locale)))개보다 많아 체크박스 필터를 열 수 없습니다. 대신 필터 바에서 텍스트 검색이나 표현식을 사용하세요. 이 필터는 모든 값을 나열할 필요가 없습니다."
             )
             presentError(NSError(domain: "NanumCsvViewerMac.ColumnFilter", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
         } else {
@@ -5402,7 +5402,7 @@ extension MainWindowController {
         let row = tableView.selectedRow
         do {
             let fields = try doc.getDisplayRow(row)
-            detailHeaderLabel.stringValue = L.t("Source Row \(doc.getSourceRowNumber(row).formatted())", "원본 \(doc.getSourceRowNumber(row).formatted())행")
+            detailHeaderLabel.stringValue = L.t("Source Row \(doc.getSourceRowNumber(row).formatted(.number.locale(L.locale)))", "원본 \(doc.getSourceRowNumber(row).formatted(.number.locale(L.locale)))행")
             currentInspectorContentKind = .row(displayRow: row, sourceRow: doc.getSourceRowNumber(row))
             let text = NSMutableAttributedString()
             for index in 0..<doc.columnCount {
@@ -5502,28 +5502,28 @@ extension MainWindowController {
         var lines: [String] = [
             "\(summary.name)",
             "",
-            L.t("Type: \(summary.inferredType.rawValue)", "타입: \(summary.inferredType.rawValue)"),
-            L.t("Sampled rows: \(report.rowSampleCount.formatted())", "샘플 행: \(report.rowSampleCount.formatted())"),
-            L.t("Null: \(summary.nullCount.formatted())", "Null: \(summary.nullCount.formatted())"),
-            L.t("Non-null: \(summary.nonNullCount.formatted())", "Non-null: \(summary.nonNullCount.formatted())"),
-            L.t("Unique: \(summary.uniqueCount.formatted())", "고유값: \(summary.uniqueCount.formatted())")
+            L.t("Type: \(summary.inferredType.localizedTitle)", "타입: \(summary.inferredType.localizedTitle)"),
+            L.t("Sampled rows: \(report.rowSampleCount.formatted(.number.locale(L.locale)))", "샘플 행: \(report.rowSampleCount.formatted(.number.locale(L.locale)))"),
+            L.t("Null: \(summary.nullCount.formatted(.number.locale(L.locale)))", "Null: \(summary.nullCount.formatted(.number.locale(L.locale)))"),
+            L.t("Non-null: \(summary.nonNullCount.formatted(.number.locale(L.locale)))", "Non-null: \(summary.nonNullCount.formatted(.number.locale(L.locale)))"),
+            L.t("Unique: \(summary.uniqueCount.formatted(.number.locale(L.locale)))", "고유값: \(summary.uniqueCount.formatted(.number.locale(L.locale)))")
         ]
 
         if let numeric = summary.numeric {
             lines.append("")
             lines.append(L.t("Numeric", "숫자"))
-            lines.append("Min: \(formatNumber(numeric.min))")
-            lines.append("Max: \(formatNumber(numeric.max))")
-            lines.append("Mean: \(formatNumber(numeric.mean))")
-            lines.append("Median: \(formatNumber(numeric.median))")
-            lines.append("Std: \(formatNumber(numeric.standardDeviation))")
+            lines.append(L.t("Min: \(formatNumber(numeric.min))", "최솟값: \(formatNumber(numeric.min))"))
+            lines.append(L.t("Max: \(formatNumber(numeric.max))", "최댓값: \(formatNumber(numeric.max))"))
+            lines.append(L.t("Mean: \(formatNumber(numeric.mean))", "평균: \(formatNumber(numeric.mean))"))
+            lines.append(L.t("Median: \(formatNumber(numeric.median))", "중앙값: \(formatNumber(numeric.median))"))
+            lines.append(L.t("Std: \(formatNumber(numeric.standardDeviation))", "표준편차: \(formatNumber(numeric.standardDeviation))"))
         }
 
         if !summary.topValues.isEmpty {
             lines.append("")
             lines.append(L.t("Top values", "상위 값"))
             for value in summary.topValues.prefix(10) {
-                lines.append("\(value.value): \(value.count.formatted())")
+                lines.append("\(value.value): \(value.count.formatted(.number.locale(L.locale)))")
             }
         }
 
@@ -5570,157 +5570,6 @@ extension MainWindowController {
         columnStatisticsReport?.columns[safe: column]?.topValues.prefix(limit).map(\.value)
     }
 
-    func formatNumericDistribution(_ distribution: NumericDistribution) -> String {
-        let name = columnNames[safe: distribution.column] ?? L.t("Column \(distribution.column + 1)", "\(distribution.column + 1)열")
-        var lines = [
-            name,
-            "",
-            "Count: \(distribution.count.formatted())",
-            "Min: \(formatNumber(distribution.min))",
-            "Q1: \(formatNumber(distribution.q1))",
-            "Median: \(formatNumber(distribution.median))",
-            "Q3: \(formatNumber(distribution.q3))",
-            "Max: \(formatNumber(distribution.max))",
-            "Mean: \(formatNumber(distribution.mean))",
-            "Std: \(formatNumber(distribution.standardDeviation))",
-            "",
-            L.t("Histogram", "히스토그램")
-        ]
-        for bin in distribution.bins {
-            lines.append("\(formatNumber(bin.lowerBound)) - \(formatNumber(bin.upperBound)): \(bin.count.formatted())")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    func formatDateHistogram(_ histogram: DateHistogram) -> String {
-        let dateName = columnNames[safe: histogram.dateColumn] ?? L.t("Column \(histogram.dateColumn + 1)", "\(histogram.dateColumn + 1)열")
-        var lines = [
-            dateName,
-            L.t("Period: \(histogram.period.rawValue)", "단위: \(histogram.period.rawValue)"),
-            ""
-        ]
-        for bin in histogram.bins {
-            if let sum = bin.sum, let average = bin.average {
-                lines.append("\(bin.label): count \(bin.count.formatted()), sum \(formatNumber(sum)), avg \(formatNumber(average))")
-            } else {
-                lines.append("\(bin.label): \(bin.count.formatted())")
-            }
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    func formatDuplicates(_ duplicates: [DuplicateGroup], columns: [Int]) -> String {
-        let names = columns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
-        var lines = [
-            names,
-            "",
-            L.t("Duplicate groups: \(duplicates.count.formatted())", "중복 그룹: \(duplicates.count.formatted())")
-        ]
-        for group in duplicates.prefix(100) {
-            lines.append("\(group.key.joined(separator: " | ")) -> rows \(group.sourceRows.map { $0.formatted() }.joined(separator: ", "))")
-        }
-        if duplicates.count > 100 {
-            lines.append("...")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    func formatGroupBy(_ result: GroupByResult) -> String {
-        let groupNames = result.groupColumns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
-        let valueName = columnNames[safe: result.valueColumn] ?? L.t("Column \(result.valueColumn + 1)", "\(result.valueColumn + 1)열")
-        var lines = [
-            L.t("Group: \(groupNames)", "그룹: \(groupNames)"),
-            L.t("Value: \(valueName)", "값: \(valueName)"),
-            ""
-        ]
-        for row in result.rows.prefix(100) {
-            let metrics = result.functions.map { function in
-                "\(function.rawValue)=\(formatNumber(row.values[function] ?? 0))"
-            }.joined(separator: ", ")
-            lines.append("\(row.key.joined(separator: " | ")): \(metrics)")
-        }
-        if result.rows.count > 100 {
-            lines.append("...")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    func formatPivotTable(_ pivot: PivotTableResult) -> String {
-        let rowNames = pivot.rowColumns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
-        let columnNamesText = pivot.columnColumns.map { columnNames[safe: $0] ?? L.t("Column \($0 + 1)", "\($0 + 1)열") }.joined(separator: " + ")
-        let valueName = columnNames[safe: pivot.valueColumn] ?? L.t("Column \(pivot.valueColumn + 1)", "\(pivot.valueColumn + 1)열")
-        var lines: [String] = [
-            L.t("Rows: \(rowNames)", "행: \(rowNames)"),
-            L.t("Columns: \(columnNamesText)", "열: \(columnNamesText)"),
-            L.t("Values: \(pivot.function.rawValue)(\(valueName))", "값: \(pivot.function.rawValue)(\(valueName))"),
-            ""
-        ]
-        lines.append(([rowNames] + pivot.columnKeys.map { $0.joined(separator: " | ") }).joined(separator: "\t"))
-
-        for row in pivot.rowKeys.prefix(80) {
-            let fields = [row.joined(separator: " | ")] + pivot.columnKeys.map { formatNumber(pivot.value(row: row, column: $0)) }
-            lines.append(fields.joined(separator: "\t"))
-        }
-        if pivot.rowKeys.count > 80 {
-            lines.append("...")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    func formatCorrelation(_ pearson: CorrelationResult, spearman: CorrelationResult, xColumn: Int, yColumn: Int) -> String {
-        let xName = columnNames[safe: xColumn] ?? L.t("Column \(xColumn + 1)", "\(xColumn + 1)열")
-        let yName = columnNames[safe: yColumn] ?? L.t("Column \(yColumn + 1)", "\(yColumn + 1)열")
-        return [
-            "\(xName) vs \(yName)",
-            "",
-            "Pearson r: \(formatNumber(pearson.coefficient))",
-            "Pearson p-value: \(formatNumber(pearson.pValue))",
-            pearson.interpretation,
-            "",
-            "Spearman rho: \(formatNumber(spearman.coefficient))",
-            "Spearman p-value: \(formatNumber(spearman.pValue))",
-            spearman.interpretation,
-            "",
-            "n: \(pearson.sampleSize.formatted())"
-        ].joined(separator: "\n")
-    }
-
-    func formatIndependentTTest(_ result: IndependentTTestResult, groupColumn: Int, valueColumn: Int) -> String {
-        let groupName = columnNames[safe: groupColumn] ?? L.t("Column \(groupColumn + 1)", "\(groupColumn + 1)열")
-        let valueName = columnNames[safe: valueColumn] ?? L.t("Column \(valueColumn + 1)", "\(valueColumn + 1)열")
-        return [
-            "\(valueName) by \(groupName)",
-            "",
-            "\(result.groupA) mean: \(formatNumber(result.meanA))",
-            "\(result.groupB) mean: \(formatNumber(result.meanB))",
-            "t: \(formatNumber(result.tStatistic))",
-            "df: \(formatNumber(result.degreesOfFreedom))",
-            "p-value: \(formatNumber(result.pValue))",
-            "95% CI: \(formatNumber(result.confidenceIntervalLow)) to \(formatNumber(result.confidenceIntervalHigh))",
-            "Effect size: \(formatNumber(result.effectSize))",
-            result.interpretation
-        ].joined(separator: "\n")
-    }
-
-    func formatChiSquare(_ result: ChiSquareResult, rowColumn: Int, columnColumn: Int) -> String {
-        let rowName = columnNames[safe: rowColumn] ?? L.t("Column \(rowColumn + 1)", "\(rowColumn + 1)열")
-        let columnName = columnNames[safe: columnColumn] ?? L.t("Column \(columnColumn + 1)", "\(columnColumn + 1)열")
-        var lines = [
-            "\(rowName) x \(columnName)",
-            "",
-            "Chi-square: \(formatNumber(result.statistic))",
-            "df: \(result.degreesOfFreedom)",
-            "p-value: \(formatNumber(result.pValue))",
-            result.interpretation,
-            "",
-            ([rowName] + result.columnLabels).joined(separator: "\t")
-        ]
-        for (index, rowLabel) in result.rowLabels.enumerated() {
-            let fields = [rowLabel] + result.observed[index].map { formatNumber($0) }
-            lines.append(fields.joined(separator: "\t"))
-        }
-        return lines.joined(separator: "\n")
-    }
 
     func scheduleDetailPanelUpdate() {
         detailUpdateWorkItem?.cancel()
@@ -5833,14 +5682,14 @@ extension MainWindowController {
         let rowsText: String
         if hasAnyFilter || visibleRows != totalRows {
             rowsText = L.t(
-                "\(visibleRows.formatted()) / \(totalRows.formatted()) rows",
-                "\(visibleRows.formatted()) / \(totalRows.formatted())행"
+                "\(visibleRows.formatted(.number.locale(L.locale))) / \(totalRows.formatted(.number.locale(L.locale))) rows",
+                "\(visibleRows.formatted(.number.locale(L.locale))) / \(totalRows.formatted(.number.locale(L.locale)))행"
             )
         } else {
-            rowsText = L.t("\(totalRows.formatted()) rows", "\(totalRows.formatted())행")
+            rowsText = L.t("\(totalRows.formatted(.number.locale(L.locale))) rows", "\(totalRows.formatted(.number.locale(L.locale)))행")
         }
 
-        let storageMode = doc.indexingComplete ? (doc.inMemory ? "RAM" : "Disk") : (doc.willUseRam ? "RAM" : "Disk")
+        let storageMode = (doc.indexingComplete ? doc.inMemory : doc.willUseRam) ? "RAM" : L.t("Disk", "디스크")
         var parts = [
             rowsText,
             L.t("\(doc.columnCount) columns", "\(doc.columnCount)열"),
@@ -5899,9 +5748,9 @@ extension MainWindowController {
 
     func formatNumber(_ value: Double) -> String {
         if value.rounded(.towardZero) == value {
-            return String(format: "%.0f", value)
+            return String(format: "%.0f", locale: L.locale, value)
         }
-        return String(format: "%.3f", value)
+        return String(format: "%.3f", locale: L.locale, value)
     }
 
     static func csvEscaped(_ value: String) -> String {

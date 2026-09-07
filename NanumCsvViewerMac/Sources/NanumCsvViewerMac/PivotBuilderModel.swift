@@ -7,7 +7,7 @@ struct PivotField: Equatable {
     let valueType: ColumnValueType?
 
     var typeHint: String? {
-        valueType?.rawValue
+        valueType?.localizedTitle
     }
 
     var isMeasureCandidate: Bool {
@@ -357,7 +357,7 @@ struct PivotChartModel: Equatable {
             let values = pivot.columnColumns.isEmpty
                 ? [pivot.value(row: [], column: [])]
                 : pivot.columnKeys.map { pivot.value(row: [], column: $0) }
-            let series = [PivotChartSeries(name: pivot.function.rawValue, values: values)]
+            let series = [PivotChartSeries(name: pivot.function.localizedTitle, values: values)]
             return PivotChartModel(
                 categories: categories,
                 series: series,
@@ -365,7 +365,7 @@ struct PivotChartModel: Equatable {
                 recommendedKind: recommendedKind(categories: categories, seriesCount: series.count),
                 xAxisTitle: pivot.columnColumns.isEmpty ? L.t("Metric", "지표") : L.t("Columns", "열"),
                 seriesTitle: L.t("Measure", "측정값"),
-                valueTitle: pivot.function.rawValue
+                valueTitle: pivot.function.localizedTitle
             )
         }
 
@@ -373,7 +373,7 @@ struct PivotChartModel: Equatable {
         let columnKeys = pivot.columnColumns.isEmpty ? [[]] : pivot.columnKeys
         let series = columnKeys.map { columnKey in
             PivotChartSeries(
-                name: label(columnKey, fallback: pivot.function.rawValue),
+                name: label(columnKey, fallback: pivot.function.localizedTitle),
                 values: pivot.rowKeys.map { rowKey in
                     pivot.value(row: rowKey, column: columnKey)
                 }
@@ -386,7 +386,7 @@ struct PivotChartModel: Equatable {
             recommendedKind: recommendedKind(categories: categories, seriesCount: series.count),
             xAxisTitle: rowAxisTitle(for: pivot),
             seriesTitle: pivot.columnColumns.isEmpty ? L.t("Measure", "측정값") : L.t("Columns", "열"),
-            valueTitle: pivot.function.rawValue
+            valueTitle: pivot.function.localizedTitle
         )
     }
 

@@ -11,27 +11,28 @@ struct PerformanceSnapshot: Equatable {
     var memoryFootprintBytes: Int64? = nil
 
     func formattedLines() -> [String] {
+        let storageDescription = storageMode == "Disk" ? L.t("Disk", "디스크") : storageMode
         var lines = [
-            "File: \(Self.formatBytes(fileBytes))",
+            L.t("File: \(Self.formatBytes(fileBytes))", "파일: \(Self.formatBytes(fileBytes))"),
             Self.formatRows(visibleRows: visibleRows, totalRows: totalRows),
-            "Columns: \(columnCount.formatted())",
-            "Storage: \(storageMode)"
+            L.t("Columns: \(columnCount.formatted(.number.locale(L.locale)))", "열: \(columnCount.formatted(.number.locale(L.locale)))"),
+            L.t("Storage: \(storageDescription)", "저장 방식: \(storageDescription)")
         ]
 
         if let memoryFootprintBytes {
-            lines.append("Memory: \(Self.formatBytes(memoryFootprintBytes))")
+            lines.append(L.t("Memory: \(Self.formatBytes(memoryFootprintBytes))", "메모리: \(Self.formatBytes(memoryFootprintBytes))"))
         }
 
         if indexingComplete, let indexingElapsed {
-            lines.append("Indexing: complete in \(Self.formatSeconds(indexingElapsed))")
+            lines.append(L.t("Indexing: complete in \(Self.formatSeconds(indexingElapsed))", "인덱싱: \(Self.formatSeconds(indexingElapsed))에 완료"))
             if indexingElapsed > 0, totalRows > 0 {
                 let throughput = Int((Double(totalRows) / indexingElapsed).rounded())
-                lines.append("Throughput: \(throughput.formatted()) rows/s")
+                lines.append(L.t("Throughput: \(throughput.formatted(.number.locale(L.locale))) rows/s", "처리 속도: 초당 \(throughput.formatted(.number.locale(L.locale)))행"))
             }
         } else if indexingComplete {
-            lines.append("Indexing: complete")
+            lines.append(L.t("Indexing: complete", "인덱싱: 완료"))
         } else {
-            lines.append("Indexing: in progress")
+            lines.append(L.t("Indexing: in progress", "인덱싱: 진행 중"))
         }
 
         return lines
@@ -39,9 +40,9 @@ struct PerformanceSnapshot: Equatable {
 
     private static func formatRows(visibleRows: Int, totalRows: Int) -> String {
         if visibleRows == totalRows {
-            return "Rows: \(totalRows.formatted())"
+            return L.t("Rows: \(totalRows.formatted(.number.locale(L.locale)))", "행: \(totalRows.formatted(.number.locale(L.locale)))")
         }
-        return "Rows: \(visibleRows.formatted()) / \(totalRows.formatted()) visible"
+        return L.t("Rows: \(visibleRows.formatted(.number.locale(L.locale))) / \(totalRows.formatted(.number.locale(L.locale))) visible", "행: \(visibleRows.formatted(.number.locale(L.locale))) / \(totalRows.formatted(.number.locale(L.locale))) 표시")
     }
 
     private static func formatBytes(_ bytes: Int64) -> String {
@@ -55,10 +56,10 @@ struct PerformanceSnapshot: Equatable {
         if index == 0 {
             return "\(Int(value)) \(units[index])"
         }
-        return String(format: "%.1f %@", value, units[index])
+        return String(format: "%.1f %@", locale: L.locale, value, units[index])
     }
 
     private static func formatSeconds(_ seconds: TimeInterval) -> String {
-        String(format: "%.2f s", seconds)
+        String(format: "%.2f s", locale: L.locale, seconds)
     }
 }

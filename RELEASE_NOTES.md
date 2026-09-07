@@ -4,6 +4,32 @@
 
 No unreleased changes.
 
+## v1.10.2-build205 - 2026-09-08
+
+### Multilingual release
+
+- Added 16-language app UI: English, Korean, Japanese, Simplified/Traditional
+  Chinese, French, Spanish, German, Brazilian Portuguese, Italian, Russian,
+  Vietnamese, Indonesian, Thai, Polish, and Dutch.
+- Settings → Language provides system-default selection and persistent
+  per-app language overrides, applied on the next launch.
+- Replaced expanded-string language selection with cached template catalogs:
+  interpolation values are evaluated once, translated placeholders can reorder,
+  and numeric interpolation follows the selected language locale.
+- Localized menus, type/aggregation labels, analytics, filter descriptions,
+  data-quality output, and error summaries while preserving user data and
+  technical diagnostics.
+- Embedded localization resources and declared all supported languages in
+  both Developer ID and Mac App Store app bundles.
+- Prepared localized App Store metadata and genuine 2560×1600 screenshots for
+  all 16 languages. App Store version remains 1.10.2; build increments to 205.
+- Catalog validation: 16 languages, 586 keys, 832 source calls; no missing
+  translations or placeholder/printf mismatches.
+- Final regression suite: 512 tests passed. All 16 localized app screenshots
+  were rendered from the real AppKit UI and checked for readable text and glyphs.
+- Existing GitHub v1.10.2/build204 artifacts remain unchanged; this multilingual
+  build uses the separate v1.10.2-build205 release tag.
+
 ## v1.10.2 - 2026-09-08
 
 ### Fixes

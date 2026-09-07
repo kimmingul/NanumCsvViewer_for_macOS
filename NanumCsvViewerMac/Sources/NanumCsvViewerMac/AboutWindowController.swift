@@ -16,20 +16,20 @@ struct AboutWindowContent {
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
         return AboutWindowContent(
             appName: NanumCsvViewerMacApp.displayName,
-            versionText: "버전 \(shortVersion)(\(build))",
+            versionText: L.t("Version \(shortVersion) (\(build))", "버전 \(shortVersion) (\(build))"),
             headline: "Nanum CSV Viewer for macOS",
-            subheadline: "Large CSV file viewer and analysis tool for macOS",
-            copyrightText: "Copyright © 2026 Min-Gul Kim. All rights reserved.",
-            developerLabel: "Developed by",
+            subheadline: L.t("Large CSV file viewer and analysis tool for macOS", "macOS용 대용량 CSV 파일 뷰어 및 분석 도구"),
+            copyrightText: L.t("Copyright © 2026 Min-Gul Kim. All rights reserved.", "Copyright © 2026 김민걸. 모든 권리 보유."),
+            developerLabel: L.t("Developed by", "개발자"),
             developerName: "Min-Gul Kim, MD, PhD",
             affiliationLines: [
-                "Professor",
-                "Department of Pharmacology",
-                "Jeonbuk National University Medical School",
-                "CEO",
-                "Nanum Space Co., Ltd."
+                L.t("Professor", "교수"),
+                L.t("Department of Pharmacology", "약리학교실"),
+                L.t("Jeonbuk National University Medical School", "전북대학교 의과대학"),
+                L.t("CEO", "대표이사"),
+                L.t("Nanum Space Co., Ltd.", "주식회사 나눔스페이스")
             ],
-            footerText: "© 2026 김민걸 · Third-party notices: THIRD_PARTY_NOTICES.md"
+            footerText: L.t("© 2026 Min-Gul Kim · Third-party notices: THIRD_PARTY_NOTICES.md", "© 2026 김민걸 · 타사 고지: THIRD_PARTY_NOTICES.md")
         )
     }
 }

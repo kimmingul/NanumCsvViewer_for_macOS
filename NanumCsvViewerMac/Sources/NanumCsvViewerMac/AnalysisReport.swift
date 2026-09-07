@@ -127,7 +127,7 @@ enum AnalysisRequest: Equatable, Sendable {
         case .dateHistogram(let dateColumn, let valueColumn, let period):
             var lines = [
                 L.t("Date column: \(columnName(dateColumn, columnNames: columnNames))", "날짜 컬럼: \(columnName(dateColumn, columnNames: columnNames))"),
-                L.t("Period: \(period.rawValue)", "단위: \(period.rawValue)")
+                L.t("Period: \(period.localizedTitle)", "단위: \(period.localizedTitle)")
             ]
             lines.append(valueColumn.map {
                 L.t("Value column: \(columnName($0, columnNames: columnNames))", "값 컬럼: \(columnName($0, columnNames: columnNames))")
@@ -140,7 +140,7 @@ enum AnalysisRequest: Equatable, Sendable {
             return [
                 L.t("Group columns: \(groupColumns.map { columnName($0, columnNames: columnNames) }.joined(separator: ", "))", "그룹 컬럼: \(groupColumns.map { columnName($0, columnNames: columnNames) }.joined(separator: ", "))"),
                 L.t("Value column: \(columnName(valueColumn, columnNames: columnNames))", "값 컬럼: \(columnName(valueColumn, columnNames: columnNames))"),
-                L.t("Functions: \(functions.map(\.rawValue).joined(separator: ", "))", "집계: \(functions.map(\.rawValue).joined(separator: ", "))")
+                L.t("Functions: \(functions.map(\.localizedTitle).joined(separator: ", "))", "집계: \(functions.map(\.localizedTitle).joined(separator: ", "))")
             ]
         case .correlation(let xColumn, let yColumn):
             return [
@@ -208,14 +208,15 @@ struct AnalysisProvenance: Equatable, Sendable {
     }
 
     var lines: [String] {
+        let viewDescription = isFiltered ? L.t("Filtered current view", "필터된 현재 보기") : L.t("All rows", "전체 행")
         var output = [
-            L.t("Rows: \(visibleRows.formatted()) / \(totalRows.formatted())", "행: \(visibleRows.formatted()) / \(totalRows.formatted())"),
-            L.t("View: \(isFiltered ? "Filtered current view" : "All rows")", "보기: \(isFiltered ? "필터된 현재 보기" : "전체 행")")
+            L.t("Rows: \(visibleRows.formatted(.number.locale(L.locale))) / \(totalRows.formatted(.number.locale(L.locale)))", "행: \(visibleRows.formatted(.number.locale(L.locale))) / \(totalRows.formatted(.number.locale(L.locale)))"),
+            L.t("View: \(viewDescription)", "보기: \(viewDescription)")
         ]
         if let scannedRows, scannedRows < visibleRows {
             output.append(L.t(
-                "Scope: showing first \(scannedRows.formatted()) rows",
-                "범위: 처음 \(scannedRows.formatted())행 기준"
+                "Scope: showing first \(scannedRows.formatted(.number.locale(L.locale))) rows",
+                "범위: 처음 \(scannedRows.formatted(.number.locale(L.locale)))행 기준"
             ))
         }
         if !filters.isEmpty {
@@ -434,23 +435,23 @@ enum AnalysisReportBuilder {
         let name = columnName(distribution.column, columnNames: columnNames)
         return AnalysisReport(
             title: AnalysisKind.numericDistribution.title,
-            summary: L.t("Distribution for \(name), \(distribution.count.formatted()) numeric values.", "\(name)의 분포, 숫자 값 \(distribution.count.formatted())개."),
+            summary: L.t("Distribution for \(name), \(distribution.count.formatted(.number.locale(L.locale))) numeric values.", "\(name)의 분포, 숫자 값 \(distribution.count.formatted(.number.locale(L.locale)))개."),
             provenance: provenance,
             sections: [
                 .metrics(title: L.t("Summary", "요약"), rows: [
-                    AnalysisMetric(name: "Count", value: distribution.count.formatted()),
-                    AnalysisMetric(name: "Min", value: formatNumber(distribution.min)),
+                    AnalysisMetric(name: L.t("Count", "개수"), value: distribution.count.formatted(.number.locale(L.locale))),
+                    AnalysisMetric(name: L.t("Min", "최솟값"), value: formatNumber(distribution.min)),
                     AnalysisMetric(name: "Q1", value: formatNumber(distribution.q1)),
-                    AnalysisMetric(name: "Median", value: formatNumber(distribution.median)),
+                    AnalysisMetric(name: L.t("Median", "중앙값"), value: formatNumber(distribution.median)),
                     AnalysisMetric(name: "Q3", value: formatNumber(distribution.q3)),
-                    AnalysisMetric(name: "Max", value: formatNumber(distribution.max)),
-                    AnalysisMetric(name: "Mean", value: formatNumber(distribution.mean)),
-                    AnalysisMetric(name: "Std", value: formatNumber(distribution.standardDeviation))
+                    AnalysisMetric(name: L.t("Max", "최댓값"), value: formatNumber(distribution.max)),
+                    AnalysisMetric(name: L.t("Mean", "평균"), value: formatNumber(distribution.mean)),
+                    AnalysisMetric(name: L.t("Std", "표준편차"), value: formatNumber(distribution.standardDeviation))
                 ]),
                 .table(AnalysisTable(
                     title: L.t("Histogram", "히스토그램"),
-                    headers: [L.t("From", "시작"), L.t("To", "끝"), "Count"],
-                    rows: distribution.bins.map { [formatNumber($0.lowerBound), formatNumber($0.upperBound), $0.count.formatted()] },
+                    headers: [L.t("From", "시작"), L.t("To", "끝"), L.t("Count", "개수")],
+                    rows: distribution.bins.map { [formatNumber($0.lowerBound), formatNumber($0.upperBound), $0.count.formatted(.number.locale(L.locale))] },
                     truncated: false
                 ))
             ]
@@ -462,16 +463,16 @@ enum AnalysisReportBuilder {
         let hasValue = histogram.valueColumn != nil
         return AnalysisReport(
             title: AnalysisKind.dateHistogram.title,
-            summary: L.t("\(histogram.bins.count.formatted()) \(histogram.period.rawValue.lowercased()) bins for \(name).", "\(name)의 \(histogram.period.rawValue) 구간 \(histogram.bins.count.formatted())개."),
+            summary: L.t("\(histogram.bins.count.formatted(.number.locale(L.locale))) \(histogram.period.localizedTitle) bins for \(name).", "\(name)의 \(histogram.period.localizedTitle) 구간 \(histogram.bins.count.formatted(.number.locale(L.locale)))개."),
             provenance: provenance,
             sections: [
                 .table(AnalysisTable(
                     title: L.t("Bins", "구간"),
-                    headers: hasValue ? [L.t("Period", "기간"), "Count", "Sum", "Average"] : [L.t("Period", "기간"), "Count"],
+                    headers: hasValue ? [L.t("Period", "기간"), L.t("Count", "개수"), L.t("Sum", "합계"), L.t("Average", "평균")] : [L.t("Period", "기간"), L.t("Count", "개수")],
                     rows: histogram.bins.map { bin in
                         hasValue
-                            ? [bin.label, bin.count.formatted(), formatNumber(bin.sum ?? 0), formatNumber(bin.average ?? 0)]
-                            : [bin.label, bin.count.formatted()]
+                            ? [bin.label, bin.count.formatted(.number.locale(L.locale)), formatNumber(bin.sum ?? 0), formatNumber(bin.average ?? 0)]
+                            : [bin.label, bin.count.formatted(.number.locale(L.locale))]
                     },
                     truncated: false
                 ))
@@ -481,11 +482,11 @@ enum AnalysisReportBuilder {
 
     private static func duplicateReport(_ duplicates: [DuplicateGroup], columns: [Int], columnNames: [String], provenance: AnalysisProvenance) -> AnalysisReport {
         let rows = duplicates.prefix(100).map { group in
-            [group.key.joined(separator: " | "), group.sourceRows.map { $0.formatted() }.joined(separator: ", ")]
+            [group.key.joined(separator: " | "), group.sourceRows.map { $0.formatted(.number.locale(L.locale)) }.joined(separator: ", ")]
         }
         return AnalysisReport(
             title: AnalysisKind.duplicateRows.title,
-            summary: L.t("Found \(duplicates.count.formatted()) duplicate groups.", "중복 그룹 \(duplicates.count.formatted())개를 찾았습니다."),
+            summary: L.t("Found \(duplicates.count.formatted(.number.locale(L.locale))) duplicate groups.", "중복 그룹 \(duplicates.count.formatted(.number.locale(L.locale)))개를 찾았습니다."),
             provenance: provenance,
             sections: [
                 .table(AnalysisTable(
@@ -499,13 +500,13 @@ enum AnalysisReportBuilder {
     }
 
     private static func groupByReport(_ result: GroupByResult, columnNames: [String], provenance: AnalysisProvenance) -> AnalysisReport {
-        let headers = [L.t("Group", "그룹")] + result.functions.map(\.rawValue)
+        let headers = [L.t("Group", "그룹")] + result.functions.map(\.localizedTitle)
         let rows = result.rows.prefix(100).map { row in
             [row.key.joined(separator: " | ")] + result.functions.map { formatNumber(row.values[$0] ?? 0) }
         }
         return AnalysisReport(
             title: AnalysisKind.groupBy.title,
-            summary: L.t("\(result.rows.count.formatted()) groups.", "그룹 \(result.rows.count.formatted())개."),
+            summary: L.t("\(result.rows.count.formatted(.number.locale(L.locale))) groups.", "그룹 \(result.rows.count.formatted(.number.locale(L.locale)))개."),
             provenance: provenance,
             sections: [
                 .table(AnalysisTable(
@@ -523,17 +524,17 @@ enum AnalysisReportBuilder {
         let yName = columnName(yColumn, columnNames: columnNames)
         return AnalysisReport(
             title: AnalysisKind.correlation.title,
-            summary: "\(xName) vs \(yName)",
+            summary: L.t("\(xName) vs \(yName)", "\(xName) 대 \(yName)"),
             provenance: provenance,
             sections: [
                 .metrics(title: L.t("Statistics", "통계"), rows: [
                     AnalysisMetric(name: "Pearson r", value: formatNumber(pearson.coefficient)),
-                    AnalysisMetric(name: "Pearson p-value", value: formatNumber(pearson.pValue)),
-                    AnalysisMetric(name: "Pearson", value: pearson.interpretation),
+                    AnalysisMetric(name: L.t("Pearson p-value", "Pearson p값"), value: formatNumber(pearson.pValue)),
+                    AnalysisMetric(name: "Pearson", value: LocalizedPresentation.interpretation(pearson.interpretation)),
                     AnalysisMetric(name: "Spearman rho", value: formatNumber(spearman.coefficient)),
-                    AnalysisMetric(name: "Spearman p-value", value: formatNumber(spearman.pValue)),
-                    AnalysisMetric(name: "Spearman", value: spearman.interpretation),
-                    AnalysisMetric(name: "n", value: pearson.sampleSize.formatted())
+                    AnalysisMetric(name: L.t("Spearman p-value", "Spearman p값"), value: formatNumber(spearman.pValue)),
+                    AnalysisMetric(name: "Spearman", value: LocalizedPresentation.interpretation(spearman.interpretation)),
+                    AnalysisMetric(name: "n", value: pearson.sampleSize.formatted(.number.locale(L.locale)))
                 ])
             ]
         )
@@ -544,18 +545,18 @@ enum AnalysisReportBuilder {
         let groupName = columnName(groupColumn, columnNames: columnNames)
         return AnalysisReport(
             title: AnalysisKind.independentTTest.title,
-            summary: "\(valueName) by \(groupName)",
+            summary: L.t("\(valueName) by \(groupName)", "\(groupName)별 \(valueName)"),
             provenance: provenance,
             sections: [
                 .metrics(title: L.t("Statistics", "통계"), rows: [
-                    AnalysisMetric(name: "\(result.groupA) mean", value: formatNumber(result.meanA)),
-                    AnalysisMetric(name: "\(result.groupB) mean", value: formatNumber(result.meanB)),
+                    AnalysisMetric(name: L.t("\(result.groupA) mean", "\(result.groupA) 평균"), value: formatNumber(result.meanA)),
+                    AnalysisMetric(name: L.t("\(result.groupB) mean", "\(result.groupB) 평균"), value: formatNumber(result.meanB)),
                     AnalysisMetric(name: "t", value: formatNumber(result.tStatistic)),
                     AnalysisMetric(name: "df", value: formatNumber(result.degreesOfFreedom)),
-                    AnalysisMetric(name: "p-value", value: formatNumber(result.pValue)),
-                    AnalysisMetric(name: "95% CI", value: "\(formatNumber(result.confidenceIntervalLow)) to \(formatNumber(result.confidenceIntervalHigh))"),
-                    AnalysisMetric(name: "Effect size", value: formatNumber(result.effectSize)),
-                    AnalysisMetric(name: L.t("Interpretation", "해석"), value: result.interpretation)
+                    AnalysisMetric(name: L.t("p-value", "p값"), value: formatNumber(result.pValue)),
+                    AnalysisMetric(name: L.t("95% CI", "95% 신뢰구간"), value: L.t("\(formatNumber(result.confidenceIntervalLow)) to \(formatNumber(result.confidenceIntervalHigh))", "\(formatNumber(result.confidenceIntervalLow))부터 \(formatNumber(result.confidenceIntervalHigh))까지")),
+                    AnalysisMetric(name: L.t("Effect size", "효과 크기"), value: formatNumber(result.effectSize)),
+                    AnalysisMetric(name: L.t("Interpretation", "해석"), value: LocalizedPresentation.interpretation(result.interpretation))
                 ])
             ]
         )
@@ -573,10 +574,10 @@ enum AnalysisReportBuilder {
             provenance: provenance,
             sections: [
                 .metrics(title: L.t("Statistics", "통계"), rows: [
-                    AnalysisMetric(name: "Chi-square", value: formatNumber(result.statistic)),
-                    AnalysisMetric(name: "df", value: result.degreesOfFreedom.formatted()),
-                    AnalysisMetric(name: "p-value", value: formatNumber(result.pValue)),
-                    AnalysisMetric(name: L.t("Interpretation", "해석"), value: result.interpretation)
+                    AnalysisMetric(name: L.t("Chi-square", "카이제곱"), value: formatNumber(result.statistic)),
+                    AnalysisMetric(name: "df", value: result.degreesOfFreedom.formatted(.number.locale(L.locale))),
+                    AnalysisMetric(name: L.t("p-value", "p값"), value: formatNumber(result.pValue)),
+                    AnalysisMetric(name: L.t("Interpretation", "해석"), value: LocalizedPresentation.interpretation(result.interpretation))
                 ]),
                 .table(AnalysisTable(
                     title: L.t("Observed Counts", "관측 빈도"),
@@ -591,11 +592,11 @@ enum AnalysisReportBuilder {
     private static func documentSummaryReport(document: VirtualCsvDocument, columnNames: [String], columnStatisticsReport: ColumnStatisticsReport?, provenance: AnalysisProvenance) -> AnalysisReport {
         var sections: [AnalysisSection] = [
             .metrics(title: L.t("Document", "문서"), rows: [
-                AnalysisMetric(name: L.t("Rows", "행"), value: "\(document.displayRowCount.formatted()) / \(document.dataRowsAvailable.formatted())"),
-                AnalysisMetric(name: L.t("Columns", "컬럼"), value: columnNames.count.formatted()),
+                AnalysisMetric(name: L.t("Rows", "행"), value: "\(document.displayRowCount.formatted(.number.locale(L.locale))) / \(document.dataRowsAvailable.formatted(.number.locale(L.locale)))"),
+                AnalysisMetric(name: L.t("Columns", "컬럼"), value: columnNames.count.formatted(.number.locale(L.locale))),
                 AnalysisMetric(name: L.t("File size", "파일 크기"), value: ByteCountFormatter.string(fromByteCount: document.fileLength, countStyle: .file)),
                 AnalysisMetric(name: L.t("Encoding", "인코딩"), value: document.encodingName),
-                AnalysisMetric(name: L.t("Storage", "저장 방식"), value: document.inMemory ? "RAM" : "Disk")
+                AnalysisMetric(name: L.t("Storage", "저장 방식"), value: document.inMemory ? "RAM" : L.t("Disk", "디스크"))
             ])
         ]
         if let columnStatisticsReport {
@@ -603,7 +604,7 @@ enum AnalysisReportBuilder {
                 title: L.t("Columns", "컬럼"),
                 headers: [L.t("Column", "컬럼"), L.t("Type", "타입"), L.t("Non-null", "Non-null"), L.t("Unique", "고유값")],
                 rows: columnStatisticsReport.columns.map {
-                    [$0.name, $0.inferredType.rawValue, $0.nonNullCount.formatted(), $0.uniqueCount.formatted()]
+                    [$0.name, $0.inferredType.localizedTitle, $0.nonNullCount.formatted(.number.locale(L.locale)), $0.uniqueCount.formatted(.number.locale(L.locale))]
                 },
                 truncated: false
             )))
@@ -619,17 +620,17 @@ enum AnalysisReportBuilder {
     private static func descriptiveStatisticsReport(_ results: [(Int, DescriptiveStatisticsResult)], columnNames: [String], provenance: AnalysisProvenance) -> AnalysisReport {
         let names = results.map { columnName($0.0, columnNames: columnNames) }
         let statRows: [(String, (DescriptiveStatisticsResult) -> String)] = [
-            ("N", { $0.count.formatted() }),
-            (L.t("Missing", "결측"), { $0.missingCount.formatted() }),
+            ("N", { $0.count.formatted(.number.locale(L.locale)) }),
+            (L.t("Missing", "결측"), { $0.missingCount.formatted(.number.locale(L.locale)) }),
             (L.t("Mean", "평균"), { formatNumber($0.mean) }),
             (L.t("Std Dev", "표준편차"), { formatNumber($0.standardDeviation) }),
             (L.t("Std Error", "표준오차"), { formatNumber($0.standardError) }),
-            ("95% CI", { "\(formatNumber($0.confidenceIntervalLow)) ~ \(formatNumber($0.confidenceIntervalHigh))" }),
-            ("Min", { formatNumber($0.minimum) }),
+            (L.t("95% CI", "95% 신뢰구간"), { "\(formatNumber($0.confidenceIntervalLow)) ~ \(formatNumber($0.confidenceIntervalHigh))" }),
+            (L.t("Min", "최솟값"), { formatNumber($0.minimum) }),
             ("Q1", { formatNumber($0.quartile1) }),
             (L.t("Median", "중앙값"), { formatNumber($0.median) }),
             ("Q3", { formatNumber($0.quartile3) }),
-            ("Max", { formatNumber($0.maximum) }),
+            (L.t("Max", "최댓값"), { formatNumber($0.maximum) }),
             (L.t("Range", "범위"), { formatNumber($0.range) }),
             ("IQR", { formatNumber($0.interquartileRange) }),
             (L.t("Mode", "최빈값"), { $0.modes.isEmpty ? "-" : $0.modes.prefix(3).map(formatNumber).joined(separator: ", ") }),
@@ -659,14 +660,14 @@ enum AnalysisReportBuilder {
         let name = columnName(column, columnNames: columnNames)
         return AnalysisReport(
             title: AnalysisKind.frequencyAnalysis.title,
-            summary: L.t("\(result.distinctCount.formatted()) distinct values in \(name).", "\(name)의 고유값 \(result.distinctCount.formatted())개."),
+            summary: L.t("\(result.distinctCount.formatted(.number.locale(L.locale))) distinct values in \(name).", "\(name)의 고유값 \(result.distinctCount.formatted(.number.locale(L.locale)))개."),
             provenance: provenance,
             sections: [
                 .table(AnalysisTable(
                     title: name,
                     headers: [L.t("Value", "값"), L.t("Count", "빈도"), "%", L.t("Cumulative %", "누적 %")],
                     rows: result.entries.map {
-                        [$0.value, $0.count.formatted(), formatNumber($0.percent), formatNumber($0.cumulativePercent)]
+                        [$0.value, $0.count.formatted(.number.locale(L.locale)), formatNumber($0.percent), formatNumber($0.cumulativePercent)]
                     },
                     truncated: result.entries.count < result.distinctCount
                 ))
@@ -679,21 +680,21 @@ enum AnalysisReportBuilder {
         let groupName = columnName(groupColumn, columnNames: columnNames)
         return AnalysisReport(
             title: AnalysisKind.oneWayAnova.title,
-            summary: "\(valueName) by \(groupName)",
+            summary: L.t("\(valueName) by \(groupName)", "\(groupName)별 \(valueName)"),
             provenance: provenance,
             sections: [
                 .metrics(title: L.t("Statistics", "통계"), rows: [
                     AnalysisMetric(name: "F", value: formatNumber(result.fStatistic)),
                     AnalysisMetric(name: "df", value: "\(result.degreesOfFreedomBetween), \(result.degreesOfFreedomWithin)"),
-                    AnalysisMetric(name: "p-value", value: formatPValue(result.pValue)),
-                    AnalysisMetric(name: "Eta-squared", value: formatNumber(result.etaSquared)),
-                    AnalysisMetric(name: L.t("Interpretation", "해석"), value: result.interpretation)
+                    AnalysisMetric(name: L.t("p-value", "p값"), value: formatPValue(result.pValue)),
+                    AnalysisMetric(name: L.t("Eta-squared", "에타 제곱"), value: formatNumber(result.etaSquared)),
+                    AnalysisMetric(name: L.t("Interpretation", "해석"), value: LocalizedPresentation.interpretation(result.interpretation))
                 ]),
                 .table(AnalysisTable(
                     title: L.t("Groups", "그룹"),
                     headers: [L.t("Group", "그룹"), "N", L.t("Mean", "평균"), L.t("Std Dev", "표준편차")],
                     rows: result.groups.map {
-                        [$0.name, $0.count.formatted(), formatNumber($0.mean), formatNumber($0.standardDeviation)]
+                        [$0.name, $0.count.formatted(.number.locale(L.locale)), formatNumber($0.mean), formatNumber($0.standardDeviation)]
                     },
                     truncated: false
                 ))
@@ -705,9 +706,9 @@ enum AnalysisReportBuilder {
         let name = columnName(column, columnNames: columnNames)
         var metrics = [
             AnalysisMetric(name: "W", value: String(format: "%.5f", result.wStatistic)),
-            AnalysisMetric(name: "p-value", value: formatPValue(result.pValue)),
-            AnalysisMetric(name: "n", value: result.sampleSize.formatted()),
-            AnalysisMetric(name: L.t("Interpretation", "해석"), value: result.interpretation)
+            AnalysisMetric(name: L.t("p-value", "p값"), value: formatPValue(result.pValue)),
+            AnalysisMetric(name: "n", value: result.sampleSize.formatted(.number.locale(L.locale))),
+            AnalysisMetric(name: L.t("Interpretation", "해석"), value: LocalizedPresentation.interpretation(result.interpretation))
         ]
         if result.sampleSize > 5_000 {
             metrics.append(AnalysisMetric(

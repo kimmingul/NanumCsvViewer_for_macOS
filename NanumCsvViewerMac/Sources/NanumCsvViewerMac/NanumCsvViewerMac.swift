@@ -24,9 +24,18 @@ struct NanumCsvViewerMacApp {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var windowControllers: [MainWindowController] = []
     private var aboutWindowController: AboutWindowController?
+    private var languageMenu: NSMenu?
+    private var columnsMenu: NSMenu?
+
+    @objc private func changeLanguage(_ sender: NSMenuItem) {
+        L.setLanguage(code: sender.representedObject as? String)
+        for item in languageMenu?.items ?? [] where item.action == #selector(changeLanguage(_:)) {
+            item.state = (item.representedObject as? String) == L.selectedLanguageCode ? .on : .off
+        }
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu.title == L.t("Columns", "컬럼") else { return }
+        guard menu === columnsMenu else { return }
         // Bind strictly to the front window's controller — the same one the
         // menu action will target through the responder chain. No arbitrary
         // fallback that could mutate a background document.
@@ -200,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         viewMenu.addItem(benchmark)
         let columnsItem = NSMenuItem(title: L.t("Columns", "컬럼"), action: nil, keyEquivalent: "")
         let columnsMenu = NSMenu(title: columnsItem.title)
+        self.columnsMenu = columnsMenu
         columnsMenu.delegate = self
         columnsMenu.autoenablesItems = false
         columnsItem.submenu = columnsMenu
@@ -260,6 +270,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(settingsItem)
         let settingsMenu = NSMenu(title: settingsItem.title)
         settingsItem.submenu = settingsMenu
+        let languageItem = NSMenuItem(title: L.t("Language", "언어"), action: nil, keyEquivalent: "")
+        let languageMenu = NSMenu(title: languageItem.title)
+        languageMenu.autoenablesItems = false
+        self.languageMenu = languageMenu
+        languageItem.submenu = languageMenu
+        let systemLanguage = NSMenuItem(title: L.t("System Default", "시스템 기본값"), action: #selector(changeLanguage(_:)), keyEquivalent: "")
+        systemLanguage.target = self
+        systemLanguage.state = L.selectedLanguageCode == nil ? .on : .off
+        languageMenu.addItem(systemLanguage)
+        languageMenu.addItem(.separator())
+        for language in L.supportedLanguages {
+            let item = NSMenuItem(title: language.name, action: #selector(changeLanguage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = language.code
+            item.state = L.selectedLanguageCode == language.code ? .on : .off
+            languageMenu.addItem(item)
+        }
+        languageMenu.addItem(.separator())
+        let restartNotice = NSMenuItem(title: L.t("Restart the app to apply language changes.", "언어 변경을 적용하려면 앱을 다시 시작하세요."), action: nil, keyEquivalent: "")
+        restartNotice.isEnabled = false
+        languageMenu.addItem(restartNotice)
+        settingsMenu.addItem(languageItem)
+        settingsMenu.addItem(.separator())
         let persistentIndex = NSMenuItem(title: L.t("Persistent Index", "인덱스 저장"), action: #selector(MainWindowController.togglePersistentIndex(_:)), keyEquivalent: "")
         settingsMenu.addItem(persistentIndex)
         let deleteIndexCacheOnClose = NSMenuItem(title: L.t("Delete Index Cache on Close", "CSV 닫을 때 인덱스 캐시 삭제"), action: #selector(MainWindowController.toggleDeleteIndexCacheOnClose(_:)), keyEquivalent: "")

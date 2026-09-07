@@ -18,16 +18,12 @@ enum BenchmarkReport {
     static func lines(results: [BenchmarkResult], iteration: Int) -> [String] {
         var out = [L.t("Benchmark run #\(iteration)", "벤치마크 실행 #\(iteration)")]
         for result in results {
-            out.append(String(
-                format: "%@: %.1f ms · %@ rows · %@ rows/s",
-                result.name,
-                result.milliseconds,
-                result.rowsProcessed.formatted(),
-                result.rowsPerSecond.formatted()
-            ))
+            let elapsed = result.milliseconds.formatted(.number.precision(.fractionLength(1)).locale(L.locale))
+            out.append(L.t("\(result.name): \(elapsed) ms · \(result.rowsProcessed) rows · \(result.rowsPerSecond) rows/s", "\(result.name): \(elapsed) ms · \(result.rowsProcessed)행 · 초당 \(result.rowsPerSecond)행"))
         }
         let total = results.reduce(0) { $0 + $1.milliseconds }
-        out.append(String(format: L.t("Total: %.1f ms", "합계: %.1f ms"), total))
+        let elapsed = total.formatted(.number.precision(.fractionLength(1)).locale(L.locale))
+        out.append(L.t("Total: \(elapsed) ms", "합계: \(elapsed) ms"))
         return out
     }
 }

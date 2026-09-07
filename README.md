@@ -54,6 +54,36 @@ Every version is listed on the [releases page](https://github.com/kimmingul/Nanu
 - macOS light and dark appearance support
 - 1 GiB CSV benchmark CLI
 
+### Languages
+
+The app supports English, Korean, Japanese, Simplified Chinese, Traditional Chinese,
+French, Spanish, German, Brazilian Portuguese, Italian, Russian, Vietnamese,
+Indonesian, Thai, Polish, and Dutch.
+
+Choose **Settings → Language** to select a language by its native name, or choose
+**System Default** to follow macOS language preferences. Restart the app to apply
+a change; existing windows keep one consistent language until relaunch.
+CSV headers, cell values, technical identifiers, and raw data exports are not
+translated. Low-level import diagnostics remain available beneath localized
+error summaries.
+
+UI catalogs live in `Sources/NanumCsvViewerMac/Resources/Localization` inside
+`NanumCsvViewerMac`. Both distribution app bundles embed these resources and
+declare the supported languages. Store metadata and genuine localized screenshots
+are maintained under `NanumCsvViewerMac/store`.
+
+To update translations, add English/Korean authoring literals with `L.t`, then
+extract templates and translate new keys in every language. Interpolations use
+numbered placeholders; preserve them when translating. Run the source-aware
+validator before release:
+
+```bash
+cd NanumCsvViewerMac
+SWIFT_HOST="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host"
+swift -I "$SWIFT_HOST" -L "$SWIFT_HOST" -lSwiftSyntax -lSwiftParser \
+  Scripts/localization-catalog.swift --check
+```
+
 ### High-cardinality filters and pivots
 
 - Header checkbox filters reuse visible table rows rather than creating a control for every category. Search covers all loaded values and preserves selections hidden by the search. Above **100,000 distinct values**, use the filter bar's text/expression filter or **Filter by Cell** instead; the app reports the limit rather than returning an incomplete category list.

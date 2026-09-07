@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer 是一款適用於 macOS 的快速本機 CSV 檢視器。\n\n開啟 CSV 和文字檔案，即可立即檢視資料列。即使大型檔案正在背景建立索引，也能繼續操作。本應用程式適合需要直接檢視表格資料、不想先將資料匯入試算表的使用者。\n\n主要功能：\n• 透過資料列虛擬化顯示快速開啟 CSV\n• 偵測 UTF-8、UTF-8 BOM 及韓文 CP949/EUC-KR 編碼\n• 使用欄位類型標記區分文字、數字、日期和類別欄位\n• 尋找、篩選、排序及檢視所選值\n• 欄位統計與資料品質檢查\n• 日期直方圖、數值分布、重複值檢查、分組、相關分析、t 檢定和卡方檢定\n• Excel 風格的樞紐分析表建立工具，支援列、欄、篩選器、多個量值及日期分組\n• 樞紐分析圖支援直條圖、群組直條圖、堆疊直條圖和折線圖\n• 將目前檢視或分析結果匯出為 CSV、TSV、JSON、Markdown 或 HTML\n• 管理本機索引快取，更快地重新開啟大型檔案\n\nNanum CSV Viewer 在您的 Mac 上以本機方式運作。無須帳號，不會上傳您的 CSV 檔案，也不會收集使用情況分析資料。",
+  "locale": "zh-Hant",
+  "keywords": "csv,檢視器,試算表,樞紐分析表,圖表,表格,篩選,排序,分析,utf-8,cp949,匯出,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "現已支援 16 種語言，可在應用程式內的設定中選擇語言。提升了對包含大量相異值的欄位進行篩選和樞紐分析計算時的穩定性。類別清單現在可供搜尋，樞紐分析計算採用串流處理，並在結果過大時提供清楚的說明。",
+  "subtitle": "CSV 檢視器與樞紐分析表",
+  "name": "Nanum CSV Viewer"
+}

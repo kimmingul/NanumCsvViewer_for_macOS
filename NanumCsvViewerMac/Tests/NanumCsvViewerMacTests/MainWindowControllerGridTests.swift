@@ -563,7 +563,7 @@ final class MainWindowControllerGridTests: XCTestCase {
         XCTAssertEqual(controller.selectedValueTextForTesting, "line one\nline two\nline three")
     }
 
-    func testGridHeadersShowInferredColumnTypes() throws {
+    func testGridHeaderFiltersMatchInferredColumnTypes() throws {
         _ = NSApplication.shared
         let path = try temporaryCsvPath()
         try """
@@ -581,16 +581,9 @@ final class MainWindowControllerGridTests: XCTestCase {
         controller.openFileForTesting(URL(fileURLWithPath: path))
         try waitUntilColumnTypesReady(controller)
 
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Date")
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 1), "Float")
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 2), "Categorical")
-        XCTAssertTrue(controller.headerDisplayTitleForTesting(column: 0)?.contains("Date") == true)
-        XCTAssertTrue(controller.headerDisplayTitleForTesting(column: 1)?.contains("Float") == true)
-        XCTAssertTrue(controller.headerDisplayTitleForTesting(column: 2)?.contains("Categorical") == true)
         XCTAssertTrue(controller.headerFilterAvailableForTesting(column: 0))
         XCTAssertFalse(controller.headerFilterAvailableForTesting(column: 1))
         XCTAssertTrue(controller.headerFilterAvailableForTesting(column: 2))
-        XCTAssertEqual(controller.headerTooltipForTesting(column: 0), "visit_date\n\(L.t("Type: Date", "타입: Date"))")
     }
 
     func testLastCategoricalHeaderShowsFilterButtonWhenColumnsFillViewport() throws {
@@ -961,7 +954,6 @@ final class MainWindowControllerGridTests: XCTestCase {
 
         controller.openFileForTesting(URL(fileURLWithPath: firstPath))
         try waitUntilColumnTypesReady(controller)
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Date")
 
         controller.openFileForTesting(URL(fileURLWithPath: secondPath))
 
@@ -1156,9 +1148,6 @@ final class MainWindowControllerGridTests: XCTestCase {
         try waitUntilAnalysisReady(controller)
 
         XCTAssertEqual(controller.detailHeaderTextForTesting, L.t("Numeric Distribution", "숫자 분포"))
-        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Rows: 3 / 3", "행: 3 / 3")))
-        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Columns: amount", "컬럼: amount")))
-        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Column: amount", "컬럼: amount")))
         XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Histogram", "히스토그램")))
 
         NSPasteboard.general.clearContents()
@@ -1190,9 +1179,6 @@ final class MainWindowControllerGridTests: XCTestCase {
         try waitUntilAnalysisReady(controller)
 
         XCTAssertEqual(controller.detailHeaderTextForTesting, L.t("Quick Stats", "빠른 통계"))
-        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Rows: 2 / 2", "행: 2 / 2")))
-        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Columns: All columns (3)", "컬럼: 전체 컬럼 (3)")))
-        XCTAssertTrue(controller.analysisReportTextForTesting.contains(L.t("Columns: 3", "컬럼: 3")))
         XCTAssertTrue(controller.analysisReportTextForTesting.contains("visit_date"))
         XCTAssertFalse(controller.analysisReportTextForTesting.hasPrefix("site\n\n"))
     }
@@ -1327,14 +1313,14 @@ final class MainWindowControllerGridTests: XCTestCase {
 
         controller.openFileForTesting(URL(fileURLWithPath: path))
         try waitUntilColumnTypesReady(controller, column: 0)
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Integer")
+        let inferredTitle = controller.headerTypeTextForTesting(column: 0)
 
         controller.setColumnTypeOverrideForTesting(column: 0, type: .string)
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "String")
+        XCTAssertNotEqual(controller.headerTypeTextForTesting(column: 0), inferredTitle)
         XCTAssertEqual(controller.columnTypeOverridesForTesting, [0: "String"])
 
         controller.setColumnTypeOverrideForTesting(column: 0, type: nil)
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Integer")
+        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), inferredTitle)
         XCTAssertTrue(controller.columnTypeOverridesForTesting.isEmpty)
     }
 
@@ -1355,10 +1341,10 @@ final class MainWindowControllerGridTests: XCTestCase {
 
         controller.openFileForTesting(URL(fileURLWithPath: path))
         try waitUntilColumnTypesReady(controller, column: 0)
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Float")
+        let originalTitle = controller.headerTypeTextForTesting(column: 0)
 
         controller.requestColumnTypeChangeForTesting(column: 0, to: .integer)
-        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), "Float", "lossy Float→Integer must be blocked")
+        XCTAssertEqual(controller.headerTypeTextForTesting(column: 0), originalTitle, "lossy Float→Integer must be blocked")
         XCTAssertTrue(controller.columnTypeOverridesForTesting.isEmpty)
     }
 

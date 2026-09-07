@@ -68,7 +68,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "NanumCsvViewerMac",
-            dependencies: ["CsvCore", "ImportServiceProtocol"]
+            dependencies: ["CsvCore", "ImportServiceProtocol"],
+            resources: [.copy("Resources/Localization")]
         ),
         .executableTarget(
             name: "ImportService",

@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer là ứng dụng xem CSV nhanh, chạy cục bộ trên macOS.\n\nMở tệp CSV và văn bản, xem ngay các hàng dữ liệu và tiếp tục làm việc trong khi các tệp lớn được lập chỉ mục trong nền. Ứng dụng dành cho những ai cần xem dữ liệu dạng bảng mà không phải nhập vào bảng tính trước.\n\nTính năng chính:\n• Mở CSV nhanh với cơ chế hiển thị hàng ảo hóa\n• Nhận diện UTF-8, UTF-8 BOM và bảng mã tiếng Hàn CP949/EUC-KR\n• Nhãn kiểu dữ liệu của cột giúp phân biệt văn bản, số, ngày và dữ liệu phân loại\n• Tìm kiếm, lọc, sắp xếp và xem các giá trị đã chọn\n• Thống kê cột và kiểm tra chất lượng dữ liệu\n• Biểu đồ tần suất theo ngày, phân bố số, kiểm tra trùng lặp, phân nhóm, tương quan, kiểm định t và kiểm định chi bình phương\n• Tạo bảng tổng hợp kiểu Excel với hàng, cột, bộ lọc, nhiều đại lượng đo lường và phân nhóm theo ngày\n• Biểu đồ tổng hợp dạng cột, cột nhóm, cột chồng và đường\n• Xuất chế độ xem hiện tại hoặc kết quả phân tích dưới dạng CSV, TSV, JSON, Markdown hoặc HTML\n• Quản lý bộ nhớ đệm chỉ mục cục bộ để mở lại các tệp lớn nhanh hơn\n\nNanum CSV Viewer hoạt động cục bộ trên máy Mac của bạn. Ứng dụng không yêu cầu tài khoản, không tải tệp CSV của bạn lên mạng và không thu thập dữ liệu phân tích sử dụng.",
+  "locale": "vi",
+  "keywords": "csv,xem,bảng tính,tổng hợp,biểu đồ,bảng,lọc,sắp xếp,phân tích,utf-8,cp949,xuất,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Nay hỗ trợ 16 ngôn ngữ, với tùy chọn ngôn ngữ trong phần cài đặt của ứng dụng. Cải thiện độ ổn định khi lọc và lập bảng tổng hợp từ các cột có nhiều giá trị khác nhau. Có thể tìm kiếm trong danh sách danh mục, tính toán bảng tổng hợp theo luồng và nhận hướng dẫn rõ ràng khi kết quả quá lớn.",
+  "subtitle": "Xem CSV và bảng tổng hợp",
+  "name": "Nanum CSV Viewer"
+}

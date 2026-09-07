@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer is a fast, local CSV viewer for macOS.\n\nOpen CSV and text files, inspect rows immediately, and keep working while large files are indexed in the background. The app is designed for people who need to review tabular data without importing it into a spreadsheet first.\n\nKey features:\n• Fast CSV opening with virtualized row display\n• UTF-8, UTF-8 BOM, and Korean CP949/EUC-KR detection\n• Type-aware column badges for text, numbers, dates, and categorical fields\n• Find, filter, sort, and inspect selected values\n• Column statistics and data quality checks\n• Date histograms, numeric distributions, duplicate checks, grouping, correlation, t-tests, and chi-square tests\n• Excel-style pivot builder with rows, columns, filters, multiple measures, and date grouping\n• Pivot charts with bar, grouped bar, stacked bar, and line views\n• Export the current view or analysis results as CSV, TSV, JSON, Markdown, or HTML\n• Local index cache controls for faster reopening of large files\n\nNanum CSV Viewer works locally on your Mac. It does not require an account, does not upload your CSV files, and does not collect analytics data.",
+  "locale": "en-US",
+  "keywords": "csv,viewer,spreadsheet,pivot,chart,table,filter,sort,analysis,utf-8,cp949,export,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Now available in 16 languages, with an in-app language selection setting. Improved stability when filtering and pivoting columns with many distinct values, searchable category lists, streaming pivot calculations, and clear guidance for oversized results.",
+  "subtitle": "CSV Viewer and Pivot Tables",
+  "name": "Nanum CSV Viewer"
+}
