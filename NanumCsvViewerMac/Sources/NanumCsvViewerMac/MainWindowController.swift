@@ -849,11 +849,13 @@ final class MainWindowController: NSWindowController {
         title.font = .systemFont(ofSize: 22, weight: .semibold)
         title.textColor = .labelColor
 
-        let subtitle = NSTextField(labelWithString: L.t("Large files open quickly and continue indexing in the background.", "대용량 파일은 빠르게 열리고 백그라운드에서 계속 인덱싱됩니다."))
+        let subtitle = NSTextField(wrappingLabelWithString: L.t("Large files open quickly and continue indexing in the background.", "대용량 파일은 빠르게 열리고 백그라운드에서 계속 인덱싱됩니다."))
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
         subtitle.alignment = .center
-        subtitle.maximumNumberOfLines = 2
+        subtitle.maximumNumberOfLines = 0
+        subtitle.preferredMaxLayoutWidth = 440
+        subtitle.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let button = NSButton(title: L.t("Open CSV...", "CSV 열기..."), target: self, action: #selector(openDocument(_:)))
         button.bezelStyle = .rounded
