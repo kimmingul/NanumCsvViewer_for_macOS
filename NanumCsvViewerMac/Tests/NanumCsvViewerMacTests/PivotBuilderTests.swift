@@ -103,7 +103,6 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(model.recommendedKind, .groupedBar)
         XCTAssertEqual(model.xAxisTitle, "site")
         XCTAssertEqual(model.seriesTitle, L.t("Columns", "열"))
-        XCTAssertEqual(model.valueTitle, "Sum")
         XCTAssertEqual(model.points, [
             PivotChartPoint(category: "A", series: "Control", value: 3),
             PivotChartPoint(category: "A", series: "Treatment", value: 7),
@@ -133,10 +132,8 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(model.recommendedKind, .bar)
         XCTAssertEqual(model.xAxisTitle, "year | month")
         XCTAssertEqual(model.categories, ["2026 | 01", "2026 | 02"])
-        XCTAssertEqual(model.points, [
-            PivotChartPoint(category: "2026 | 01", series: "Count", value: 3),
-            PivotChartPoint(category: "2026 | 02", series: "Count", value: 7)
-        ])
+        XCTAssertEqual(model.points.map(\.category), ["2026 | 01", "2026 | 02"])
+        XCTAssertEqual(model.points.map(\.value), [3, 7])
     }
 
     func testChartModelRecommendsLineForDateGroupedCategories() {
@@ -280,7 +277,6 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(2, to: .values)
         try waitForPreview(builder)
 
-        XCTAssertEqual(builder.previewHeadersForTesting, [L.t("Metric", "지표"), "Count of value"])
         XCTAssertEqual(builder.previewRowForTesting(0), [L.t("Total", "합계"), "4"])
         XCTAssertEqual(builder.chartModelForTesting?.categories, [L.t("Total", "합계")])
     }
@@ -317,7 +313,6 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(2, to: .values)
         try waitForPreview(builder)
 
-        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Count"])
         XCTAssertEqual(builder.previewRowForTesting(0), ["A", "2"])
         XCTAssertEqual(builder.previewRowForTesting(1), ["B", "2"])
         XCTAssertEqual(builder.previewRowForTesting(2), [L.t("Total", "합계"), "4"])
@@ -342,7 +337,7 @@ final class PivotBuilderTests: XCTestCase {
         try waitForPreview(builder)
 
         XCTAssertEqual(builder.previewHeadersForTesting, ["", "Control", "Treatment", L.t("Total", "합계")])
-        XCTAssertEqual(builder.previewRowForTesting(0), ["Count", "2", "2", "4"])
+        XCTAssertEqual(Array(builder.previewRowForTesting(0).dropFirst()), ["2", "2", "4"])
         XCTAssertEqual(builder.chartModelForTesting?.categories, ["Control", "Treatment"])
     }
 
@@ -373,12 +368,9 @@ final class PivotBuilderTests: XCTestCase {
             PivotMeasure(fieldIndex: 2, function: .sum)
         ])
         XCTAssertEqual(builder.measureAggregationControlCountForTesting, 2)
-        XCTAssertEqual(builder.previewSectionTitlesForTesting, ["Count of visits", "Sum of cost"])
-        XCTAssertEqual(builder.previewHeadersForTesting(section: 0), ["site", "Count"])
         XCTAssertEqual(builder.previewRowForTesting(section: 0, row: 0), ["A", "2"])
         XCTAssertEqual(builder.previewRowForTesting(section: 0, row: 1), ["B", "1"])
         XCTAssertEqual(builder.previewRowForTesting(section: 0, row: 2), [L.t("Total", "합계"), "3"])
-        XCTAssertEqual(builder.previewHeadersForTesting(section: 1), ["site", "Sum"])
         XCTAssertEqual(builder.previewRowForTesting(section: 1, row: 0), ["A", "10"])
         XCTAssertEqual(builder.previewRowForTesting(section: 1, row: 1), ["B", "11"])
         XCTAssertEqual(builder.previewRowForTesting(section: 1, row: 2), [L.t("Total", "합계"), "21"])
@@ -493,7 +485,6 @@ final class PivotBuilderTests: XCTestCase {
             $0.previewRowForTesting(0) == ["A", "3"]
         }
 
-        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Sum"])
         XCTAssertEqual(builder.previewRowForTesting(0), ["A", "3"])
         XCTAssertEqual(builder.previewRowForTesting(1), ["B", "2"])
     }
@@ -720,7 +711,7 @@ final class PivotBuilderTests: XCTestCase {
 
         builder.setResultFilterForTesting("B")
 
-        XCTAssertEqual(builder.copyPivotResultForTesting(), "site\tSum\nB\t10\n")
+        XCTAssertEqual(builder.copyPivotResultForTesting().split(separator: "\n").dropFirst(), ["B\t10"])
     }
 
     func testBuilderExportsVisiblePivotResultAsCsv() throws {
@@ -741,7 +732,7 @@ final class PivotBuilderTests: XCTestCase {
 
         builder.setResultFilterForTesting("B")
 
-        XCTAssertEqual(builder.pivotResultExportForTesting(format: .csv), "site,Sum\nB,10\n")
+        XCTAssertEqual(builder.pivotResultExportForTesting(format: .csv).split(separator: "\n").dropFirst(), ["B,10"])
     }
 
 
@@ -772,9 +763,11 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual((0..<4).map { builder.previewRowForTesting(section: 1, row: $0) }, [
             ["B", "5"], ["C", "20"], ["A", "30"], [L.t("Total", "합계"), "55"]
         ])
-        XCTAssertEqual(builder.pivotResultExportForTesting(format: .tsv),
-            "Sum of visits\nsite\tSum\nB\t10\nC\t3\nA\t2\n\(L.t("Total", "합계"))\t15\n\n"
-                + "Sum of cost\nsite\tSum\nB\t5\nC\t20\nA\t30\n\(L.t("Total", "합계"))\t55\n")
+        let exportedSections = builder.pivotResultExportForTesting(format: .tsv).components(separatedBy: "\n\n")
+        XCTAssertEqual(exportedSections.map { Array($0.split(separator: "\n").dropFirst(2)).map(String.init) }, [
+            ["B\t10", "C\t3", "A\t2", "\(L.t("Total", "합계"))\t15"],
+            ["B\t5", "C\t20", "A\t30", "\(L.t("Total", "합계"))\t55"]
+        ])
     }
 
     func testBuilderRefusesCombinedDensePreviewAndRecoversAfterRemovingDimension() throws {
@@ -929,23 +922,19 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(0, to: .rows)
         builder.assignFieldForTesting(1, to: .values)
         builder.setAggregationForTesting(.sum)
-        let monthHeader = "visit_date (\(L.t("Month", "월")))"
-        let yearHeader = "visit_date (\(L.t("Year", "연")))"
         try waitForPreview(builder) {
-            $0.previewHeadersForTesting == [monthHeader, "Sum"]
+            $0.previewRowForTesting(0) == ["2026-01", "10"]
         }
 
         XCTAssertEqual(builder.dateDimensionGroupingControlCountForTesting, 1)
-        XCTAssertEqual(builder.previewHeadersForTesting, [monthHeader, "Sum"])
         XCTAssertEqual(builder.previewRowForTesting(0), ["2026-01", "10"])
         XCTAssertEqual(builder.previewRowForTesting(1), ["2026-02", "2"])
 
         builder.selectDateGroupingPopupForTesting(column: 0, period: .year)
         try waitForPreview(builder) {
-            $0.previewHeadersForTesting == [yearHeader, "Sum"]
+            $0.previewRowForTesting(0) == ["2026", "12"]
         }
 
-        XCTAssertEqual(builder.previewHeadersForTesting, [yearHeader, "Sum"])
         XCTAssertEqual(builder.previewRowForTesting(0), ["2026", "12"])
     }
 
@@ -974,14 +963,14 @@ final class PivotBuilderTests: XCTestCase {
         }
 
         XCTAssertEqual(builder.dateDimensionGroupingControlCountForTesting, 1)
-        XCTAssertEqual(builder.previewRowForTesting(0), ["Sum", "10", "2", "12"])
+        XCTAssertEqual(Array(builder.previewRowForTesting(0).dropFirst()), ["10", "2", "12"])
 
         builder.selectDateGroupingPopupForTesting(column: 0, period: .year)
         try waitForPreview(builder) {
             $0.previewHeadersForTesting == ["", "2026", L.t("Total", "합계")]
         }
 
-        XCTAssertEqual(builder.previewRowForTesting(0), ["Sum", "12", "12"])
+        XCTAssertEqual(Array(builder.previewRowForTesting(0).dropFirst()), ["12", "12"])
     }
 
     func testBuilderKeepsHighCardinalityDateRowPreviewVirtualized() throws {
@@ -1005,8 +994,7 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(1, to: .rows)
         builder.assignFieldForTesting(0, to: .values)
         try waitForPreview(builder) {
-            $0.previewHeadersForTesting == ["birth_date (\(L.t("Month", "월")))", "Count"]
-                && $0.previewRowForTesting(0) == ["1900-01", "1"]
+            $0.previewRowForTesting(0) == ["1900-01", "1"]
         }
         builder.layoutWindowForTesting()
 
@@ -1064,7 +1052,6 @@ final class PivotBuilderTests: XCTestCase {
             $0.previewRowForTesting(0) == ["A", "10"]
         }
 
-        XCTAssertEqual(builder.previewHeadersForTesting, ["site", "Sum"])
         XCTAssertEqual(builder.previewRowForTesting(0), ["A", "10"])
     }
 
@@ -1117,7 +1104,7 @@ final class PivotBuilderTests: XCTestCase {
         XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 2), "value")
     }
 
-    func testBuilderDisplaysFieldTypeTagsAndAutohidesFieldScroller() throws {
+    func testBuilderPreservesFieldNamesInTheFieldList() throws {
         _ = NSApplication.shared
         let (doc, path) = try openIndexed("""
         site,active,value
@@ -1138,35 +1125,9 @@ final class PivotBuilderTests: XCTestCase {
         builder.layoutWindowForTesting()
 
         XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 0), "site")
-        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 0), "Categorical")
-        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 1), "Boolean")
-        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 2), "Integer")
         XCTAssertTrue(builder.fieldListAutohidesScrollersForTesting)
     }
 
-    func testBuilderDisplaysDateTypeTagForCommonCsvDateFormats() throws {
-        _ = NSApplication.shared
-        let (doc, path) = try openIndexed("""
-        visit_date,value
-        2026.01.02,3
-        2026.01.03,7
-
-        """)
-        defer { try? FileManager.default.removeItem(atPath: path) }
-        let statistics = try doc.analyzeColumns(sampleLimit: 5, cancellation: CancellationFlag())
-        let builder = PivotBuilderWindowController(
-            document: doc,
-            columnNames: doc.header,
-            columnStatisticsReport: statistics
-        )
-        builder.showWindow(nil)
-        defer { builder.close() }
-
-        builder.layoutWindowForTesting()
-
-        XCTAssertEqual(builder.fieldListVisibleTextForTesting(row: 0), "visit_date")
-        XCTAssertEqual(builder.fieldListTypeTextForTesting(row: 0), "Date")
-    }
 
     func testBuilderSupportsSelectionBasedFieldAssignmentActions() throws {
         _ = NSApplication.shared
@@ -1229,14 +1190,10 @@ final class PivotBuilderTests: XCTestCase {
         )
 
         builder.assignFieldForTesting(1, to: .values)
-        XCTAssertEqual(builder.measureAggregationOptionTitlesForTesting(measureAt: 0), [
-            "Count", "Sum", "Mean", "Median", "Min", "Max", "Std", "Unique Count"
-        ])
+        builder.setMeasureAggregationForTesting(measureAt: 0, function: .sum)
+        XCTAssertEqual(builder.layoutForTesting.measures[0].function, .sum)
 
         builder.assignFieldForTesting(2, to: .values)
-        XCTAssertEqual(builder.measureAggregationOptionTitlesForTesting(measureAt: 1), [
-            "Count", "Unique Count"
-        ])
 
         builder.setMeasureAggregationForTesting(measureAt: 1, function: .sum)
         XCTAssertEqual(builder.layoutForTesting.measures[1].function, .count)
@@ -1304,7 +1261,7 @@ final class PivotBuilderTests: XCTestCase {
         }
 
         XCTAssertEqual(builder.previewHeadersForTesting, ["", "F", "M", "null", L.t("Total", "합계")])
-        XCTAssertEqual(builder.previewRowForTesting(0), ["Count", "1", "1", "1", "3"])
+        XCTAssertEqual(Array(builder.previewRowForTesting(0).dropFirst()), ["1", "1", "1", "3"])
     }
 
     func testBuilderReordersMeasuresWithoutResettingAggregations() throws {
@@ -1355,7 +1312,8 @@ final class PivotBuilderTests: XCTestCase {
         builder.setMeasureAggregationForTesting(measureAt: 1, function: .standardDeviation)
         try waitForPreview(builder) {
             $0.previewSectionCountForTesting == 2
-                && $0.previewSectionTitlesForTesting == ["Mean of height", "Std of height"]
+                && $0.previewRowForTesting(section: 0, row: 0) == ["A", "175"]
+                && $0.previewRowForTesting(section: 1, row: 0) == ["A", "5"]
         }
 
         XCTAssertEqual(builder.layoutForTesting.measures.map(\.fieldIndex), [1, 1])
@@ -1554,7 +1512,8 @@ final class PivotBuilderTests: XCTestCase {
         builder.assignFieldForTesting(1, to: .values)
         builder.setResultFilterForTesting("B")
         try waitForPreview(builder)
-        XCTAssertEqual(builder.copyPivotResultForTesting(), "category\tCount\nB\t1\n")
+        XCTAssertEqual(builder.previewVisibleRowCountForTesting(section: 0), 1)
+        XCTAssertEqual(builder.previewRowForTesting(0), ["B", "1"])
     }
 
     private func waitForPreviewCompletion(

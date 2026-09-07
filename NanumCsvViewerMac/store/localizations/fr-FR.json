@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer est un lecteur CSV rapide pour macOS qui fonctionne en local.\n\nOuvrez des fichiers CSV et texte, examinez immédiatement les lignes et continuez à travailler pendant l’indexation des fichiers volumineux en arrière-plan. L’app est conçue pour consulter des données tabulaires sans devoir les importer dans un tableur.\n\nFonctionnalités principales :\n• Ouverture rapide des fichiers CSV avec affichage virtualisé des lignes\n• Détection des encodages UTF-8, UTF-8 BOM et coréens CP949/EUC-KR\n• Badges de colonnes indiquant le type : texte, nombres, dates ou données catégorielles\n• Recherche, filtrage, tri et examen des valeurs sélectionnées\n• Statistiques par colonne et contrôles de qualité des données\n• Histogrammes de dates, distributions numériques, recherche de doublons, regroupements, corrélations, tests t et tests du khi-deux\n• Création de tableaux croisés dynamiques de type Excel avec lignes, colonnes, filtres, mesures multiples et regroupement par date\n• Graphiques croisés dynamiques en barres, barres groupées, barres empilées ou courbes\n• Export de la vue actuelle ou des résultats d’analyse aux formats CSV, TSV, JSON, Markdown ou HTML\n• Gestion du cache d’index local pour rouvrir plus rapidement les fichiers volumineux\n\nNanum CSV Viewer fonctionne en local sur votre Mac. Aucun compte n’est nécessaire, vos fichiers CSV ne sont pas téléversés et aucune donnée analytique d’utilisation n’est collectée.",
+  "locale": "fr-FR",
+  "keywords": "csv,lecteur,tableur,tableau croisé,graphique,table,filtre,tri,analyse,utf-8,cp949,export,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Disponible en 16 langues, avec un réglage de sélection de la langue dans l’app. Stabilité améliorée lors du filtrage et de la création de tableaux croisés sur des colonnes contenant de nombreuses valeurs distinctes, listes de catégories avec recherche, calculs de tableaux croisés en flux et indications claires lorsque les résultats sont trop volumineux.",
+  "subtitle": "CSV et tableaux croisés",
+  "name": "Nanum CSV Viewer"
+}

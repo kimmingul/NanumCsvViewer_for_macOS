@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer è un visualizzatore CSV veloce per macOS che funziona in locale.\n\nApri file CSV e di testo, esamina subito le righe e continua a lavorare mentre i file di grandi dimensioni vengono indicizzati in background. L’app è pensata per chi deve esaminare dati tabellari senza prima importarli in un foglio di calcolo.\n\nFunzionalità principali:\n• Apertura rapida dei file CSV con visualizzazione virtualizzata delle righe\n• Rilevamento di UTF-8, UTF-8 BOM e delle codifiche coreane CP949/EUC-KR\n• Indicatori del tipo di colonna per testo, numeri, date e dati categorici\n• Ricerca, filtri, ordinamento e analisi dei valori selezionati\n• Statistiche per colonna e controlli della qualità dei dati\n• Istogrammi delle date, distribuzioni numeriche, verifica dei duplicati, raggruppamenti, correlazioni, test t e test del chi quadrato\n• Creazione di tabelle pivot in stile Excel con righe, colonne, filtri, più misure e raggruppamento per data\n• Grafici pivot a barre, a barre raggruppate, a barre in pila e a linee\n• Esportazione della vista corrente o dei risultati dell’analisi in formato CSV, TSV, JSON, Markdown o HTML\n• Gestione della cache degli indici locale per riaprire più rapidamente i file di grandi dimensioni\n\nNanum CSV Viewer funziona in locale sul tuo Mac. Non richiede un account, non carica i tuoi file CSV su server e non raccoglie dati di analisi sull’utilizzo.",
+  "locale": "it",
+  "keywords": "csv,visualizzatore,foglio di calcolo,pivot,grafico,tabella,filtro,ordina,analisi,utf-8,cp949,esporta",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Ora disponibile in 16 lingue, con un’impostazione per scegliere la lingua nell’app. Maggiore stabilità durante il filtraggio e la creazione di tabelle pivot con colonne contenenti molti valori distinti, elenchi di categorie con ricerca, calcoli pivot in streaming e indicazioni chiare per risultati troppo grandi.",
+  "subtitle": "Visualizzatore CSV e pivot",
+  "name": "Nanum CSV Viewer"
+}

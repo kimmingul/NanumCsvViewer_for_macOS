@@ -206,7 +206,7 @@ final class FacetBarRowView: NSControl {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 4
-        toolTip = "\(entry.label) (\(entry.count.formatted()))"
+        toolTip = "\(entry.label) (\(entry.count.formatted(.number.locale(L.locale))))"
 
         valueLabel.stringValue = entry.label
         valueLabel.font = .systemFont(ofSize: 11, weight: entry.isActive ? .semibold : .regular)
@@ -215,7 +215,7 @@ final class FacetBarRowView: NSControl {
         valueLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(valueLabel)
 
-        countLabel.stringValue = entry.count.formatted()
+        countLabel.stringValue = entry.count.formatted(.number.locale(L.locale))
         countLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
         countLabel.textColor = .secondaryLabelColor
         countLabel.alignment = .right

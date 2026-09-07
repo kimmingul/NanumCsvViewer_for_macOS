@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer 是一款适用于 macOS 的快速本地 CSV 查看器。\n\n打开 CSV 和文本文件，即可立即查看数据行。即使大型文件正在后台建立索引，也能继续操作。本应用适合需要直接查看表格数据、不想先将其导入电子表格的用户。\n\n主要功能：\n• 通过行虚拟化显示快速打开 CSV\n• 检测 UTF-8、UTF-8 BOM 及韩文 CP949/EUC-KR 编码\n• 使用列类型标记区分文本、数字、日期和分类字段\n• 查找、筛选、排序及查看所选值\n• 列统计与数据质量检查\n• 日期直方图、数值分布、重复值检查、分组、相关性分析、t 检验和卡方检验\n• Excel 风格的数据透视表构建工具，支持行、列、筛选器、多个度量值及日期分组\n• 数据透视图支持柱形图、簇状柱形图、堆积柱形图和折线图\n• 将当前视图或分析结果导出为 CSV、TSV、JSON、Markdown 或 HTML\n• 管理本地索引缓存，更快地重新打开大型文件\n\nNanum CSV Viewer 在您的 Mac 上本地运行。无需账户，不会上传您的 CSV 文件，也不会收集使用情况分析数据。",
+  "locale": "zh-Hans",
+  "keywords": "csv,查看器,电子表格,数据透视表,图表,表格,筛选,排序,分析,utf-8,cp949,导出,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "现已支持 16 种语言，可在应用内设置中选择语言。提升了对包含大量不同值的列进行筛选和数据透视计算时的稳定性。类别列表现可搜索，数据透视计算采用流式处理，并在结果过大时提供清晰提示。",
+  "subtitle": "CSV 查看器与数据透视表",
+  "name": "Nanum CSV Viewer"
+}

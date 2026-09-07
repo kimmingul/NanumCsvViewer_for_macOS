@@ -36,6 +36,7 @@ rm -rf "$APP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$IMPORT_SERVICE_BUNDLE/Contents/MacOS"
 cp "$EXECUTABLE" "$APP_PATH/Contents/MacOS/NanumCsvViewerMac"
 cp "$IMPORT_SERVICE_EXECUTABLE" "$IMPORT_SERVICE_BUNDLE/Contents/MacOS/ImportService"
+cp -R "$ROOT/.build/release/NanumCsvViewerMac_NanumCsvViewerMac.bundle" "$APP_PATH/Contents/Resources/"
 
 if [[ -f "$ICON" ]]; then
   cp "$ICON" "$APP_PATH/Contents/Resources/AppIcon.icns"
@@ -48,6 +49,25 @@ cat > "$APP_PATH/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ko</string>
+    <string>ja</string>
+    <string>zh-Hans</string>
+    <string>zh-Hant</string>
+    <string>fr</string>
+    <string>es</string>
+    <string>de</string>
+    <string>pt-BR</string>
+    <string>it</string>
+    <string>ru</string>
+    <string>vi</string>
+    <string>id</string>
+    <string>th</string>
+    <string>pl</string>
+    <string>nl</string>
+  </array>
   <key>CFBundleExecutable</key>
   <string>NanumCsvViewerMac</string>
   <key>CFBundleIdentifier</key>

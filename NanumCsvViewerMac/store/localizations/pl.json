@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer to szybka, działająca lokalnie przeglądarka plików CSV dla macOS.\n\nOtwieraj pliki CSV i tekstowe, od razu przeglądaj wiersze i pracuj dalej, gdy duże pliki są indeksowane w tle. Aplikacja jest przeznaczona dla osób, które chcą przeglądać dane tabelaryczne bez wcześniejszego importowania ich do arkusza kalkulacyjnego.\n\nNajważniejsze funkcje:\n• Szybkie otwieranie plików CSV z wirtualizowanym wyświetlaniem wierszy\n• Wykrywanie kodowania UTF-8, UTF-8 BOM oraz koreańskich CP949/EUC-KR\n• Oznaczenia typów kolumn: tekst, liczby, daty i dane kategorialne\n• Wyszukiwanie, filtrowanie, sortowanie i przeglądanie wybranych wartości\n• Statystyki kolumn i kontrola jakości danych\n• Histogramy dat, rozkłady liczbowe, wykrywanie duplikatów, grupowanie, korelacje, testy t i testy chi-kwadrat\n• Tworzenie tabel przestawnych w stylu Excela z wierszami, kolumnami, filtrami, wieloma miarami i grupowaniem według dat\n• Wykresy przestawne: słupkowe, słupkowe grupowane, słupkowe skumulowane i liniowe\n• Eksport bieżącego widoku lub wyników analizy do formatów CSV, TSV, JSON, Markdown lub HTML\n• Zarządzanie lokalną pamięcią podręczną indeksów, aby szybciej otwierać ponownie duże pliki\n\nNanum CSV Viewer działa lokalnie na Twoim Macu. Nie wymaga konta, nie przesyła Twoich plików CSV na serwery i nie zbiera danych analitycznych dotyczących użytkowania.",
+  "locale": "pl",
+  "keywords": "csv,przeglądarka,arkusz,tabela przestawna,wykres,tabela,filtr,sortowanie,analiza,utf-8,cp949,eksport",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Teraz dostępne w 16 językach, z wyborem języka w ustawieniach aplikacji. Większa stabilność filtrowania i tworzenia tabel przestawnych dla kolumn z wieloma różnymi wartościami, listy kategorii z wyszukiwaniem, strumieniowe obliczenia tabel przestawnych i jasne wskazówki dotyczące zbyt dużych wyników.",
+  "subtitle": "CSV i tabele przestawne",
+  "name": "Nanum CSV Viewer"
+}

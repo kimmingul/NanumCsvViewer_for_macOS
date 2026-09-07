@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nanum CSV Viewer localization catalog",
+  "description": "One UTF-8 JSON object per supported language, named <languageCode>.json. Keys are English source templates; values are translated templates. Swift interpolations become zero-based numbered placeholders {0}, {1}, etc. Each placeholder must occur exactly as often as in its English key; order may change. Literal braces are escaped as {{ and }}. Preserve printf conversion specifications exactly. Escaped JSON quotes and newlines represent actual source characters, not extra escaping. Run localization-catalog.swift --check to validate source parity, all language files, placeholder signatures and printf conversions.",
+  "type": "object",
+  "minProperties": 1,
+  "propertyNames": { "minLength": 1 },
+  "additionalProperties": { "type": "string", "minLength": 1 }
+}

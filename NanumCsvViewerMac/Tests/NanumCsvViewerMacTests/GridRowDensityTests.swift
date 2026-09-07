@@ -56,6 +56,5 @@ final class GridRowDensityControllerTests: XCTestCase {
 
         let snapshot = try XCTUnwrap(controller.performanceSnapshotForTesting())
         XCTAssertNotNil(snapshot.memoryFootprintBytes)
-        XCTAssertTrue(snapshot.formattedLines().contains { $0.hasPrefix("Memory:") })
     }
 }

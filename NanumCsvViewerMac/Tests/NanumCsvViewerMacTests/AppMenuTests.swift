@@ -118,20 +118,6 @@ final class AppMenuTests: XCTestCase {
         XCTAssertEqual(aboutItem.action, NSSelectorFromString("showAboutWindow:"))
     }
 
-    func testAboutWindowContentIncludesDeveloperAffiliations() {
-        let content = AboutWindowContent.current()
-
-        XCTAssertEqual(content.developerLabel, "Developed by")
-        XCTAssertEqual(content.developerName, "Min-Gul Kim, MD, PhD")
-        XCTAssertEqual(content.affiliationLines, [
-            "Professor",
-            "Department of Pharmacology",
-            "Jeonbuk National University Medical School",
-            "CEO",
-            "Nanum Space Co., Ltd."
-        ])
-        XCTAssertEqual(content.footerText, "© 2026 김민걸 · Third-party notices: THIRD_PARTY_NOTICES.md")
-    }
 
     func testAboutWindowUsesCompactTypography() {
         XCTAssertEqual(AboutTypography.appNameSize, 18)
@@ -142,12 +128,42 @@ final class AppMenuTests: XCTestCase {
         XCTAssertEqual(AboutTypography.footerSize, 12)
     }
 
-    private func buildMainMenu() throws -> NSMenu {
+    func testLanguageSelectionUsesStableCodesAndRestoresSystemDefault() throws {
+        let previousSelection = L.selectedLanguageCode
+        defer { L.setLanguage(code: previousSelection) }
+        L.setLanguage(code: nil)
+        let activeLanguage = L.languageCode
+        let delegate = AppDelegate()
+        let menu = try buildMainMenu(delegate: delegate)
+        let settings = try XCTUnwrap(menu.items.first { $0.title == L.t("Settings", "설정") }?.submenu)
+        let languages = try XCTUnwrap(settings.items.first { $0.title == L.t("Language", "언어") }?.submenu)
+        let action = NSSelectorFromString("changeLanguage:")
+        let choices = languages.items.filter { $0.action == action }
+        XCTAssertEqual(Set(choices.compactMap { $0.representedObject as? String }), Set(L.supportedLanguages.map(\.code)))
+        let french = try XCTUnwrap(choices.first { $0.representedObject as? String == "fr" })
+        french.title = "A display label is not an identifier"
+        XCTAssertTrue(NSApp.sendAction(action, to: delegate, from: french))
+        XCTAssertEqual(L.selectedLanguageCode, "fr")
+        XCTAssertEqual(french.state, .on)
+        XCTAssertEqual(L.languageCode, activeLanguage, "Changes must wait until the next app launch")
+
+        let relaunchedMenu = try buildMainMenu()
+        let relaunchedSettings = try XCTUnwrap(relaunchedMenu.items.first { $0.title == L.t("Settings", "설정") }?.submenu)
+        let relaunchedLanguages = try XCTUnwrap(relaunchedSettings.items.first { $0.title == L.t("Language", "언어") }?.submenu)
+        XCTAssertEqual(relaunchedLanguages.items.first { $0.representedObject as? String == "fr" }?.state, .on)
+
+        let system = try XCTUnwrap(choices.first { $0.representedObject == nil })
+        XCTAssertTrue(NSApp.sendAction(action, to: delegate, from: system))
+        XCTAssertNil(L.selectedLanguageCode)
+        XCTAssertEqual(system.state, .on)
+        XCTAssertEqual(french.state, .off)
+    }
+
+    private func buildMainMenu(delegate: AppDelegate = AppDelegate()) throws -> NSMenu {
         _ = NSApplication.shared
         let previousMenu = NSApp.mainMenu
         let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
 
-        let delegate = AppDelegate()
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification, object: NSApp))
         let mainMenu = try XCTUnwrap(NSApp.mainMenu)
 

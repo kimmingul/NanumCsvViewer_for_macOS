@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer é um visualizador de CSV rápido para macOS que funciona localmente.\n\nAbra arquivos CSV e de texto, examine as linhas imediatamente e continue trabalhando enquanto arquivos grandes são indexados em segundo plano. O app foi desenvolvido para quem precisa revisar dados tabulares sem importá-los primeiro para uma planilha.\n\nPrincipais recursos:\n• Abertura rápida de arquivos CSV com exibição virtualizada de linhas\n• Detecção de UTF-8, UTF-8 BOM e das codificações coreanas CP949/EUC-KR\n• Indicadores de tipo de coluna para texto, números, datas e dados categóricos\n• Busca, filtragem, ordenação e inspeção dos valores selecionados\n• Estatísticas por coluna e verificações de qualidade dos dados\n• Histogramas de datas, distribuições numéricas, verificação de duplicatas, agrupamentos, correlações, testes t e testes de qui-quadrado\n• Criação de tabelas dinâmicas no estilo do Excel com linhas, colunas, filtros, várias medidas e agrupamento por data\n• Gráficos dinâmicos de barras, barras agrupadas, barras empilhadas e linhas\n• Exportação da visualização atual ou dos resultados da análise como CSV, TSV, JSON, Markdown ou HTML\n• Gerenciamento do cache de índices local para reabrir arquivos grandes mais rapidamente\n\nNanum CSV Viewer funciona localmente no seu Mac. Não exige uma conta, não envia seus arquivos CSV para servidores e não coleta dados de análise de uso.",
+  "locale": "pt-BR",
+  "keywords": "csv,visualizador,planilha,tabela dinâmica,gráfico,tabela,filtro,ordenar,análise,utf-8,cp949,exportar",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Agora disponível em 16 idiomas, com uma configuração para selecionar o idioma no app. Mais estabilidade ao filtrar e criar tabelas dinâmicas com colunas que contêm muitos valores distintos, listas de categorias com busca, cálculos de tabelas dinâmicas em fluxo e orientações claras para resultados grandes demais.",
+  "subtitle": "CSV e tabelas dinâmicas",
+  "name": "Nanum CSV Viewer"
+}

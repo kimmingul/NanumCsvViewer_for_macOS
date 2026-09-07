@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=version.sh
 . "$ROOT/Scripts/version.sh"
 APP_NAME="Nanum CSV Viewer"
-BUNDLE="$ROOT/dist/$APP_NAME.app"
+BUNDLE="${APP_PATH:-$ROOT/dist/$APP_NAME.app}"
 EXECUTABLE="$ROOT/.build/release/NanumCsvViewerMac"
 IMPORT_SERVICE_EXECUTABLE="$ROOT/.build/release/ImportService"
 IMPORT_SERVICE_ID="com.nanum.csvviewer.mac.ImportService"
@@ -20,6 +20,7 @@ rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources" "$IMPORT_SERVICE_BUNDLE/Contents/MacOS"
 cp "$EXECUTABLE" "$BUNDLE/Contents/MacOS/NanumCsvViewerMac"
 cp "$IMPORT_SERVICE_EXECUTABLE" "$IMPORT_SERVICE_BUNDLE/Contents/MacOS/ImportService"
+cp -R "$ROOT/.build/release/NanumCsvViewerMac_NanumCsvViewerMac.bundle" "$BUNDLE/Contents/Resources/"
 
 if [[ -f "$ICON" ]]; then
   cp "$ICON" "$BUNDLE/Contents/Resources/AppIcon.icns"
@@ -32,6 +33,25 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ko</string>
+    <string>ja</string>
+    <string>zh-Hans</string>
+    <string>zh-Hant</string>
+    <string>fr</string>
+    <string>es</string>
+    <string>de</string>
+    <string>pt-BR</string>
+    <string>it</string>
+    <string>ru</string>
+    <string>vi</string>
+    <string>id</string>
+    <string>th</string>
+    <string>pl</string>
+    <string>nl</string>
+  </array>
   <key>CFBundleExecutable</key>
   <string>NanumCsvViewerMac</string>
   <key>CFBundleIdentifier</key>

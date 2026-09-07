@@ -1,0 +1,11 @@
+{
+  "description": "Nanum CSV Viewer is een snelle, lokaal werkende CSV-viewer voor macOS.\n\nOpen CSV- en tekstbestanden, bekijk direct de rijen en werk door terwijl grote bestanden op de achtergrond worden geïndexeerd. De app is ontworpen voor iedereen die tabelgegevens wil bekijken zonder ze eerst in een spreadsheet te importeren.\n\nBelangrijkste functies:\n• Snel CSV-bestanden openen met gevirtualiseerde rijweergave\n• Detectie van UTF-8, UTF-8 BOM en de Koreaanse coderingen CP949/EUC-KR\n• Kolomlabels die het gegevenstype aangeven: tekst, getallen, datums en categorische gegevens\n• Zoeken, filteren, sorteren en geselecteerde waarden bekijken\n• Kolomstatistieken en controles op gegevenskwaliteit\n• Datumhistogrammen, numerieke verdelingen, controle op duplicaten, groeperingen, correlaties, t-toetsen en chi-kwadraattoetsen\n• Draaitabellen maken in Excel-stijl met rijen, kolommen, filters, meerdere meetwaarden en groepering op datum\n• Draaigrafieken als staafdiagrammen, gegroepeerde staafdiagrammen, gestapelde staafdiagrammen en lijngrafieken\n• De huidige weergave of analyseresultaten exporteren als CSV, TSV, JSON, Markdown of HTML\n• Beheer van de lokale indexcache om grote bestanden sneller opnieuw te openen\n\nNanum CSV Viewer werkt lokaal op je Mac. De app vereist geen account, uploadt je CSV-bestanden niet en verzamelt geen gegevens voor gebruiksanalyse.",
+  "locale": "nl-NL",
+  "keywords": "csv,viewer,spreadsheet,draaitabel,grafiek,tabel,filter,sorteren,analyse,utf-8,cp949,export,mac",
+  "marketingUrl": "https://kimmingul.github.io/NanumCsvViewer_for_macOS/",
+  "promotionalText": null,
+  "supportUrl": "https://github.com/kimmingul/NanumCsvViewer_for_macOS/issues",
+  "whatsNew": "Nu beschikbaar in 16 talen, met een instelling om de taal in de app te kiezen. Verbeterde stabiliteit bij het filteren en maken van draaitabellen met kolommen die veel verschillende waarden bevatten, doorzoekbare categorielijsten, streamingberekeningen voor draaitabellen en duidelijke uitleg bij te grote resultaten.",
+  "subtitle": "CSV-viewer en draaitabellen",
+  "name": "Nanum CSV Viewer"
+}

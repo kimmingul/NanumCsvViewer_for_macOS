@@ -536,7 +536,7 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
     func setAggregation(_ function: AggregationFunction) {
         guard let measure = layout.measures.first else { return }
         setMeasureAggregation(measureID: measure.id, function: function)
-        aggregationPopup.selectItem(withTitle: layout.function.rawValue)
+        aggregationPopup.selectItem(at: AggregationFunction.allCases.firstIndex(of: layout.function) ?? 0)
     }
 
     func selectResultTab(_ tab: InitialResultTab) {
@@ -954,8 +954,11 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         aggregationPopup.removeAllItems()
-        aggregationPopup.addItems(withTitles: AggregationFunction.allCases.map(\.rawValue))
-        aggregationPopup.selectItem(withTitle: layout.function.rawValue)
+        for function in AggregationFunction.allCases {
+            aggregationPopup.addItem(withTitle: function.localizedTitle)
+            aggregationPopup.lastItem?.representedObject = function.rawValue
+        }
+        aggregationPopup.selectItem(at: AggregationFunction.allCases.firstIndex(of: layout.function) ?? 0)
         aggregationPopup.target = self
         aggregationPopup.action = #selector(aggregationChanged(_:))
 
@@ -1162,14 +1165,14 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func aggregationChanged(_ sender: NSPopUpButton) {
-        guard let title = sender.selectedItem?.title,
-              let function = AggregationFunction(rawValue: title) else { return }
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let function = AggregationFunction(rawValue: rawValue) else { return }
         setAggregation(function)
     }
 
     @objc private func measureAggregationChanged(_ sender: NSPopUpButton) {
-        guard let title = sender.selectedItem?.title,
-              let function = AggregationFunction(rawValue: title) else { return }
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let function = AggregationFunction(rawValue: rawValue) else { return }
         setMeasureAggregation(measureID: sender.tag, function: function)
     }
 
@@ -1495,8 +1498,12 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
         popup.tag = measure.id
         popup.target = self
         popup.action = #selector(measureAggregationChanged(_:))
-        popup.addItems(withTitles: allowedAggregationFunctions(for: measure.fieldIndex).map(\.rawValue))
-        popup.selectItem(withTitle: measure.function.rawValue)
+        let functions = allowedAggregationFunctions(for: measure.fieldIndex)
+        for function in functions {
+            popup.addItem(withTitle: function.localizedTitle)
+            popup.lastItem?.representedObject = function.rawValue
+        }
+        popup.selectItem(at: functions.firstIndex(of: measure.function) ?? 0)
         popup.widthAnchor.constraint(equalToConstant: 132).isActive = true
         measureAggregationPopups[measure.id] = popup
         return popup
@@ -1739,7 +1746,7 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
                     "값이 1,000개를 초과하여 메뉴를 표시할 수 없습니다. 정확한 값 입력…으로 원하는 값을 필터링하거나 전체로 필터를 해제하세요."
                 ))
             } catch {
-                state = .failed(error.localizedDescription + "\n" + L.t(
+                state = .failed(LocalizedPresentation.error(error).localizedDescription + "\n" + L.t(
                     "Choose Exact value… to enter a filter directly.",
                     "정확한 값 입력…으로 필터를 직접 입력하세요."
                 ))
@@ -1898,7 +1905,7 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
                             "피벗이 행 100,000개, 열 256개 또는 셀 1,000,000개 한도를 초과합니다. 필터를 추가하거나 날짜 그룹을 넓히거나 행/열 필드를 제거하세요."
                         )
                     } else {
-                        self.emptyPreviewLabel.stringValue = error.localizedDescription
+                        self.emptyPreviewLabel.stringValue = LocalizedPresentation.error(error).localizedDescription
                     }
                     self.updatePreviewVisibility()
                 }
@@ -1937,7 +1944,7 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
         cancellation: CancellationFlag
     ) throws -> PivotPreviewSection {
         try cancellation.check()
-        let valueTypeHeader = measure.function.rawValue
+        let valueTypeHeader = measure.function.localizedTitle
         let headers: [String]
         let rows: [[String]]
         if result.rowColumns.isEmpty, result.columnColumns.isEmpty {
@@ -2012,7 +2019,7 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
 
     private func measureTitle(_ measure: PivotMeasure) -> String {
         let valueName = fields[safe: measure.fieldIndex]?.name ?? L.t("Value", "값")
-        return "\(measure.function.rawValue) of \(valueName)"
+        return L.t("\(measure.function.localizedTitle) of \(valueName)", "\(valueName)의 \(measure.function.localizedTitle)")
     }
 
     nonisolated private static func label(_ key: [String], fallback: String) -> String {
@@ -2171,8 +2178,8 @@ final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
         let rowCount = previewSections.reduce(0) { $0 + $1.rows.count }
         let sectionCount = previewSections.count
         resultSummaryLabel.stringValue = L.t(
-            "\(sectionCount.formatted()) measures, \(rowCount.formatted()) rows",
-            "\(sectionCount.formatted())개 측정값, \(rowCount.formatted())행"
+            "\(sectionCount.formatted(.number.locale(L.locale))) measures, \(rowCount.formatted(.number.locale(L.locale))) rows",
+            "\(sectionCount.formatted(.number.locale(L.locale)))개 측정값, \(rowCount.formatted(.number.locale(L.locale)))행"
         )
     }
 
@@ -2318,19 +2325,11 @@ extension PivotBuilderWindowController {
         previewSections.count
     }
 
-    var previewSectionTitlesForTesting: [String] {
-        previewSections.map(\.title)
-    }
 
     var measureAggregationControlCountForTesting: Int {
         measureAggregationPopups.count
     }
 
-    func measureAggregationOptionTitlesForTesting(measureAt index: Int) -> [String] {
-        guard let measure = layout.measures[safe: index],
-              let popup = measureAggregationPopups[measure.id] else { return [] }
-        return popup.itemArray.map(\.title)
-    }
 
     var measureMoveControlCountForTesting: Int {
         measureMoveButtons.values.reduce(0) { $0 + $1.count }
@@ -2616,11 +2615,6 @@ extension PivotBuilderWindowController {
         return view?.textField?.stringValue
     }
 
-    func fieldListTypeTextForTesting(row: Int) -> String? {
-        guard row >= 0, row < fieldTable.numberOfRows else { return nil }
-        let view = fieldTable.view(atColumn: 0, row: row, makeIfNecessary: true) as? PivotFieldCellView
-        return view?.typeTextForTesting
-    }
 }
 #endif
 
@@ -2651,9 +2645,6 @@ private final class PivotFieldCellView: NSTableCellView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    var typeTextForTesting: String {
-        typeLabel.stringValue
-    }
 
     func configure(field: PivotField) {
         nameLabel.stringValue = field.name
