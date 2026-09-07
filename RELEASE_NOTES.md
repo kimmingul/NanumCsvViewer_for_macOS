@@ -32,6 +32,22 @@ No unreleased changes.
 - Existing GitHub v1.10.2/build204 artifacts remain unchanged; this multilingual
   build uses the separate v1.10.2-build206 release tag.
 
+### Distribution
+
+- Developer ID app notarization: `188b62c8-298b-43b2-bc1f-949a43c7686b` — Accepted.
+- DMG notarization: `b7ccf9ae-dd15-49e5-964a-cf69c049dbb6` — Accepted.
+- App and DMG tickets stapled and validated; signatures, Gatekeeper assessment,
+  and DMG integrity verification passed. ZIP contains the stapled app.
+- Final SHA-256:
+  - `Nanum-CSV-Viewer-v1.10.2-build206.dmg`: `623c18609bd1ec7af84b876c4e12b44b561b9e0a159f9be82327476ccbd3fcad`
+  - `Nanum-CSV-Viewer-v1.10.2-build206.zip`: `f0cac8416984a60927e34f1b9d3df21e191341ca11c4a0412b118ee81f460547`
+- App Store build 206 uploaded `VALID` / `APP_STORE_ELIGIBLE`:
+  `3f8ce2ac-b813-46f1-98a5-3bb242a0206b`.
+- All 16 localized listings and screenshots completed processing. Review
+  submission `bb8150a1-11ee-4181-a0a6-1ad77fe15caf` is `WAITING_FOR_REVIEW`,
+  configured for automatic release after approval.
+- Release source: `d3577aa81c646d59522d72cda61ac937c0a29a19` (PRs #46 and #47).
+
 ## v1.10.2 - 2026-09-08
 
 ### Fixes

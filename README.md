@@ -12,7 +12,7 @@ Requires macOS 14 or later. Both the DMG and the ZIP are Developer ID signed wit
 Each release lists the SHA-256 of its artifacts; verify a download with:
 
 ```bash
-shasum -a 256 Nanum-CSV-Viewer-v1.10.2.dmg
+shasum -a 256 Nanum-CSV-Viewer-v1.10.2-build206.dmg
 ```
 
 Every version is listed on the [releases page](https://github.com/kimmingul/NanumCsvViewer_for_macOS/releases), and [RELEASE_NOTES.md](RELEASE_NOTES.md) carries the full changelog.
