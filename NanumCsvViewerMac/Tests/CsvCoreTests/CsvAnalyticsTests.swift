@@ -293,7 +293,7 @@ final class CsvAnalyticsTests: XCTestCase {
         XCTAssertEqual(pivot.value(row: ["A"], column: []), 10)
     }
 
-    func testPivotFilterValuesHonorsDateGroupingAndRowLimit() throws {
+    func testPivotFilterValuesHonorsDateGroupingAcrossTheFullView() throws {
         let (doc, path) = try openIndexed("""
         visit_date,value
         2026-01-02,3
@@ -306,12 +306,11 @@ final class CsvAnalyticsTests: XCTestCase {
         let values = try doc.pivotFilterValues(
             column: 0,
             dateGrouping: .year,
-            limit: 500,
-            rowLimit: 2,
+            maximumDistinctValues: 2,
             cancellation: CancellationFlag()
         )
 
-        XCTAssertEqual(values, ["2026"])
+        XCTAssertEqual(values, ["2026", "2027"])
     }
 
     func testPivotTableHonorsCancellationDuringAggregation() {

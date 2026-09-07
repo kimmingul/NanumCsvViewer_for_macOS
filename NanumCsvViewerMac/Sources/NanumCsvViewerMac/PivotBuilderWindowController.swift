@@ -20,6 +20,28 @@ private struct PivotPreviewSection: Equatable {
     }
 }
 
+private struct PivotFilterOptionsKey: Hashable {
+    let column: Int
+    let dateGrouping: String?
+}
+
+private enum PivotFilterOptionsState {
+    case loading(CancellationFlag)
+    case loaded([String])
+    case failed(String)
+}
+
+private enum PivotPreviewResourceError: Error, LocalizedError {
+    case tooLarge
+
+    var errorDescription: String? {
+        L.t(
+            "The combined pivot preview exceeds 1,000,000 display cells or 20 measures. Add filters, group dates more broadly, remove row/column fields, or use fewer measures. No partial result is shown.",
+            "전체 피벗 미리보기가 표시 셀 1,000,000개 또는 측정값 20개 한도를 초과합니다. 필터를 추가하거나 날짜 그룹을 넓히거나 행/열 필드를 제거하거나 측정값을 줄이세요. 일부 결과만 표시하지 않습니다."
+        )
+    }
+}
+
 private final class PivotPreviewDocumentStackView: NSStackView {
     override var isFlipped: Bool {
         true
@@ -44,6 +66,7 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
     private let onSort: (Int) -> Void
     private var section: PivotPreviewSection?
     private var currentHeaders: [String] = []
+    private var columnIndexes: [NSUserInterfaceItemIdentifier: Int] = [:]
     private var isAdjustingColumnWidths = false
 
     init(onSort: @escaping (Int) -> Void = { _ in }, frame frameRect: NSRect = .zero) {
@@ -131,11 +154,13 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
     }
 
     private func rebuildColumns(headers: [String]) {
+        columnIndexes.removeAll(keepingCapacity: true)
         for column in tableView.tableColumns {
             tableView.removeTableColumn(column)
         }
         for (index, header) in headers.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("preview_\(index)"))
+            columnIndexes[column.identifier] = index
             column.title = header
             let headerCell = SortHeaderCell(textCell: header)
             headerCell.columnIdentifierRawValue = column.identifier.rawValue
@@ -236,7 +261,7 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
 
     nonisolated func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         MainActor.assumeIsolated {
-            let columnIndex = tableView.tableColumns.firstIndex { $0 === tableColumn } ?? 0
+            guard let tableColumn, let columnIndex = columnIndexes[tableColumn.identifier] else { return nil }
             let text = section?.rows[safe: row]?[safe: columnIndex] ?? ""
             return makeCell(text: text)
         }
@@ -273,7 +298,7 @@ private final class PivotPreviewTableSectionView: NSView, NSTableViewDataSource,
 }
 
 @MainActor
-final class PivotBuilderWindowController: NSWindowController {
+final class PivotBuilderWindowController: NSWindowController, NSWindowDelegate {
     private typealias ZoneFieldItem = (
         index: Int,
         name: String,
@@ -303,9 +328,14 @@ final class PivotBuilderWindowController: NSWindowController {
     private var previewRows: [[String]] = []
     private var previewHeaders: [String] = []
     private var previewCancellation: CancellationFlag?
+    private var previewColumnIndexes: [NSUserInterfaceItemIdentifier: Int] = [:]
     private var typeAnalysisCancellation: CancellationFlag?
     private var previewGeneration = 0
     private var previewIsComputing = false
+    private let previewQueue = DispatchQueue(label: "nanumcsv.pivot.preview", qos: .userInitiated)
+    private let filterOptionsQueue = DispatchQueue(label: "nanumcsv.pivot.filters", qos: .userInitiated)
+    private var filterOptionsCache: [PivotFilterOptionsKey: PivotFilterOptionsState] = [:]
+    private var isClosed = false
     private var resultFilterQuery = ""
     private var controlSectionTitles: [String] = []
     private var filteredFieldIndexes: [Int] = []
@@ -329,7 +359,7 @@ final class PivotBuilderWindowController: NSWindowController {
     private let resultCopyButton = NSButton()
     private let resultExportButton = NSButton()
     private let previewContainer = PivotPreviewContainerView()
-    private let emptyPreviewLabel = NSTextField(labelWithString: "")
+    private let emptyPreviewLabel = NSTextField(wrappingLabelWithString: "")
     private let resultSummaryLabel = NSTextField(labelWithString: "")
     private let dateGroupControlsStack = NSStackView()
     private let filterControlsStack = NSStackView()
@@ -360,6 +390,7 @@ final class PivotBuilderWindowController: NSWindowController {
         window.minSize = NSSize(width: 900, height: 680)
         window.title = L.t("Pivot Builder", "피벗 빌더")
         super.init(window: window)
+        window.delegate = self
         buildInterface()
         selectResultTab(initialResultTab)
         refreshZones()
@@ -375,6 +406,42 @@ final class PivotBuilderWindowController: NSWindowController {
     deinit {
         previewCancellation?.cancel()
         typeAnalysisCancellation?.cancel()
+        for case .loading(let cancellation) in filterOptionsCache.values {
+            cancellation.cancel()
+        }
+    }
+
+    override func close() {
+        cancelPendingWork()
+        super.close()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        cancelPendingWork()
+    }
+
+    override func showWindow(_ sender: Any?) {
+        if isClosed {
+            isClosed = false
+            refreshFilterControls()
+            refreshPreview()
+            loadFieldTypesIfNeeded()
+        }
+        super.showWindow(sender)
+    }
+
+    private func cancelPendingWork() {
+        isClosed = true
+        previewGeneration += 1
+        previewCancellation?.cancel()
+        previewCancellation = nil
+        previewIsComputing = false
+        typeAnalysisCancellation?.cancel()
+        typeAnalysisCancellation = nil
+        for case .loading(let cancellation) in filterOptionsCache.values {
+            cancellation.cancel()
+        }
+        filterOptionsCache.removeAll()
     }
 
     private static func makeFields(
@@ -1263,6 +1330,9 @@ final class PivotBuilderWindowController: NSWindowController {
         }
         updateResultSummary()
         updatePreviewVisibility()
+        if previewIsComputing {
+            refreshPreview()
+        }
     }
 
     private func sortPreviewSection(section index: Int, column: Int, ascending: Bool? = nil) {
@@ -1494,6 +1564,14 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func refreshFilterControls() {
+        guard !isClosed else { return }
+        let activeKeys = Set(layout.filters.map { filterOptionsKey(for: $0) })
+        for key in Array(filterOptionsCache.keys) where !activeKeys.contains(key) {
+            if case .loading(let cancellation) = filterOptionsCache[key] {
+                cancellation.cancel()
+            }
+            filterOptionsCache.removeValue(forKey: key)
+        }
         filterControlsStack.arrangedSubviews.forEach { view in
             filterControlsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -1537,17 +1615,69 @@ final class PivotBuilderWindowController: NSWindowController {
         valuePopup.lastItem?.representedObject = nil
         let selectedValue = layout.filterSelections[index]
         var selectedIndex = 0
-        for option in filterOptions(for: index) {
-            valuePopup.addItem(withTitle: option.isEmpty ? L.t("(Blank)", "(빈 값)") : option)
+        valuePopup.cell?.lineBreakMode = .byTruncatingMiddle
+        valuePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 240).isActive = true
+        let optionsState = filterOptionsState(for: index)
+        let options: [String]
+        if case .loaded(let values) = optionsState {
+            options = values
+        } else {
+            options = []
+        }
+        for option in options {
+            valuePopup.menu?.addItem(NSMenuItem(
+                title: option.isEmpty ? L.t("(Blank)", "(빈 값)") : option,
+                action: nil,
+                keyEquivalent: ""
+            ))
             valuePopup.lastItem?.representedObject = option
             if option == selectedValue {
                 selectedIndex = valuePopup.numberOfItems - 1
             }
         }
+        if let selectedValue, !options.contains(selectedValue) {
+            valuePopup.menu?.addItem(NSMenuItem(
+                title: selectedValue.isEmpty ? L.t("(Blank)", "(빈 값)") : selectedValue,
+                action: nil,
+                keyEquivalent: ""
+            ))
+            valuePopup.lastItem?.representedObject = selectedValue
+            selectedIndex = valuePopup.numberOfItems - 1
+        }
         valuePopup.selectItem(at: selectedIndex)
         filterValuePopups[index] = valuePopup
         row.addArrangedSubview(valuePopup)
-        return row
+        let exactButton = NSButton(
+            title: L.t("Exact value…", "정확한 값 입력…"),
+            target: self,
+            action: #selector(enterExactFilterValue(_:))
+        )
+        exactButton.controlSize = .small
+        exactButton.tag = index
+        row.addArrangedSubview(exactButton)
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        stack.addArrangedSubview(row)
+        let message: String?
+        switch optionsState {
+        case .loading:
+            message = L.t("Loading values… You can also enter an exact value.", "값 불러오는 중… 정확한 값을 직접 입력할 수도 있습니다.")
+        case .failed(let reason):
+            message = reason
+        case .loaded:
+            message = nil
+        }
+        if let message {
+            let status = NSTextField(wrappingLabelWithString: message)
+            status.font = .systemFont(ofSize: 11)
+            status.textColor = .secondaryLabelColor
+            stack.addArrangedSubview(status)
+            status.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
+        }
+        return stack
     }
 
     private func makeDateGroupingPopup(for index: Int) -> NSPopUpButton {
@@ -1579,15 +1709,75 @@ final class PivotBuilderWindowController: NSWindowController {
         }
     }
 
-    private func filterOptions(for index: Int) -> [String] {
-        do {
-            return try csvDocument.pivotFilterValues(
-                column: index,
-                dateGrouping: layout.dateGroupings[index],
-                cancellation: CancellationFlag()
-            )
-        } catch {
-            return []
+    private func filterOptionsKey(for index: Int) -> PivotFilterOptionsKey {
+        PivotFilterOptionsKey(column: index, dateGrouping: layout.dateGroupings[index]?.rawValue)
+    }
+
+    private func filterOptionsState(for index: Int) -> PivotFilterOptionsState {
+        let key = filterOptionsKey(for: index)
+        if let state = filterOptionsCache[key] { return state }
+        let cancellation = CancellationFlag()
+        filterOptionsCache[key] = .loading(cancellation)
+        let document = csvDocument
+        let grouping = layout.dateGroupings[index]
+        filterOptionsQueue.async { [weak self] in
+            let state: PivotFilterOptionsState
+            do {
+                guard !cancellation.isCancelled else { return }
+                let values = try document.pivotFilterValues(
+                    column: index,
+                    dateGrouping: grouping,
+                    maximumDistinctValues: 1_000,
+                    cancellation: cancellation
+                )
+                state = .loaded(values)
+            } catch CsvError.cancelled {
+                return
+            } catch CsvResourceLimitError.distinctValues {
+                state = .failed(L.t(
+                    "More than 1,000 values: the menu is unavailable. Choose Exact value… to filter any value, or All to remove the filter.",
+                    "값이 1,000개를 초과하여 메뉴를 표시할 수 없습니다. 정확한 값 입력…으로 원하는 값을 필터링하거나 전체로 필터를 해제하세요."
+                ))
+            } catch {
+                state = .failed(error.localizedDescription + "\n" + L.t(
+                    "Choose Exact value… to enter a filter directly.",
+                    "정확한 값 입력…으로 필터를 직접 입력하세요."
+                ))
+            }
+            guard !cancellation.isCancelled else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isClosed,
+                      self.layout.filters.contains(index),
+                      self.filterOptionsKey(for: index) == key,
+                      case .loading(let current) = self.filterOptionsCache[key],
+                      current === cancellation else { return }
+                self.filterOptionsCache[key] = state
+                self.refreshFilterControls()
+            }
+        }
+        return .loading(cancellation)
+    }
+
+    @objc private func enterExactFilterValue(_ sender: NSButton) {
+        guard let window, !isClosed, layout.filters.contains(sender.tag) else { return }
+        let key = filterOptionsKey(for: sender.tag)
+        let alert = NSAlert()
+        alert.messageText = L.t("Filter by exact value", "정확한 값으로 필터링")
+        alert.informativeText = L.t(
+            "Enter the complete value, preserving spaces and case. Empty input selects the pivot's null group (blank and missing values). For dates, enter the grouped value (for example 2026-01 for Month). Choose All in the menu to remove the filter.",
+            "공백과 대소문자를 유지하여 전체 값을 입력하세요. 빈 입력은 피벗의 null 그룹(빈 셀 및 결측값)을 선택합니다. 날짜는 그룹화된 값을 입력하세요(예: 월 그룹은 2026-01). 필터를 해제하려면 메뉴에서 전체를 선택하세요."
+        )
+        alert.addButton(withTitle: L.t("Apply", "적용"))
+        alert.addButton(withTitle: L.t("Cancel", "취소"))
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        input.stringValue = layout.filterSelections[sender.tag] ?? ""
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self, !self.isClosed,
+                  self.layout.filters.contains(key.column),
+                  self.filterOptionsKey(for: key.column) == key else { return }
+            self.setFilterSelection(column: key.column, value: input.stringValue)
         }
     }
 
@@ -1607,6 +1797,7 @@ final class PivotBuilderWindowController: NSWindowController {
     }
 
     private func refreshPreview() {
+        guard !isClosed else { return }
         previewCancellation?.cancel()
         previewGeneration += 1
         let generation = previewGeneration
@@ -1642,9 +1833,17 @@ final class PivotBuilderWindowController: NSWindowController {
         let filters = layout.filterSelections.map { PivotFilter(column: $0.key, selectedValue: $0.value) }
         let dateGroupings = layout.dateGroupings
         let measures = layout.measures
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let measureTitles = measures.map(measureTitle)
+        let rowHeader = rowHeaderTitle()
+        let filterQuery = resultFilterQuery
+        previewQueue.async { [weak self] in
             do {
-                let results = try measures.map { measure in
+                try cancellation.check()
+                guard measures.count <= 20 else { throw PivotPreviewResourceError.tooLarge }
+                var sections: [PivotPreviewSection] = []
+                var displayCells = 0
+                for (index, measure) in measures.enumerated() {
+                    try cancellation.check()
                     let result = try document.pivotTable(
                         rowColumns: rows,
                         columnColumns: columns,
@@ -1654,14 +1853,29 @@ final class PivotBuilderWindowController: NSWindowController {
                         dateGroupings: dateGroupings,
                         cancellation: cancellation
                     )
-                    return (measure: measure, result: result)
+                    let cellCount = try Self.previewCellCount(result)
+                    guard cellCount <= PivotResourceLimits.maximumCells - displayCells,
+                          cellCount <= PivotResourceLimits.maximumCells / measures.count else {
+                        throw PivotPreviewResourceError.tooLarge
+                    }
+                    displayCells += cellCount
+                    sections.append(try Self.makePreviewSection(
+                        result: result,
+                        measure: measure,
+                        valueHeader: measureTitles[index],
+                        rowHeader: rowHeader,
+                        filterQuery: filterQuery,
+                        cancellation: cancellation
+                    ))
                 }
+                try cancellation.check()
+                let completedSections = sections
                 DispatchQueue.main.async { [weak self] in
                     guard let self,
                           self.previewGeneration == generation,
                           self.previewCancellation === cancellation else { return }
                     self.previewIsComputing = false
-                    self.applyPreview(results)
+                    self.applyPreview(completedSections)
                 }
             } catch CsvError.cancelled {
                 return
@@ -1678,18 +1892,22 @@ final class PivotBuilderWindowController: NSWindowController {
                     self.rebuildPreviewSections()
                     self.chartView.update(model: nil)
                     self.resultSummaryLabel.stringValue = L.t("Error", "오류")
-                    self.emptyPreviewLabel.stringValue = error.localizedDescription
+                    if case CsvResourceLimitError.pivotDimensions = error {
+                        self.emptyPreviewLabel.stringValue = L.t(
+                            "The pivot exceeds 100,000 rows, 256 columns, or 1,000,000 cells. Add filters, group dates more broadly, or remove row/column fields.",
+                            "피벗이 행 100,000개, 열 256개 또는 셀 1,000,000개 한도를 초과합니다. 필터를 추가하거나 날짜 그룹을 넓히거나 행/열 필드를 제거하세요."
+                        )
+                    } else {
+                        self.emptyPreviewLabel.stringValue = error.localizedDescription
+                    }
                     self.updatePreviewVisibility()
                 }
             }
         }
     }
 
-    private func applyPreview(_ results: [(measure: PivotMeasure, result: PivotTableResult)]) {
-        previewSections = results.map { makePreviewSection(result: $0.result, measure: $0.measure) }
-        for index in previewSections.indices {
-            previewSections[index].tableModel.setFilter(column: nil, query: resultFilterQuery)
-        }
+    private func applyPreview(_ sections: [PivotPreviewSection]) {
+        previewSections = sections
         pivot = previewSections.first?.pivot
         previewHeaders = previewSections.first?.headers ?? []
         previewRows = previewSections.first?.rows ?? []
@@ -1700,8 +1918,25 @@ final class PivotBuilderWindowController: NSWindowController {
         updatePreviewVisibility()
     }
 
-    private func makePreviewSection(result: PivotTableResult, measure: PivotMeasure) -> PivotPreviewSection {
-        let valueHeader = measureTitle(measure)
+    nonisolated private static func previewCellCount(_ result: PivotTableResult) throws -> Int {
+        let rowCount = result.rowColumns.isEmpty ? 1 : result.rowKeys.count + 1
+        let columnCount = result.columnColumns.isEmpty ? 2 : result.columnKeys.count + 2
+        guard rowCount < PivotResourceLimits.maximumCells,
+              columnCount <= PivotResourceLimits.maximumCells / (rowCount + 1) else {
+            throw PivotPreviewResourceError.tooLarge
+        }
+        return (rowCount + 1) * columnCount
+    }
+
+    nonisolated private static func makePreviewSection(
+        result: PivotTableResult,
+        measure: PivotMeasure,
+        valueHeader: String,
+        rowHeader: String,
+        filterQuery: String,
+        cancellation: CancellationFlag
+    ) throws -> PivotPreviewSection {
+        try cancellation.check()
         let valueTypeHeader = measure.function.rawValue
         let headers: [String]
         let rows: [[String]]
@@ -1709,32 +1944,46 @@ final class PivotBuilderWindowController: NSWindowController {
             headers = [L.t("Metric", "지표"), valueHeader]
             rows = [[L.t("Total", "합계"), Self.formatNumber(result.value(row: [], column: []))]]
         } else if result.columnColumns.isEmpty {
-            headers = [rowHeaderTitle(), valueTypeHeader]
-            var bodyRows = result.rowKeys.map { rowKey in
-                [Self.label(rowKey, fallback: L.t("Total", "합계")), Self.formatNumber(result.value(row: rowKey, column: []))]
+            headers = [rowHeader, valueTypeHeader]
+            var total = 0.0
+            var bodyRows: [[String]] = []
+            bodyRows.reserveCapacity(result.rowKeys.count + 1)
+            for (index, rowKey) in result.rowKeys.enumerated() {
+                if index % 256 == 0 { try cancellation.check() }
+                let value = result.value(row: rowKey, column: [])
+                total += value
+                bodyRows.append([Self.label(rowKey, fallback: L.t("Total", "합계")), Self.formatNumber(value)])
             }
             bodyRows.append([
                 L.t("Total", "합계"),
-                Self.formatNumber(result.rowKeys.reduce(0) { $0 + result.value(row: $1, column: []) })
+                Self.formatNumber(total)
             ])
             rows = bodyRows
         } else {
             let hasRows = !result.rowColumns.isEmpty
-            let rowHeader = hasRows ? rowHeaderTitle() : ""
+            let rowHeader = hasRows ? rowHeader : ""
             headers = [rowHeader]
                 + result.columnKeys.map { Self.label($0, fallback: L.t("Total", "합계")) }
                 + [L.t("Total", "합계")]
             let rowKeys = hasRows ? result.rowKeys : [[]]
-            var bodyRows = rowKeys.map { rowKey in
-                let values = result.columnKeys.map { result.value(row: rowKey, column: $0) }
-                return [Self.label(rowKey, fallback: hasRows ? L.t("Total", "합계") : valueTypeHeader)]
-                    + values.map(Self.formatNumber)
-                    + [Self.formatNumber(values.reduce(0, +))]
+            var bodyRows: [[String]] = []
+            bodyRows.reserveCapacity(rowKeys.count + (hasRows ? 1 : 0))
+            var columnTotals = Array(repeating: 0.0, count: result.columnKeys.count)
+            for (index, rowKey) in rowKeys.enumerated() {
+                if index % 64 == 0 { try cancellation.check() }
+                var row = [Self.label(rowKey, fallback: hasRows ? L.t("Total", "합계") : valueTypeHeader)]
+                row.reserveCapacity(headers.count)
+                var total = 0.0
+                for (columnIndex, columnKey) in result.columnKeys.enumerated() {
+                    let value = result.value(row: rowKey, column: columnKey)
+                    total += value
+                    columnTotals[columnIndex] += value
+                    row.append(Self.formatNumber(value))
+                }
+                row.append(Self.formatNumber(total))
+                bodyRows.append(row)
             }
             if hasRows {
-                let columnTotals = result.columnKeys.map { columnKey in
-                    rowKeys.reduce(0) { $0 + result.value(row: $1, column: columnKey) }
-                }
                 bodyRows.append(
                     [L.t("Total", "합계")]
                         + columnTotals.map(Self.formatNumber)
@@ -1743,11 +1992,15 @@ final class PivotBuilderWindowController: NSWindowController {
             }
             rows = bodyRows
         }
+        try cancellation.check()
+        var tableModel = PivotResultTableModel(headers: headers, rows: rows)
+        tableModel.setFilter(column: nil, query: filterQuery)
+        try cancellation.check()
         return PivotPreviewSection(
             title: valueHeader,
             measure: measure,
             pivot: result,
-            tableModel: PivotResultTableModel(headers: headers, rows: rows),
+            tableModel: tableModel,
             chartModel: PivotChartModel.make(from: result)
         )
     }
@@ -1762,12 +2015,13 @@ final class PivotBuilderWindowController: NSWindowController {
         return "\(measure.function.rawValue) of \(valueName)"
     }
 
-    private static func label(_ key: [String], fallback: String) -> String {
+    nonisolated private static func label(_ key: [String], fallback: String) -> String {
         let joined = key.joined(separator: " | ")
         return joined.isEmpty ? fallback : joined
     }
 
     private func rebuildPreviewSections() {
+        previewColumnIndexes.removeAll(keepingCapacity: true)
         for column in tablePreview.tableColumns {
             tablePreview.removeTableColumn(column)
         }
@@ -1782,6 +2036,7 @@ final class PivotBuilderWindowController: NSWindowController {
 
         for (index, header) in previewHeaders.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("pivot_\(index)"))
+            previewColumnIndexes[column.identifier] = index
             column.title = header
             column.width = index == 0 ? 160 : 110
             tablePreview.addTableColumn(column)
@@ -1921,7 +2176,7 @@ final class PivotBuilderWindowController: NSWindowController {
         )
     }
 
-    private static func formatNumber(_ value: Double) -> String {
+    nonisolated private static func formatNumber(_ value: Double) -> String {
         if value.rounded(.towardZero) == value {
             return String(format: "%.0f", value)
         }
@@ -1943,7 +2198,7 @@ extension PivotBuilderWindowController: NSTableViewDataSource, NSTableViewDelega
                 return makeFieldCell(tableView: tableView, field: field)
             }
 
-            let columnIndex = tableView.tableColumns.firstIndex { $0 === tableColumn } ?? 0
+            guard let tableColumn, let columnIndex = previewColumnIndexes[tableColumn.identifier] else { return nil }
             let text = previewRows[safe: row]?[safe: columnIndex] ?? ""
             return makeCell(tableView: tableView, identifier: "pivotCell", text: text)
         }
@@ -2304,6 +2559,34 @@ extension PivotBuilderWindowController {
 
     var resultFilterControlCountForTesting: Int {
         filterValuePopups.count
+    }
+
+    func filterOptionsAreLoadingForTesting(column: Int) -> Bool {
+        if case .loading = filterOptionsCache[filterOptionsKey(for: column)] { return true }
+        return false
+    }
+
+    func filterOptionValuesForTesting(column: Int) -> [String] {
+        filterValuePopups[column]?.itemArray.compactMap { $0.representedObject as? String } ?? []
+    }
+
+    func filterOptionsFailureForTesting(column: Int) -> String? {
+        if case .failed(let message) = filterOptionsCache[filterOptionsKey(for: column)] { return message }
+        return nil
+    }
+
+    func beginExactFilterEntryForTesting(column: Int) {
+        let button = NSButton()
+        button.tag = column
+        enterExactFilterValue(button)
+    }
+
+    var previewIsComputingForTesting: Bool {
+        previewIsComputing
+    }
+
+    var previewMessageForTesting: String {
+        emptyPreviewLabel.stringValue
     }
 
     var resultPaneContainsFilterControlsForTesting: Bool {

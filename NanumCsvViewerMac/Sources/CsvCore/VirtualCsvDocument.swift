@@ -954,24 +954,30 @@ public final class VirtualCsvDocument: @unchecked Sendable {
         withinCurrentView: Bool,
         limit: Int?,
         progress: ((Int) -> Void)?,
+        maximumDistinctValues: Int? = nil,
         cancellation: CancellationFlag
     ) throws -> [DistinctColumnValue] {
         guard column >= 0, column < columnCount else { return [] }
-        let baseMap = withinCurrentView ? (viewMapSnapshot() ?? Self.identity(dataRowsAvailable)) : Self.identity(dataRowsAvailable)
+        try cancellation.check()
+        let baseMap = withinCurrentView ? viewMapSnapshot() : nil
+        let rowCount = baseMap?.count ?? dataRowsAvailable
         var counts: [String: Int] = [:]
-        counts.reserveCapacity(min(baseMap.count, 1_024))
+        counts.reserveCapacity(min(rowCount, 1_024))
 
-        for index in baseMap.indices {
-            if index & 0xFFFF == 0 { try cancellation.check() }
-            let dataRow = baseMap[index]
-            let fields = try getDataRowUncached(dataRow)
+        for index in 0..<rowCount {
+            if index & 0xFFF == 0 { try cancellation.check() }
+            let fields = try getDataRowUncached(baseMap?[index] ?? index)
             let value = column < fields.count ? fields[column] : ""
+            if let maximumDistinctValues, counts[value] == nil, counts.count >= max(0, maximumDistinctValues) {
+                throw CsvResourceLimitError.distinctValues(maximumDistinctValues)
+            }
             counts[value, default: 0] += 1
-            if index & 0x3FFFF == 0, !baseMap.isEmpty {
-                progress?(Int(Int64(index) * 100 / Int64(baseMap.count)))
+            if index & 0x3FFFF == 0, rowCount > 0 {
+                progress?(Int(Int64(index) * 100 / Int64(rowCount)))
             }
         }
 
+        try cancellation.check()
         progress?(100)
         let sorted = counts
             .map { DistinctColumnValue(value: $0.key, count: $0.value) }
@@ -979,6 +985,7 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 if lhs.count != rhs.count { return lhs.count > rhs.count }
                 return lhs.value.localizedCaseInsensitiveCompare(rhs.value) == .orderedAscending
             }
+        try cancellation.check()
         guard let limit, limit >= 0 else { return sorted }
         return Array(sorted.prefix(limit))
     }
@@ -1427,60 +1434,48 @@ public final class VirtualCsvDocument: @unchecked Sendable {
                 values: [:]
             )
         }
-        // Project to only the columns the pivot references and remap every
-        // column-index parameter, so the scan stays at O(rows × usedColumns).
-        let usedColumns = rowColumns + columnColumns + [valueColumn] + filters.map(\.column) + Array(dateGroupings.keys)
-        let projected = try projectedDisplayRows(columns: usedColumns, cancellation: cancellation)
-        func remap(_ column: Int) -> Int { projected.indexMap[column] ?? 0 }
-        let remappedFilters = filters.map { PivotFilter(column: remap($0.column), selectedValue: $0.selectedValue) }
-        let remappedDateGroupings = Dictionary(uniqueKeysWithValues: dateGroupings.map { (remap($0.key), $0.value) })
-        let rowColumnNames = rowColumns.map { header[$0].isEmpty ? "Column \($0 + 1)" : header[$0] }
-        let result = try CsvAnalytics.pivotTable(
-            rows: projected.rows,
-            rowColumns: rowColumns.map(remap),
-            rowColumnNames: rowColumnNames,
-            columnColumns: columnColumns.map(remap),
-            valueColumn: remap(valueColumn),
-            function: function,
-            filters: remappedFilters,
-            dateGroupings: remappedDateGroupings,
-            cancellation: cancellation
-        )
-        // Report original column indices; keys/values are data, not indices.
-        return PivotTableResult(
+        var accumulator = CsvAnalytics.PivotAccumulator(
             rowColumns: rowColumns,
-            rowColumnNames: rowColumnNames,
+            rowColumnNames: rowColumns.map { header[$0].isEmpty ? "Column \($0 + 1)" : header[$0] },
             columnColumns: columnColumns,
             valueColumn: valueColumn,
-            function: result.function,
-            rowKeys: result.rowKeys,
-            columnKeys: result.columnKeys,
-            values: result.values
+            function: function,
+            filters: filters,
+            dateGroupings: dateGroupings
         )
+        try forEachDisplayRow(cancellation: cancellation) { row in
+            try accumulator.add(row)
+        }
+        return try accumulator.result(cancellation: cancellation)
     }
 
     public func pivotFilterValues(
         column: Int,
         dateGrouping: DateBinPeriod?,
-        limit: Int = 500,
-        rowLimit: Int = 50_000,
+        maximumDistinctValues: Int? = nil,
         cancellation: CancellationFlag
     ) throws -> [String] {
         guard column >= 0, column < columnCount else { return [] }
+        try cancellation.check()
         var values: Set<String> = []
         let dateGroupings = dateGrouping.map { [column: $0] } ?? [:]
-        let upperBound = min(displayRowCount, max(0, rowLimit))
-        for viewRow in 0..<upperBound {
-            if viewRow & 0x3FFF == 0 { try cancellation.check() }
-            let row = try getDisplayRow(viewRow)
-            values.insert(CsvAnalytics.pivotKeyValue(row: row, column: column, dateGroupings: dateGroupings))
-            if values.count >= limit {
-                break
+        let baseMap = viewMapSnapshot()
+        let rowCount = baseMap?.count ?? dataRowsAvailable
+        for viewRow in 0..<rowCount {
+            if viewRow & 0xFFF == 0 { try cancellation.check() }
+            let row = try getDataRowUncached(baseMap?[viewRow] ?? viewRow)
+            let value = CsvAnalytics.pivotKeyValue(row: row, column: column, dateGroupings: dateGroupings)
+            if let maximumDistinctValues, !values.contains(value), values.count >= max(0, maximumDistinctValues) {
+                throw CsvResourceLimitError.distinctValues(maximumDistinctValues)
             }
+            values.insert(value)
         }
-        return values.sorted {
+        try cancellation.check()
+        let sorted = values.sorted {
             $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
         }
+        try cancellation.check()
+        return sorted
     }
 
     public func correlation(xColumn: Int, yColumn: Int, method: CorrelationMethod, cancellation: CancellationFlag) throws -> CorrelationResult {

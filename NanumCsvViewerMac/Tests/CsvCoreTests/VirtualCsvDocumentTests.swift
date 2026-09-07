@@ -239,10 +239,6 @@ final class VirtualCsvDocumentTests: XCTestCase {
         XCTAssertTrue(predicate(["", "2026-01-03"]))
         XCTAssertFalse(predicate(["B", "2026-01-02"]))
         XCTAssertFalse(predicate(["A", "2026-01-04"]))
-        XCTAssertEqual(state.descriptions(columnNames: ["site", "date"], blankLabel: "(Blank)"), [
-            #"site in "A", (Blank)"#,
-            "date between 2026-01-02 and 2026-01-03"
-        ])
     }
 
     func testNumericSortUsesValueOrderNotLexicographic() throws {

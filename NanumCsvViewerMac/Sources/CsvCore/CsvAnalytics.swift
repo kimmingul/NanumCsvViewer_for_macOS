@@ -126,6 +126,27 @@ public struct PivotCellKey: Hashable, Codable, Sendable {
     public let column: [String]
 }
 
+/// Bounds the dense result consumed by tables and exports, not just occupied cells.
+public enum PivotResourceLimits {
+    public static let maximumRows = 100_000
+    public static let maximumColumns = 256
+    public static let maximumCells = 1_000_000
+}
+
+public enum CsvResourceLimitError: Error, LocalizedError, Equatable {
+    case pivotDimensions
+    case distinctValues(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .pivotDimensions:
+            return "This pivot exceeds the safe result size (100,000 rows, 256 columns, or 1,000,000 cells). Filter the data, group dates, or move a high-cardinality field from Columns to Rows."
+        case .distinctValues(let limit):
+            return "This column has more than \(limit.formatted()) distinct values. Use an exact-value or expression filter instead of listing every category."
+        }
+    }
+}
+
 enum CsvAnalytics {
     static func findDuplicates(rows: [(fields: [String], sourceRow: Int64)], columns: [Int]) -> [DuplicateGroup] {
         var groups: [[String]: [Int64]] = [:]
@@ -230,46 +251,145 @@ enum CsvAnalytics {
         dateGroupings: [Int: DateBinPeriod] = [:],
         cancellation: CancellationFlag? = nil
     ) throws -> PivotTableResult {
-        var raw: [PivotCellKey: [String]] = [:]
-        var rowKeySet: Set<[String]> = []
-        var columnKeySet: Set<[String]> = []
-        let activeFilters = filters.filter { $0.selectedValue != nil }
-
+        var accumulator = PivotAccumulator(
+            rowColumns: rowColumns, rowColumnNames: rowColumnNames,
+            columnColumns: columnColumns, valueColumn: valueColumn,
+            function: function, filters: filters, dateGroupings: dateGroupings
+        )
         for (index, row) in rows.enumerated() {
-            if index & 0x3FFF == 0 { try cancellation?.check() }
-            guard pivotRow(row, matches: activeFilters, dateGroupings: dateGroupings) else { continue }
+            if index & 0xFFF == 0 { try cancellation?.check() }
+            try accumulator.add(row)
+        }
+        return try accumulator.result(cancellation: cancellation)
+    }
+
+    struct PivotAccumulator {
+        let rowColumns: [Int]
+        let rowColumnNames: [String]
+        let columnColumns: [Int]
+        let valueColumn: Int
+        let function: AggregationFunction
+        let filters: [PivotFilter]
+        let dateGroupings: [Int: DateBinPeriod]
+        private var cells: [PivotCellKey: CellAccumulator] = [:]
+        private var rowKeys: Set<[String]> = []
+        private var columnKeys: Set<[String]> = []
+
+        init(rowColumns: [Int], rowColumnNames: [String], columnColumns: [Int],
+             valueColumn: Int, function: AggregationFunction, filters: [PivotFilter],
+             dateGroupings: [Int: DateBinPeriod]) {
+            self.rowColumns = rowColumns
+            self.rowColumnNames = rowColumnNames
+            self.columnColumns = columnColumns
+            self.valueColumn = valueColumn
+            self.function = function
+            self.filters = filters.compactMap { filter in
+                guard let value = filter.selectedValue else { return nil }
+                let normalized = isPivotNull(value.trimmingCharacters(in: .whitespacesAndNewlines)) ? "null" : value
+                return PivotFilter(column: filter.column, selectedValue: normalized)
+            }
+            self.dateGroupings = dateGroupings
+        }
+
+        mutating func add(_ row: [String]) throws {
+            guard pivotRow(row, matches: filters, dateGroupings: dateGroupings) else { return }
             let rowKey = rowColumns.map { pivotKeyValue(row: row, column: $0, dateGroupings: dateGroupings) }
             let columnKey = columnColumns.map { pivotKeyValue(row: row, column: $0, dateGroupings: dateGroupings) }
-            let value = valueColumn < row.count ? row[valueColumn] : ""
-            rowKeySet.insert(rowKey)
-            columnKeySet.insert(columnKey)
-            raw[PivotCellKey(row: rowKey, column: columnKey), default: []].append(value)
+            rowKeys.insert(rowKey)
+            columnKeys.insert(columnKey)
+            // Division avoids overflow; even sparse diagonals become dense in the UI.
+            guard rowKeys.count <= PivotResourceLimits.maximumRows,
+                  columnKeys.count <= PivotResourceLimits.maximumColumns,
+                  rowKeys.count <= PivotResourceLimits.maximumCells / max(1, columnKeys.count) else {
+                throw CsvResourceLimitError.pivotDimensions
+            }
+            let value = valueColumn >= 0 && valueColumn < row.count ? row[valueColumn] : ""
+            cells[PivotCellKey(row: rowKey, column: columnKey), default: CellAccumulator()].add(value, function: function)
         }
 
-        let rowKeys = rowKeySet.sorted { $0.joined(separator: "\u{1F}") < $1.joined(separator: "\u{1F}") }
-        let columnKeys = columnKeySet.sorted { $0.joined(separator: "\u{1F}") < $1.joined(separator: "\u{1F}") }
-        var values: [PivotCellKey: Double] = [:]
-        for (index, element) in raw.enumerated() {
-            if index & 0x3FFF == 0 { try cancellation?.check() }
-            let (key, cellValues) = element
-            let numbers = cellValues.compactMap { CsvNumber.parse($0) }
-            values[key] = aggregate(function, rawValues: cellValues, numbers: numbers)
+        func result(cancellation: CancellationFlag?) throws -> PivotTableResult {
+            try cancellation?.check()
+            // Cache sort labels once instead of allocating strings in every comparison.
+            func sortedKeys(_ keys: Set<[String]>) throws -> [[String]] {
+                let sorted = try keys.map { key in
+                    try cancellation?.check()
+                    return (key: key, label: key.joined(separator: "\u{1F}"))
+                }.sorted { $0.label < $1.label }
+                try cancellation?.check()
+                return sorted.map(\.key)
+            }
+            let sortedRows = try sortedKeys(rowKeys)
+            let sortedColumns = try sortedKeys(columnKeys)
+            var values: [PivotCellKey: Double] = [:]
+            values.reserveCapacity(cells.count)
+            for (key, cell) in cells {
+                try cancellation?.check()
+                values[key] = cell.value(function)
+            }
+            try cancellation?.check()
+            return PivotTableResult(
+                rowColumns: rowColumns, rowColumnNames: rowColumnNames,
+                columnColumns: columnColumns, valueColumn: valueColumn,
+                function: function, rowKeys: sortedRows,
+                columnKeys: sortedColumns, values: values
+            )
+        }
+    }
+
+    private struct CellAccumulator {
+        var count = 0
+        var numericCount = 0
+        var sum = 0.0
+        var mean = 0.0
+        var m2 = 0.0
+        var minimum: Double?
+        var maximum: Double?
+        var numbers: [Double] = []
+        var unique: Set<String> = []
+
+        mutating func add(_ raw: String, function: AggregationFunction) {
+            count += 1
+            if function == .count { return }
+            if function == .uniqueCount {
+                unique.insert(raw)
+                return
+            }
+            guard let number = CsvNumber.parse(raw) else { return }
+            numericCount += 1
+            switch function {
+            case .sum, .mean:
+                sum += number
+            case .median:
+                numbers.append(number)
+            case .min:
+                if minimum == nil || number < minimum! { minimum = number }
+            case .max:
+                if maximum == nil || number > maximum! { maximum = number }
+            case .standardDeviation:
+                let delta = number - mean
+                mean += delta / Double(numericCount)
+                m2 += delta * (number - mean)
+            case .count, .uniqueCount:
+                break
+            }
         }
 
-        return PivotTableResult(
-            rowColumns: rowColumns,
-            rowColumnNames: rowColumnNames,
-            columnColumns: columnColumns,
-            valueColumn: valueColumn,
-            function: function,
-            rowKeys: rowKeys,
-            columnKeys: columnKeys,
-            values: values
-        )
+        func value(_ function: AggregationFunction) -> Double {
+            switch function {
+            case .count: return Double(count)
+            case .sum: return sum
+            case .mean: return numericCount == 0 ? 0 : sum / Double(numericCount)
+            case .median: return percentile(numbers.sorted(), 0.5)
+            case .min: return minimum ?? 0
+            case .max: return maximum ?? 0
+            case .uniqueCount: return Double(unique.count)
+            case .standardDeviation: return numericCount == 0 ? 0 : sqrt(m2 / Double(numericCount))
+            }
+        }
     }
 
     static func pivotKeyValue(row: [String], column: Int, dateGroupings: [Int: DateBinPeriod]) -> String {
-        let raw = column < row.count ? row[column] : ""
+        let raw = column >= 0 && column < row.count ? row[column] : ""
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if isPivotNull(trimmed) {
             return "null"
